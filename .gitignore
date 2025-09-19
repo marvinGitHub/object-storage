@@ -2,5 +2,4 @@ index.php
 vendor
 .phpunit.result.cache
 logs
-storage
 .idea
