@@ -1,0 +1,26 @@
+{% extends 'index.html' %}
+
+{% block body %}
+{% if exists %}
+<a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage}}" role="button">Rebuild Stubs</a>
+
+{% if hasEntries %}
+<ul class="list-group">
+    <li class="list-group-item list-group-item-secondary"><span class="badge bg-dark">{{storage}}</span></li>
+    {% for classname in classnames %}
+    <li class="list-group-item">{{ classname }}&nbsp;<a class="btn btn-secondary btn-sm"
+                                href="?action=list-uuids&storage={{storage}}&classname={{classname}}"
+                                role="button">List</a></li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="alert alert-warning" role="alert">
+    No entries found.
+</div>
+{% endif %}
+{% else %}
+<div class="alert alert-warning" role="alert">
+    Storage not found.
+</div>
+{% endif %}
+{% endblock body %}

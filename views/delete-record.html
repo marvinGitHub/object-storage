@@ -1,0 +1,16 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<form>
+    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
+</form>
+{% if success %}
+<div class="alert alert-success" role="alert">
+    Record deleted.
+</div>
+{% else %}
+<div class="alert alert-danger" role="alert">
+    Record could not be deleted.
+</div>
+{% endif %}
+{% endblock body %}

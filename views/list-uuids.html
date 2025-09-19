@@ -1,0 +1,52 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<form>
+    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
+</form>
+{% if pages > 1 %}
+<nav aria-label="Pagination">
+    <ul class="pagination">
+        {% if page > 1 %}
+        <li class="page-item"><a class="page-link"
+                                 href="?action=list-uuids&storage={{storage}}&classname={{classname}}&page={{page-1}}">Previous</a>
+        </li>
+        {% endif %}
+        {% for i in 1..pages %}
+        <li class="page-item"><a class="page-link {% if page == i %}active{% endif %}"
+                                 href="?action=list-uuids&storage={{storage}}&classname={{classname}}&page={{i}}">{{i}}</a>
+        </li>
+        {% endfor %}
+        {% if page < pages %}
+        <li class="page-item"><a class="page-link"
+                                 href="?action=list-uuids&storage={{storage}}&classname={{classname}}&page={{page+1}}">Next</a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+{% if hasEntries %}
+<ul class="list-group">
+    <li class="list-group-item list-group-item-secondary d-flex justify-content-between align-items-start">
+        <div class="ms-2 me-auto">
+            <a href="?storage=storage&action=list-classnames"> <span class="badge bg-dark">{{storage}}</span></a>
+            <span class="badge bg-secondary">{{classname}}</span>
+        </div>
+        <span class="badge bg-primary rounded-pill">{{offset}} - {{end}} of {{total}}</span>
+    </li>
+    {% for uuid in uuids %}
+    <li class="list-group-item">
+        {{ uuid }}&nbsp;
+        <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}"
+           role="button">Delete</a>
+        <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}" role="button">Duplicate</a>
+        <a class="btn btn-secondary btn-sm" href="?action=view-record&storage={{storage}}&uuid={{uuid}}" role="button">View</a>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="alert alert-warning" role="alert">
+    No entries found.
+</div>
+{% endif %}
+{% endblock body %}

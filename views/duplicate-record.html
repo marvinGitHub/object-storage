@@ -1,0 +1,22 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<form>
+    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
+</form>
+{% if success %}
+<div id="alert-record-duplicated" class="alert alert-success" role="alert">
+    Record has been duplicated. {{uuidNew}}
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', function (event) {
+        const alertRecordDuplicated = document.getElementById('alert-record-duplicated');
+        alertRecordDuplicated.innerHTML = ReferenceLinkGenerator.generate(alertRecordDuplicated.innerHTML);
+    });
+</script>
+{% else %}
+<div class="alert alert-danger" role="alert">
+    Record could not be duplicated.
+</div>
+{% endif %}
+{% endblock body %}

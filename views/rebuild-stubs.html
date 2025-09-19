@@ -1,0 +1,16 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<form>
+    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
+</form>
+{% if success %}
+<div class="alert alert-success" role="alert">
+    Done.
+</div>
+{% else %}
+<div class="alert alert-danger" role="alert">
+    On error occurred while rebuilding stubs.
+</div>
+{% endif %}
+{% endblock body %}

@@ -1,0 +1,113 @@
+{% extends 'index.html' %}
+
+{% block body %}
+
+{% if isLocked %}
+{% include 'button-back.html' %}
+<div class="alert alert-warning" role="alert">
+    Record is locked.
+</div>
+{% else %}
+{% if exists %}
+
+    {% include 'button-back.html' %}
+    <input class="btn btn-warning btn-sm" onclick="edit()" type="button" value="Edit"/>
+    <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}" role="button">Duplicate</a>
+    <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}" role="button">Delete</a>
+
+
+<div class="card">
+    <div class="card-header">
+        <pre id="object-view">
+Storage: <a href="?storage=storage&action=list-classnames">{{storage}}</a><br>
+Classname: {{ classname }}<br>
+Checksum: {{ checksum }}<br>
+UUID: {{ uuid }}<br>
+Size: {{ size }} Bytes<br>
+</pre>
+    </div>
+    <div class="card-body">
+        <form action="{{baseUrl}}" method="post">
+            <textarea id="textarea-data" class="hidden" name="json" rows="10" cols="100">{{ json }}</textarea><br>
+            <div id="div-data">
+                <!-- https://github.com/mohsen1/pretty-json -->
+                <pretty-json id="json-view" expand="512"></pretty-json>
+            </div>
+            <input type="hidden" name="uuid" value="{{ uuid }}"/>
+            <input type="hidden" name="storage" value="{{ storage }}"/>
+            <input type="hidden" name="action" value="save-record"/>
+            <input class="btn btn-primary btn-sm hidden" id="button-save" type="submit" value="Save"/>
+            <input class="btn btn-secondary btn-sm hidden" id="button-cancel" onclick="cancel()" type="button" value="Cancel"/>
+        </form>
+    </div>
+</div>
+
+{% else %}
+{% include 'button-back.html' %}
+<div class="alert alert-warning" role="alert">
+    Record not found.
+</div>
+{% endif %}
+<script>
+    const edit = () => {
+        const textarea = document.getElementById('textarea-data');
+        const div = document.getElementById('div-data');
+        const buttonSave = document.getElementById('button-save');
+        const buttonCancel = document.getElementById('button-cancel');
+
+        if (textarea) {
+            textarea.classList.remove('hidden');
+        }
+        if (buttonSave) {
+            buttonSave.classList.remove('hidden');
+        }
+        if (buttonCancel) {
+            buttonCancel.classList.remove('hidden');
+        }
+        if (div) {
+            div.classList.add('hidden');
+        }
+    };
+
+    const cancel = () => {
+        const textarea = document.getElementById('textarea-data');
+        const div = document.getElementById('div-data');
+        const buttonSave = document.getElementById('button-save');
+        const buttonCancel = document.getElementById('button-cancel');
+
+        if (textarea) {
+            textarea.classList.add('hidden');
+        }
+
+        if (div) {
+            div.classList.remove('hidden');
+        }
+
+        if (buttonSave) {
+            buttonSave.classList.add('hidden');
+        }
+
+        if (buttonCancel) {
+            buttonCancel.classList.add('hidden');
+        }
+    };
+
+    document.addEventListener('DOMContentLoaded', function (event) {
+        const objectView = document.getElementById('object-view');
+        const jsonView = document.getElementById('json-view');
+
+        jsonView.innerHTML = ReferenceLinkGenerator.generate('{{ data | json_encode | raw }}');
+
+        const script = document.createElement('script');
+        script.src = '../assets/index.js';
+        document.head.appendChild(script);
+
+        for (const element of [objectView]) {
+            if (element) {
+                element.innerHTML = ReferenceLinkGenerator.generate(element.innerHTML);
+            }
+        }
+    });
+</script>
+{% endif %}
+{% endblock body %}
