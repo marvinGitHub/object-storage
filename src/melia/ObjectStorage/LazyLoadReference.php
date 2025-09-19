@@ -57,7 +57,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
     {
         $this->loadIfNeeded();
         $reflection = new Reflection($this->loadedObject);
-        if ($reflection->isset($name)) {
+        if ($reflection->initialized($name)) {
             return $reflection->get($name);
         }
         return null;
@@ -78,7 +78,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
     {
         $this->loadIfNeeded();
         $reflection = new Reflection($this->loadedObject);
-        return $reflection->isset($name);
+        return $reflection->initialized($name);
     }
 
     /**
@@ -170,7 +170,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
     {
         if (is_object($current)) {
             $reflection = new Reflection($current);
-            if ($reflection->isset($segment)) {
+            if ($reflection->initialized($segment)) {
                 return $reflection->get($segment);
             }
         } else if (is_array($current)) {

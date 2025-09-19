@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use Error;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use stdClass;
@@ -290,13 +291,39 @@ class ObjectStorageTest extends TestCase
 
     public function testStoreOverridesUUID()
     {
-        $object = new class() extends stdClass implements AwareInterface
-        {
+        $object = new class() extends stdClass implements AwareInterface {
             use AwareTrait;
         };
         $this->assertNull($object->getUUID());
         $uuid = $this->storage->store($object);
         $this->assertNotEmpty($uuid);
         $this->assertEquals($uuid, $object->getUUID());
+    }
+
+    public function testStoreOfAttributesWhichAreNotSet()
+    {
+        $object = new TestObject();
+
+        $uuid = $this->storage->store($object);
+        $this->assertNotEmpty($uuid);
+
+        $test = $this->storage->load($uuid);
+        $this->assertNotNull($test);
+
+        /* dont save non initialized attributes */
+        $data = file_get_contents($this->storage->getFilePathData($uuid));
+        $this->assertNotFalse($data);
+        $data = json_decode($data, true);
+        $this->assertIsArray($data);
+        $this->assertArrayNotHasKey('someAttributeWithoutDefaultValue', $data);
+
+        /* keep null values */
+        $this->assertInstanceOf(TestObject::class, $test);
+        $this->assertNull($test->somePublicAttributeWhichDefaultsToNull);
+
+        $this->expectException(Error::class);
+        $this->assertNull($test->somePublicAttributeWithoutDefaultValue);
+
+
     }
 }

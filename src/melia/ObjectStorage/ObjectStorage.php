@@ -1010,14 +1010,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         sort($propertyNames, SORT_STRING);
 
         foreach ($propertyNames as $propertyName) {
-            // interne/technische Felder überspringen
-            // 1) AwareInterface: UUID nicht als Nutzdaten persistieren
-            if ($object instanceof AwareInterface && $propertyName === 'uuid') {
-                continue;
-            }
-
-            // 2) Defensive: Eigenschaften, die nicht gesetzt sind, ignorieren
-            if (false === $reflection->isset($propertyName)) {
+            if (false === $reflection->initialized($propertyName)) {
                 continue;
             }
 

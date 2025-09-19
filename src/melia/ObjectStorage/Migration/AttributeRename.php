@@ -27,11 +27,11 @@ class AttributeRename implements MigrationInterface
     {
         $reflection = new Reflection($object);
 
-        if ($reflection->isset($this->expectedName)) {
+        if ($reflection->initialized($this->expectedName)) {
             throw new AttributeRenameFailureException(sprintf('Attribute "%s" already exists', $this->expectedName));
         }
 
-        if (false === $reflection->isset($this->previousName)) {
+        if (false === $reflection->initialized($this->previousName)) {
             throw new AttributeRenameFailureException(sprintf('Attribute "%s" does not exist', $this->previousName));
         }
 

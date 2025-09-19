@@ -155,7 +155,7 @@ class Reflection
      * @param string $propertyName The name of the property to check.
      * @return bool True if the property exists and is initialized, false otherwise.
      */
-    public function isset(string $propertyName): bool
+    public function initialized(string $propertyName): bool
     {
         if (isset($this->target->{$propertyName})) {
             return true;
