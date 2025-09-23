@@ -1,216 +1,130 @@
+AI Assistant
+
 # ObjectStorage
 
-A lightweight, file-based object store with:
-- Persistent storage by UUID
-- Lazy loading of referenced objects
-- Automatic parent updates when lazy references resolve
-- Safe-mode, locking, caching, and class stubs
-- Support for nested arrays and nested objects
+A lightweight, file-based object store for PHP that persists object graphs by UUID, supports lazy loading, parent auto-updates, and handles deeply nested structures. Includes a simple viewer UI for exploring stored objects.
 
-## Features
-
-- Store/load any PHP object by UUID
-- Serialize graphs without recursion via reference markers
-- LazyLoadReference defers loading until access
-- On first access, the parent structure is updated transparently
-- Locking (shared/exclusive) to prevent corruption
-- Safe mode activation on corrupted data
-- Optional in-memory cache
-- Class registry and per-class stubs for fast listing
+- Persistent storage by UUID (JSON + metadata)
+- Lazy loading of references with transparent replacement in parents
+- Safe mode, locking, in-memory caching
+- Class stubs for fast listing, class registry
+- Automatic class aliasing if a class is unknown at load time
+- Simple object storage viewer (view.php)
 
 ## Installation
 
-- Require the library (copy sources) and ensure your storage directory is writable.
+- Copy the library or require it via Composer in your project.
+- Ensure the storage directory is writable.
 - PHP 8.0+ recommended.
 
 ## Quick Start
 
 ```php
 <?php
+use melia\ObjectStorage\ObjectStorage;
+
 $storage = new ObjectStorage(__DIR__ . '/var/object-storage');
 
-// Create your objects
-$child = new ChildObject('child-1');
+// Build a small graph
+$child  = new ChildObject('child-1');
 $parent = new ParentObject('parent-1', $child);
 
-// Store
-$parentUuid = $storage->store($parent);
+// Store graph (references are auto-managed)
+$uuid = $storage->store($parent);
 
 // Load later
-$loaded = $storage->load($parentUuid);
-
-// Access
-echo $loaded->name;        // "parent-1"
-echo $loaded->child->name; // "child-1"
+$loaded = $storage->load($uuid);
+echo $loaded->name;         // "parent-1"
+echo $loaded->child->name;  // Lazy loads "child-1"
 ```
 
 
-## Referencing and Lazy Loading
+## How It Works
 
-Object graphs are stored without duplicating sub-objects. References are persisted as special markers:
-- When an object has another object as a property, it’s stored as { "__reference": "<uuid>" }.
-- On load, references are represented as LazyLoadReference (unless the property type disallows it).
+- Graphs are serialized deterministically. When an object references another object, the reference is stored as: { "__reference": "<uuid>" }.
+- On load, references become lazy until accessed; then the referenced object is loaded and the parent structure is updated to hold the real object.
+- Arrays are traversed recursively; nested objects within arrays are also references and benefit from lazy loading and parent replacement.
 
-Example: Parent with a referenced child
+### Lazy Loading
 
-```php
-<?php
-$child = new ChildObject('child-A');
-$childUuid = $storage->store($child);
+- Properties whose declared type allows LazyLoadReference (or object/mixed) are loaded on demand.
+- Accessing a property or method on a lazy reference triggers a read from storage.
+- After the first access, the placeholder is replaced in the parent object/array so subsequent access is direct.
 
-$parent = new ParentObject('parent-A', $child);
-$parentUuid = $storage->store($parent);
+Tip: Use union types to enable lazy loading where desired, e.g.:
+- public LazyLoadReference|ChildObject $child;
 
-// Later: load parent
-$parentLoaded = $storage->load($parentUuid);
+If the property type is a concrete class without LazyLoadReference, the loader eagerly resolves and sets the real object.
 
-// The child is a LazyLoadReference until you access it
-$isLazy = $parentLoaded->child instanceof LazyLoadReference; // true
-// Access triggers load
-$childName = $parentLoaded->child->name; // Loads child transparently
-```
+### Parent Auto-Updates
 
+When a lazy reference loads, it:
+- Replaces itself inside its parent (object property or array cell).
+- Prevents repeat loads and keeps code simple (you work with the real object thereafter).
 
-### How Lazy Loading Works
+### Nested Objects
 
-- On deserialization, properties referring to other objects become LazyLoadReference if the declared property type allows it (e.g., LazyLoadReference|ChildObject|object|mixed).
-- Accessing a property or method on the reference triggers loading from storage.
-- After loading, the LazyLoadReference updates the parent structure so subsequent accesses hit the real object (no repeated loading).
+- Objects are stored once; all occurrences become references.
+- Deeply nested arrays/objects are handled uniformly.
 
-## Parent Updates (Transparent Replacement)
+## Viewer UI
 
-When a LazyLoadReference loads its target:
-- It replaces itself inside the parent object (or array) at the exact path where it lived.
-- This makes future reads/writes operate on the actual object.
-- Works for nested paths (objects or arrays), not just direct properties.
+- A simple read-only viewer is included to browse stored objects.
+- Open object-storage/view.php in the browser (ensure it can access your storage directory).
 
-You can observe:
-- Before first access: parent->child is LazyLoadReference
-- After first access: parent->child is the real ChildObject
+## API Highlights
 
-## Nested Objects and Arrays
+- store(object $obj, ?string $uuid = null): string
+    - Persists object and sub-objects; returns UUID.
+- load(string $uuid, bool $exclusive = false): ?object
+    - Loads object; acquires lock during read.
+- list(?string $class = null): Traversable
+    - Iterates UUIDs; optionally filtered by class.
+- loadMetadata(string $uuid): ?array
+    - Returns metadata (className, checksum, timestamp).
+- getClassname(string $uuid): ?string
+- clearCache(): void
+- rebuildStubs(): void
 
-Nested structures are handled recursively:
-- Objects are stored once and referenced everywhere else via "__reference".
-- Arrays are traversed deeply; nested objects inside arrays are stored as references too.
-- On load, nested references inside arrays become LazyLoadReference instances and are also transparently replaced on first access.
+Utility:
+- createJSONSchema(object $obj): string
+    - Shows what would be stored (with __reference markers).
 
-Example: Nested arrays
+## Locking, Caching, Safe Mode
 
-```php
-<?php
-$engine = new Engine('E1');
-$car = new Car('C1', ['engine' => $engine]);
+- Locking: shared on load, exclusive on store; cleaned up automatically.
+- Caching: in-memory cache avoids repeated deserialization; use clearCache() to reset.
+- Safe Mode: if corrupted data is detected, safe mode is enabled to prevent writes until resolved. Disable via disableSafeMode() after fixing.
 
-$carUuid = $storage->store($car);
-$carLoaded = $storage->load($carUuid);
+## Unknown Classes: Automatic Aliasing
 
-// engine is lazy initially
-$engineType = $carLoaded->parts['engine']->type; // triggers load and updates array cell
-```
-
-
-## Property Type Compatibility
-
-- If a property type includes LazyLoadReference (or is object/mixed), it may be lazily loaded.
-- If a property type is concrete (e.g., ChildObject only) and does not allow LazyLoadReference, the storage layer eagerly resolves the reference during load and sets the concrete object.
-
-Tip: Use union types to allow lazy loading:
-- Example: public LazyLoadReference|ChildObject $child;
-
-## Caching
-
-- In-memory cache can be enabled (default true) to avoid repeated deserialization for the same UUIDs.
-- Clear via:
-```php
-$storage->clearCache();
-```
-
-
-## Locking
-
-- load($uuid, $exclusive = false) acquires a lock (shared by default, exclusive if requested) for the duration of load.
-- store() acquires an exclusive lock until write completes.
-- Locks are cleaned up automatically; unlocks happen even on exceptions.
-
-## Safe Mode
-
-- If corrupted data is detected, safe mode is enabled:
-    - A safe-mode flag prevents further writes until investigated.
-- Disable manually once fixed:
-```php
-$storage->disableSafeMode();
-```
-
-
-## Listing and Metadata
-
-- List objects (optionally by class):
-```php
-foreach ($storage->list() as $uuid) { /* ... */ }
-foreach ($storage->list(MyClass::class) as $uuid) { /* ... */ }
-```
-
-
-- Get metadata or class name:
-```php
-$meta = $storage->loadMetadata($uuid); // ['className' => ..., 'checksum' => ...]
-$class = $storage->getClassname($uuid);
-```
-
-
-- Rebuild stubs (class indexes):
-```php
-$storage->rebuildStubs();
-```
-
-
-## JSON Schema/Preview
-
-- See what will be persisted (references included):
-```php
-echo $storage->createJSONSchema($object);
-```
-
-
-## Error Handling
-
-- Exceptions are thrown for locking issues, missing objects, invalid UUIDs, serialization errors, safe-mode activation, and IO failures.
-- Ensure try/finally or higher-level handling around store/load when appropriate.
+If a class recorded in metadata does not exist at load time, the storage creates a class alias dynamically so the object can still be instantiated. This keeps old data readable even when types moved or were renamed (ensure you reintroduce real classes or map aliases as part of migrations when possible).
 
 ## Best Practices
 
-- Declare properties as unions to enable lazy loading where beneficial.
-- Keep storageDir on a fast disk; ensure proper permissions.
-- Use exclusive locks for sequences of read-modify-write.
-- Monitor safe mode and logs for integrity issues.
-- For large graphs, rely on lazy loading to reduce memory footprint.
+- Prefer union types for properties that should be lazily loaded.
+- Keep the storage directory on a fast, reliable disk with proper permissions.
+- Use exclusive load/store for read-modify-write sequences.
+- Monitor safe mode and logs; rebuild stubs if you reorganize storage.
 
-## Example: End-to-End
+## Example End-to-End
 
 ```php
 <?php
 $storage = new ObjectStorage(__DIR__.'/var/objects');
 
-// Build a graph
-$child = new ChildObject('child-X');
+$child  = new ChildObject('child-X');
 $parent = new ParentObject('parent-X', $child);
 
-// Store all (references created automatically)
 $uuid = $storage->store($parent);
 
-// Load later
-$p = $storage->load($uuid);
-
-// Lazy access triggers child load and parent update
-echo $p->child->name;
-
-// Modify and persist
+$p = $storage->load($uuid);        // child is lazy
+echo $p->child->name;              // triggers load and parent replacement
 $p->child->name = 'child-X2';
-$storage->store($p);
+$storage->store($p);               // persists changes
 ```
 
 
 ## License
 
-Choose a license that fits your distribution needs. If you require noncommercial-only terms, note that such licenses are not OSI-approved “open source.” For true OSS, consider MIT/Apache-2.0/GPL/AGPL depending on your goals.
+Choose a license that matches your distribution goals. For OSI-approved open source, consider MIT, Apache-2.0, GPL, or AGPL.
