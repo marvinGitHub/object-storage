@@ -637,6 +637,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         try {
             $data = $this->getReader()->read($filename);
         } catch (IOException $e) {
+            $this->getLogger()?->log($e);
             return null;
         }
 
@@ -1094,6 +1095,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         try {
             return $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
         } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
             return null;
         }
     }
