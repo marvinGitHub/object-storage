@@ -1,5 +1,3 @@
-AI Assistant
-
 # ObjectStorage
 
 A lightweight, file-based object store for PHP that persists object graphs by UUID, supports lazy loading, parent auto-updates, and handles deeply nested structures. Includes a simple viewer UI for exploring stored objects.
@@ -75,20 +73,27 @@ When a lazy reference loads, it:
 ## API Highlights
 
 - store(object $obj, ?string $uuid = null): string
-    - Persists object and sub-objects; returns UUID.
+    - Persists object and sub-objects and returns UUID.
 - load(string $uuid, bool $exclusive = false): ?object
-    - Loads object; acquires lock during read.
+    - Loads object, acquires lock during read.
+- exists(string $uuid): bool
+    - Checks if object exists.
+- delete(string $uuid): void
+    - Deletes object. This does not delete references to other child objects.
+- lock(string $uuid, bool $shared = false): void
+    - Acquires lock for object.
+- unlock(string $uuid): void
+  - Releases lock for object.
+  - If the lock is not held, an exception is thrown.
+  - If the lock is held by a different process, an exception is thrown.
 - list(?string $class = null): Traversable
     - Iterates UUIDs; optionally filtered by class.
 - loadMetadata(string $uuid): ?array
     - Returns metadata (className, checksum, timestamp).
+- isLocked(string $uuid): bool
 - getClassname(string $uuid): ?string
 - clearCache(): void
 - rebuildStubs(): void
-
-Utility:
-- createJSONSchema(object $obj): string
-    - Shows what would be stored (with __reference markers).
 
 ## Locking, Caching, Safe Mode
 
@@ -122,6 +127,44 @@ $p = $storage->load($uuid);        // child is lazy
 echo $p->child->name;              // triggers load and parent replacement
 $p->child->name = 'child-X2';
 $storage->store($p);               // persists changes
+```
+
+## Example Locking
+
+```php
+<?php
+use melia\ObjectStorage\ObjectStorage;
+
+$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
+$uuid = '...'; // existing object id
+
+// Read-Modify-Write with exclusive lock + simple retry
+$attempts = 0;
+$maxAttempts = 3;
+
+do {
+    try {
+        // 1) Acquire exclusive lock for this object
+        $obj = $storage->load($uuid, true); // exclusive
+        
+        // 2) Modify under lock
+        $obj->title = 'Updated Title ' . time();
+
+        // 3) Persist while still holding the lock
+        $storage->store($obj);
+
+        // 4) Done: lock is released after operations finish
+        break;
+    } catch (\Throwable $e) {
+        $attempts++;
+        if ($attempts >= $maxAttempts) {
+            // Could log and rethrow or return a 423 Locked in an API context
+            throw $e;
+        }
+        // Back off briefly before retrying to avoid lock contention
+        usleep(200_000 * $attempts); // 200ms, 400ms, 600ms
+    }
+} while ($storage->isLocked($uuid));
 ```
 
 
