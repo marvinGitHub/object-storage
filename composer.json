@@ -1,12 +1,12 @@
 {
   "name": "melia/object-storage",
-  "description": "",
+  "description": "Lightweight PHP file-based object store with UUID persistence, lazy-loading references, in-memory cache, file locking, safe mode, and a simple viewer UI.",
   "license": "AGPL-3.0",
   "type": "library",
   "authors": [
     {
       "name": "marvin-elia.hoppe",
-      "email": "hoppemarvinelia@gmail.com"
+      "email": "marvin_elia@web.de"
     }
   ],
   "autoload": {
