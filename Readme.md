@@ -127,4 +127,4 @@ $storage->store($p);               // persists changes
 
 ## License
 
-Choose a license that matches your distribution goals. For OSI-approved open source, consider MIT, Apache-2.0, GPL, or AGPL.
+AGPL-3.0
