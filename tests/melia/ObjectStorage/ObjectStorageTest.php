@@ -326,4 +326,19 @@ class ObjectStorageTest extends TestCase
 
 
     }
+
+    public function testResourcesSkippedDuringStorage()
+    {
+        $object = new TestObject();
+        $object->a = 'test';
+        $object->someResource = fopen(__FILE__, 'r');
+
+        $json = $this->storage->createJSONSchema($object);
+        $data = json_decode($json, true);
+
+        $this->assertIsArray($data);
+        $this->assertArrayHasKey('a', $data);
+        $this->assertArrayNotHasKey('someResource', $data);
+
+    }
 }

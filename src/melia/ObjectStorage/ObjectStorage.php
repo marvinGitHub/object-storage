@@ -968,8 +968,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * TODO extract to own class
-     *
      * @param object $object
      * @return string
      * @throws DanglingReferenceException
@@ -982,7 +980,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function createJSONSchema(object $object): string
     {
-        return json_encode($this->processObjectForStorage($object), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $json = json_encode($this->processObjectForStorage($object), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if (false === $json) {
+            throw new SerializationFailureException('Unable create JSON schema');
+        }
+        return $json;
     }
 
     /**
@@ -1015,6 +1017,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             $value = $reflection->get($propertyName);
+
+            /* skip resources */
+            if (is_resource($value)) {
+                continue;
+            }
+
             $result[$propertyName] = $this->processValueForStorage($value, [$propertyName], 0);
         }
 
