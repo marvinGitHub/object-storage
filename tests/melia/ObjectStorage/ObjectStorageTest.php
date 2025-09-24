@@ -339,7 +339,7 @@ class ObjectStorageTest extends TestCase
             $resource, 10
         ];
 
-        $json = $this->storage->exportObjectGraph($object);
+        $json = $this->storage->exportGraphAndStoreReferencedChildren($object);
         $data = json_decode($json, true);
 
         $this->assertIsArray($data);

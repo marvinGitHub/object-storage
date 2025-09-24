@@ -1013,14 +1013,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->processingStack[] = $objectHash;
 
-            $processed = $this->exportObjectGraph($object);
+            $jsonGraph = $this->exportGraphAndStoreReferencedChildren($object);
 
             $metadata = [
                 'timestamp' => time(),
                 'className' => $classname = get_class($object),
                 'uuid' => $uuid,
                 'version' => '1.0',
-                'checksum' => md5($processed),
+                'checksum' => md5($jsonGraph),
                 'expiresAt' => $ttl ? time() + $ttl : null,
             ];
 
@@ -1028,7 +1028,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $checksumChanged = $loadedMetadata === null || $metadata['checksum'] !== ($loadedMetadata['checksum'] ?? null);
 
             if ($checksumChanged) {
-                $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $processed);
+                $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
                 $this->saveMetadata($uuid, $metadata);
                 $this->createStub($classname, $uuid);
             }
@@ -1088,9 +1088,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    public function exportObjectGraph(object $object): string
+    public function exportGraphAndStoreReferencedChildren(object $object): string
     {
-        $json = json_encode($this->processObjectForStorage($object), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $json = json_encode($this->createGraphAndStoreReferencedChildren($object), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         if (false === $json) {
             throw new SerializationFailureException('Unable export object graph to JSON');
         }
@@ -1112,7 +1112,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    private function processObjectForStorage(object $object): array
+    private function createGraphAndStoreReferencedChildren(object $object): array
     {
         $result = [];
         $reflection = new Reflection($object);
@@ -1129,7 +1129,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $value = $reflection->get($propertyName);
 
             try {
-                $result[$propertyName] = $this->processValueForStorage($value, [$propertyName], 0);
+                $result[$propertyName] = $this->transformValueForGraph($value, [$propertyName], 0);
             } catch (ResourceSerializationNotSupportedException $e) {
                 $this->getLogger()?->log($e);
             }
@@ -1153,7 +1153,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SerializationFailureException
      * @throws ResourceSerializationNotSupportedException
      */
-    private function processValueForStorage(mixed $value, array $path, int $level): mixed
+    private function transformValueForGraph(mixed $value, array $path, int $level): mixed
     {
         if ($level > $this->maxNestingLevel) {
             throw new MaxNestingLevelExceededException('Maximum nesting level of ' . $this->maxNestingLevel . ' exceeded');
@@ -1190,7 +1190,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $out = [];
             foreach ($value as $k => $v) {
                 try {
-                    $out[$k] = $this->processValueForStorage($v, array_merge($path, [$k]), $level + 1);
+                    $out[$k] = $this->transformValueForGraph($v, array_merge($path, [$k]), $level + 1);
                 } catch (ResourceSerializationNotSupportedException $e) {
                     $this->getLogger()?->log($e);
                 }
