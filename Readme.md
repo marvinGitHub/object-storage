@@ -69,31 +69,43 @@ When a lazy reference loads, it:
 
 - A simple read-only viewer is included to browse stored objects.
 - Open object-storage/view.php in the browser (ensure it can access your storage directory).
-
 ## API Highlights
 
-- store(object $obj, ?string $uuid = null): string
-    - Persists object and sub-objects and returns UUID.
+### General
+- store(object $obj, ?string $uuid = null, ?int $ttl = null): string
+    - Persists object and its referenced children; returns UUID. Optional lifetime in seconds.
 - load(string $uuid, bool $exclusive = false): ?object
-    - Loads object, acquires lock during read.
+    - Loads object with a read lock (shared by default). Returns null if expired.
 - exists(string $uuid): bool
-    - Checks if object exists.
-- delete(string $uuid): void
-    - Deletes object. This does not delete references to other child objects.
-- lock(string $uuid, bool $shared = false): void
-    - Acquires lock for object.
+    - Checks if object data file exists.
+- delete(string $uuid, bool $force = false): bool
+    - Deletes object and its metadata; returns true on success. With $force=true, returns false if not found.
+- lock(string $uuid, bool $shared = false, float $timeout = 5.0): void
+    - Acquires a shared (read) or exclusive (write) lock with timeout.
 - unlock(string $uuid): void
-  - Releases lock for object.
-  - If the lock is not held, an exception is thrown.
-  - If the lock is held by a different process, an exception is thrown.
-- list(?string $class = null): Traversable
-    - Iterates UUIDs; optionally filtered by class.
-- loadMetadata(string $uuid): ?array
-    - Returns metadata (className, checksum, timestamp).
+    - Releases a previously acquired lock.
 - isLocked(string $uuid): bool
+    - Checks if a lock file exists for the UUID.
+- getActiveLocks(): array
+    - Returns UUIDs currently locked by this process.
+- list(?string $class = null): Traversable
+    - Iterates UUIDs; optionally filtered by class (via stubs).
+- loadMetadata(string $uuid): ?array
+    - Returns metadata (className, checksum, timestamp, etc.) or null.
 - getClassname(string $uuid): ?string
+    - Returns stored class name for the UUID.
 - clearCache(): void
+    - Clears in-memory caches.
 - rebuildStubs(): void
+    - Rebuilds class stub index.
+
+### Lifetime (TTL):
+- getLifetime(string $uuid): ?int
+    - Remaining seconds (0 at expiry, negative after expiry, null if unlimited).
+- setLifetime(string $uuid, int $ttl): void
+    - Sets/updates lifetime in seconds.
+- expired(string $uuid): bool
+    - Indicates whether the object is expired.
 
 ## Locking, Caching, Safe Mode
 
