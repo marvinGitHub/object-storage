@@ -3,6 +3,8 @@
 namespace Tests\melia\ObjectStorage;
 
 use Error;
+use melia\ObjectStorage\Exception\DanglingReferenceException;
+use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use stdClass;
@@ -337,7 +339,7 @@ class ObjectStorageTest extends TestCase
             $resource, 10
         ];
 
-        $json = $this->storage->createJSONSchema($object);
+        $json = $this->storage->exportObjectGraph($object);
         $data = json_decode($json, true);
 
         $this->assertIsArray($data);
@@ -346,5 +348,79 @@ class ObjectStorageTest extends TestCase
         $this->assertArrayHasKey('nested', $data);
         $this->assertIsArray($data['nested']);
         $this->assertCount(1, $data['nested']);
+    }
+
+    public function testStoreWithExpiration()
+    {
+        $object = new TestObject();
+        $uuid = $this->storage->store($object, null, 1);
+        $this->assertCount(1, $this->storage->list());
+        $this->assertFalse($this->storage->expired($uuid));
+        sleep(2);
+        $this->assertCount(1, $this->storage->list());
+        $this->assertTrue($this->storage->expired($uuid));
+
+        $loaded = $this->storage->load($uuid);
+        $this->assertNull($loaded);
+        $this->assertTrue($this->storage->exists($uuid));
+        $this->assertCount(1, $this->storage->list());
+        $this->assertTrue($this->storage->expired($uuid));
+    }
+
+    public function testLifetime()
+    {
+        $object = new TestObject();
+        $uuid = $this->storage->store($object, null, 1);
+        $this->assertEquals(1, $this->storage->getLifetime($uuid));
+        $this->assertFalse($this->storage->expired($uuid));
+        sleep(1);
+        $this->assertEquals(0, $this->storage->getLifetime($uuid));
+        sleep(1);
+        $this->assertEquals(-1, $this->storage->getLifetime($uuid)); // negative means time since expiration
+
+        $uuid = $this->storage->store(new stdClass(), null, null);
+        $this->assertNull($this->storage->getLifetime($uuid));
+        $this->assertFalse($this->storage->expired($uuid));
+    }
+
+    public function testExpiredLazyLoadReferenceThrowsDanglingReference(): void
+    {
+        // Arrange: create parent with child
+        $parent = new stdClass();
+        $child = new stdClass();
+        $child->name = 'Child';
+        $parent->child = $child;
+
+        $parentUuid = $this->storage->store($parent);
+
+        $this->assertCount(2, $this->storage->list());
+
+        // Force lazy loading on next read
+        $this->storage->clearCache();
+        $reloadedParent = $this->storage->load($parentUuid);
+
+        $this->assertInstanceOf(LazyLoadReference::class, $reloadedParent->child);
+        $lazy = $reloadedParent->child; // not loaded yet
+        $childUuid = $lazy->getUUID();
+
+        $metadata = $this->storage->loadMetadata($childUuid);
+
+
+        $this->assertFalse($lazy->isLoaded());
+        $this->assertTrue($this->storage->exists($childUuid));
+
+        // Mark child as expired by writing expiresAt in its metadata and remove data to simulate purge
+        $this->storage->setLifetime($childUuid, 0);
+
+        $this->assertTrue($this->storage->exists($childUuid));
+        $this->assertEquals(0, $this->storage->getLifetime($childUuid));;
+
+
+        $this->assertEquals($childUuid, $reloadedParent->child->getUUID());
+
+        // Act + Assert: any access should attempt load and throw DanglingReferenceException
+        $this->expectException(DanglingReferenceException::class);
+        // Accessing property triggers loadIfNeeded()
+        $unused = $reloadedParent->child->name;
     }
 }

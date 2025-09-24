@@ -5,6 +5,7 @@ namespace melia\ObjectStorage;
 use GlobIterator;
 use FilterIterator;
 use Iterator;
+use JsonException;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
@@ -12,6 +13,7 @@ use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
+use melia\ObjectStorage\Exception\MetadataNotFoundException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
@@ -370,6 +372,92 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Checks if the object associated with the given UUID is expired.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool Returns true if the object is expired, false otherwise.
+     */
+    public function expired(string $uuid): bool
+    {
+        try {
+            $lifetime = $this->getLifetime($uuid);
+            return null !== $lifetime && $lifetime <= 0;
+        } catch (MetadataNotFoundException $e) {
+            $this->getLogger()?->log($e);
+            return !$this->exists($uuid);
+        }
+    }
+
+    /**
+     * Retrieves the expiration timestamp for the given UUID from its metadata.
+     * Throws an exception if metadata cannot be loaded for the specified UUID.
+     *
+     * @param string $uuid The unique identifier used to retrieve metadata.
+     * @return int|null The expiration timestamp if available, or null if not set.
+     */
+    public function getExpiration(string $uuid): ?int
+    {
+        $metadata = $this->loadMetadata($uuid);
+        return $metadata['expiresAt'] ?? null;
+    }
+
+    /**
+     * Calculates the remaining lifetime in seconds for the given UUID based on its expiration time.
+     *
+     * @param string $uuid The unique identifier for which to calculate the remaining lifetime.
+     * @return int|null Returns the remaining lifetime in seconds, or null if the expiration time is not set. Negative values represent the lifetime since expiration
+     */
+    public function getLifetime(string $uuid): ?int
+    {
+        $expiresAt = $this->getExpiration($uuid);
+        if (null === $expiresAt) {
+            return null;
+        }
+        return $expiresAt - time();
+    }
+
+    /**
+     * @throws MetadataNotFoundException
+     */
+    public function setLifetime(string $uuid, int $ttl): void
+    {
+        $this->setExpiration($uuid, time() + $ttl);
+    }
+
+    /**
+     * Updates the expiration timestamp for a given UUID in the metadata storage.
+     *
+     * @param string $uuid The unique identifier for which the expiration needs to be set.
+     * @param int|null $expiresAt The Unix timestamp specifying the expiration time, or null to unset the expiration.
+     *
+     * @return void
+     * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
+     */
+    public function setExpiration(string $uuid, ?int $expiresAt): void
+    {
+        $metadata = $this->loadMetadata($uuid);
+        if (null === $metadata) {
+            throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+        }
+        $metadata['expiresAt'] = $expiresAt;
+        $this->saveMetadata($uuid, $metadata);
+    }
+
+    /**
+     * Saves metadata associated with a specific UUID by writing the data
+     * to a file in an atomic operation. The metadata is serialized into JSON
+     * format before being written to the file.
+     *
+     * @param string $uuid The unique identifier associated with the metadata.
+     * @param array $metadata An associative array containing the metadata to be saved.
+     * @return void
+     */
+    private function saveMetadata(string $uuid, array $metadata): void
+    {
+        $this->getWriter()->atomicWrite($this->getFilePathMetadata($uuid), json_encode($metadata, depth: $this->maxNestingLevel));
+    }
+
+    /**
      * Generates the file path for the metadata associated with a specific UUID.
      *
      * @param string $uuid The unique identifier used to build the metadata file path.
@@ -565,6 +653,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function load(string $uuid, bool $exclusive = false): ?object
     {
+        if ($this->expired($uuid)) {
+            /* do not delete an expired object since the ttl might be updated later */
+            return null;
+        }
+
         try {
             $this->lock($uuid, !$exclusive);
             $object = $this->loadFromStorage($uuid);
@@ -814,15 +907,27 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Stores a given object in the storage system, assigning a UUID if necessary.
+     * If the object is an instance of LazyLoadReference and is not loaded, it directly returns its UUID.
+     * Handles locking and ensures proper updates even for previously stored objects.
+     *
+     * @param object $object The object to be stored.
+     * @param string|null $uuid Optional. A specific UUID to assign to the object, or null to auto-generate one.
+     * @param int|null $ttl Optional. The time-to-live for
+     *
+     * @return string
      * @throws DanglingReferenceException
-     * @throws GenerationFailureException
-     * @throws Throwable
      * @throws Exception
+     * @throws GenerationFailureException
+     * @throws IOException
      * @throws LockException
      * @throws MaxNestingLevelExceededException
      * @throws ReflectionException
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException
+     * @throws Throwable
      */
-    public function store(object $object, ?string $uuid = null): string
+    public function store(object $object, ?string $uuid = null, ?int $ttl = null): string
     {
         if ($this->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
@@ -850,7 +955,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             // 3) Kein Early-Return: serializeAndStore IMMER aufrufen, damit Updates via Checksumme erkannt werden
             $this->lock($uuid, false);
-            $this->serializeAndStore($object, $uuid);
+            $this->serializeAndStore($object, $uuid, $ttl);
             if ($this->hasActiveLock($uuid)) {
                 $this->unlock($uuid);
             }
@@ -878,6 +983,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @param object $object
      * @param string $uuid
+     * @param int|null $ttl
      *
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
@@ -887,7 +993,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    private function serializeAndStore(object $object, string $uuid): void
+    private function serializeAndStore(object $object, string $uuid, ?int $ttl = null): void
     {
         try {
             $objectHash = $this->getObjectHash($object);
@@ -907,7 +1013,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->processingStack[] = $objectHash;
 
-            $processed = json_encode($this->processObjectForStorage($object), depth: $this->maxNestingLevel);
+            $processed = $this->exportObjectGraph($object);
 
             $metadata = [
                 'timestamp' => time(),
@@ -915,6 +1021,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 'uuid' => $uuid,
                 'version' => '1.0',
                 'checksum' => md5($processed),
+                'expiresAt' => $ttl ? time() + $ttl : null,
             ];
 
             $loadedMetadata = $this->loadMetadata($uuid);
@@ -922,7 +1029,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             if ($checksumChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $processed);
-                $this->getWriter()->atomicWrite($this->getFilePathMetadata($uuid), json_encode($metadata, depth: $this->maxNestingLevel));
+                $this->saveMetadata($uuid, $metadata);
                 $this->createStub($classname, $uuid);
             }
 
@@ -972,6 +1079,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @param object $object
      * @return string
+     *
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
@@ -980,11 +1088,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    public function createJSONSchema(object $object): string
+    public function exportObjectGraph(object $object): string
     {
         $json = json_encode($this->processObjectForStorage($object), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         if (false === $json) {
-            throw new SerializationFailureException('Unable create JSON schema');
+            throw new SerializationFailureException('Unable export object graph to JSON');
         }
         return $json;
     }

@@ -132,7 +132,7 @@ try {
                 $classname = $storage->getClassName($uuid);
 
                 $record = $storage->load($uuid);
-                $json = $storage->createJSONSchema($record);
+                $json = $storage->exportObjectGraph($record);
             }
 
             echo $twig->render('view-record.html', [
