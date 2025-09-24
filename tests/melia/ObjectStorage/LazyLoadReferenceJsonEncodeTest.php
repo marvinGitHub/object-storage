@@ -2,8 +2,10 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use JsonSerializable;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\LazyLoadReference;
+use stdClass;
 
 /**
  * Tests für json_encode mit LazyLoadReference
@@ -51,8 +53,8 @@ class LazyLoadReferenceJsonEncodeTest extends TestCase
      */
     public function testJsonEncodeWithUnloadedLazyLoadReference(): void
     {
-        $originalObject = new \stdClass();
-        $child = new \stdClass();
+        $originalObject = new stdClass();
+        $child = new stdClass();
         $child->name = 'Lazy-Child';
         $originalObject->child = $child;
 
@@ -108,8 +110,8 @@ class LazyLoadReferenceJsonEncodeTest extends TestCase
     public function testJsonEncodeWithNestedLazyLoadReferences(): void
     {
         // Erstelle zwei verknüpfte Objekte
-        $object1 = new \stdClass();
-        $object2 = new \stdClass();
+        $object1 = new stdClass();
+        $object2 = new stdClass();
         $object2->name = 'Nested Object';
 
         $object1->self = $object2;
@@ -142,7 +144,7 @@ class LazyLoadReferenceJsonEncodeTest extends TestCase
     public function testJsonEncodeCallsJsonSerializableOnUnwrappedObject(): void
     {
         // Erstelle ein Test-Objekt mit Custom JSON Serialization
-        $customObject = new class implements \JsonSerializable {
+        $customObject = new class implements JsonSerializable {
             public function jsonSerialize(): array
             {
                 return ['custom' => 'serialized', 'data' => true];
@@ -151,7 +153,7 @@ class LazyLoadReferenceJsonEncodeTest extends TestCase
 
         // Da TestObjectWithReference kein JsonSerializable implementiert,
         // testen wir das Verhalten mit einem mock
-        $testObject = new \stdClass();
+        $testObject = new stdClass();
         $testObject->self = $customObject;
 
         $uuid = $this->storage->store($testObject);
@@ -166,6 +168,6 @@ class LazyLoadReferenceJsonEncodeTest extends TestCase
         $this->assertArrayHasKey('custom', $decodedData['self']);
         $this->assertArrayHasKey('data', $decodedData['self']);
         $this->assertEquals('serialized', $decodedData['self']['custom']);
-        $this->assertTrue($decodedData['self']['data']);;
+        $this->assertTrue($decodedData['self']['data']);
     }
 }

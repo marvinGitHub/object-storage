@@ -2,7 +2,6 @@
 
 namespace Tests\melia\ObjectStorage;
 
-use melia\ObjectStorage\Exception\UnsupportedOperatorException;
 use stdClass;
 
 
@@ -49,7 +48,7 @@ class ObjectStorageSearchTest extends TestCase
 
         $results = $this->storage->match(function (stdClass $object) {
             return isset($object->child->name) && $object->child->name === 'Alice';
-        }, stdClass::class);;
+        }, stdClass::class);
         $this->assertCount(1, $results);
         $only = array_values($results)[0];
         $this->assertEquals('Alice', $only->child->name);

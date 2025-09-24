@@ -2,6 +2,8 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use melia\ObjectStorage\ObjectStorage;
+
 class ObjectStorageClassAliasTest extends TestCase
 {
     public function testClassAlias()
@@ -17,7 +19,7 @@ class ObjectStorageClassAliasTest extends TestCase
         file_put_contents(sprintf('%s%s%s.metadata', $dir, DIRECTORY_SEPARATOR, $uuid), sprintf('{"timestamp":1756892960,"className":"%s","uuid":"099c84a5-78cb-4e30-a15f-2b4ef7ec176d","version":"1.0","checksum":"b029245bf19000f67e92da851c959928"}', $unknownClassname));
         file_put_contents(sprintf('%s%s%s.obj', $dir, DIRECTORY_SEPARATOR, $uuid), '{"name":"Lazy-B"}');
 
-        $storage = new \melia\ObjectStorage\ObjectStorage($dir);
+        $storage = new ObjectStorage($dir);
         $this->assertTrue($storage->exists($uuid));
 
         $loaded = $storage->load($uuid);

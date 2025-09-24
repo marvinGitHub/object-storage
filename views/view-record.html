@@ -10,10 +10,11 @@
 {% else %}
 {% if exists %}
 
-    {% include 'button-back.html' %}
-    <input class="btn btn-warning btn-sm" onclick="edit()" type="button" value="Edit"/>
-    <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}" role="button">Duplicate</a>
-    <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}" role="button">Delete</a>
+{% include 'button-back.html' %}
+<input class="btn btn-warning btn-sm" onclick="edit()" type="button" value="Edit"/>
+<a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}"
+   role="button">Duplicate</a>
+<a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}" role="button">Delete</a>
 
 
 <div class="card">
@@ -28,16 +29,17 @@ Size: {{ size }} Bytes<br>
     </div>
     <div class="card-body">
         <form action="{{baseUrl}}" method="post">
-            <textarea id="textarea-data" class="hidden" name="json" rows="10" cols="100">{{ json }}</textarea><br>
+            <textarea class="hidden" cols="100" id="textarea-data" name="json" rows="10">{{ json }}</textarea><br>
             <div id="div-data">
                 <!-- https://github.com/mohsen1/pretty-json -->
-                <pretty-json id="json-view" expand="512"></pretty-json>
+                <pretty-json expand="512" id="json-view"></pretty-json>
             </div>
-            <input type="hidden" name="uuid" value="{{ uuid }}"/>
-            <input type="hidden" name="storage" value="{{ storage }}"/>
-            <input type="hidden" name="action" value="save-record"/>
+            <input name="uuid" type="hidden" value="{{ uuid }}"/>
+            <input name="storage" type="hidden" value="{{ storage }}"/>
+            <input name="action" type="hidden" value="save-record"/>
             <input class="btn btn-primary btn-sm hidden" id="button-save" type="submit" value="Save"/>
-            <input class="btn btn-secondary btn-sm hidden" id="button-cancel" onclick="cancel()" type="button" value="Cancel"/>
+            <input class="btn btn-secondary btn-sm hidden" id="button-cancel" onclick="cancel()" type="button"
+                   value="Cancel"/>
         </form>
     </div>
 </div>

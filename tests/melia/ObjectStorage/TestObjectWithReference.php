@@ -2,7 +2,9 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use melia\ObjectStorage\LazyLoadReference;
+
 class TestObjectWithReference
 {
-    public TestObjectWithReference|\melia\ObjectStorage\LazyLoadReference|null $self;
+    public TestObjectWithReference|LazyLoadReference|null $self;
 }

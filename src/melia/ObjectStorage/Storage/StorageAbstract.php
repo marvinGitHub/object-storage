@@ -5,7 +5,9 @@ namespace melia\ObjectStorage\Storage;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectMatchingFailureException;
-use melia\ObjectStorage\Logger\LoggerInterface;
+use melia\ObjectStorage\Locking\LockAdapterAwareTrait;
+use melia\ObjectStorage\Logger\LoggerAwareTrait;
+use melia\ObjectStorage\State\StateHandlerAwareTrait;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Generator;
 use melia\ObjectStorage\UUID\Validator;
@@ -18,7 +20,9 @@ use Throwable;
  */
 abstract class StorageAbstract implements StorageInterface, StorageAssumeInterface
 {
-    private ?LoggerInterface $logger = null;
+    use LoggerAwareTrait;
+    use LockAdapterAwareTrait;
+    use StateHandlerAwareTrait;
 
     /**
      * @throws GenerationFailureException
@@ -50,27 +54,6 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
     }
 
     /**
-     * Retrieves the logger instance.
-     *
-     * @return LoggerInterface|null The logger instance if available, or null if no logger is set.
-     */
-    public function getLogger(): ?LoggerInterface
-    {
-        return $this->logger;
-    }
-
-    /**
-     * Sets the logger instance for the class.
-     *
-     * @param LoggerInterface $logger The logger instance to be used for logging messages.
-     * @return void
-     */
-    public function setLogger(LoggerInterface $logger): void
-    {
-        $this->logger = $logger;
-    }
-
-    /**
      * Counts the number of objects matching the specified class name.
      *
      * @param string|null $className An optional class name used to filter objects.
@@ -81,20 +64,6 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
         return count($this->match(function (object $object) {
             return true;
         }, $className));
-    }
-
-    /**
-     * Retrieves a collection of unique and valid UUIDs based on the provided subset.
-     * If no subset is provided, retrieves the complete list of objects.
-     *
-     * @param array|null $subSet An optional array of UUIDs to filter. If provided, both array keys and values are considered.
-     * @return iterable An iterable collection containing unique and valid UUIDs.
-     */
-    protected function getSelection(?array $subSet = null): iterable
-    {
-        return $subSet ? array_unique(array_filter([...array_values($subSet), ...array_keys($subSet)], function ($uuid) {
-            return is_string($uuid) && Validator::validate($uuid);
-        })) : $this->list();
     }
 
     /**
@@ -143,5 +112,19 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
         }
 
         return $results;
+    }
+
+    /**
+     * Retrieves a collection of unique and valid UUIDs based on the provided subset.
+     * If no subset is provided, retrieves the complete list of objects.
+     *
+     * @param array|null $subSet An optional array of UUIDs to filter. If provided, both array keys and values are considered.
+     * @return iterable An iterable collection containing unique and valid UUIDs.
+     */
+    protected function getSelection(?array $subSet = null): iterable
+    {
+        return $subSet ? array_unique(array_filter([...array_values($subSet), ...array_keys($subSet)], function ($uuid) {
+            return is_string($uuid) && Validator::validate($uuid);
+        })) : $this->list();
     }
 }

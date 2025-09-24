@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 
@@ -378,7 +379,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         $this->writerSpy->clearMethodCalls();
 
-        $this->assertCount(0, $this->storage->getActiveLocks());
+        $this->assertCount(0, $this->storage->getLockAdapter()->getActiveLocks());
 
         // Modify the lazy-loaded child
         $lazyChild->value = 999;
@@ -420,7 +421,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $loadedParent = $this->storage->load($parentUuid);
 
         // Verify child is lazy loaded but not accessed
-        $this->assertInstanceOf(\melia\ObjectStorage\LazyLoadReference::class, $loadedParent->child);
+        $this->assertInstanceOf(LazyLoadReference::class, $loadedParent->child);
         $this->assertFalse($loadedParent->child->isLoaded(), 'LazyLoadReference should not be loaded initially');
 
         $this->writerSpy->clearMethodCalls();
@@ -461,7 +462,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $loadedChild = $loadedParent->child;
         $childValue = $loadedParent->child->value;
 
-        $this->assertInstanceOf(\melia\ObjectStorage\LazyLoadReference::class, $loadedChild);
+        $this->assertInstanceOf(LazyLoadReference::class, $loadedChild);
         $this->assertTrue($loadedChild->isLoaded(), 'LazyLoadReference should be loaded after access');
         $this->assertEquals(200, $childValue, 'Child value should be accessible');
 
@@ -557,7 +558,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $loadedParent->someRandomValue = 100;
         $lazyChild = $loadedParent->child;
 
-        $this->assertInstanceOf(\melia\ObjectStorage\LazyLoadReference::class, $lazyChild);
+        $this->assertInstanceOf(LazyLoadReference::class, $lazyChild);
         $this->assertFalse($lazyChild->isLoaded(), 'Child should not be loaded initially');
 
         // Clear writer spy to track only the next storage operation
@@ -604,7 +605,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $childName = $firstLevelChild->name;
 
         $this->assertTrue($firstLevelChild->isLoaded(), 'First level child should be loaded');
-        $this->assertInstanceOf(\melia\ObjectStorage\LazyLoadReference::class, $firstLevelChild->child);
+        $this->assertInstanceOf(LazyLoadReference::class, $firstLevelChild->child);
         $this->assertFalse($firstLevelChild->child->isLoaded(), 'Grandchild should remain unloaded');
 
         $this->writerSpy->clearMethodCalls();
@@ -649,8 +650,8 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         $secondChild = $loadedParent->children[1];
         $secondChildValue = $secondChild->value;
-        $this->assertEquals('Array Child 2', $secondChild->title, 'Second child should be loaded');;
-        $this->assertEquals(20, $secondChildValue, 'Second child should be loaded');;
+        $this->assertEquals('Array Child 2', $secondChild->title, 'Second child should be loaded');
+        $this->assertEquals(20, $secondChildValue, 'Second child should be loaded');
         $this->assertFalse($firstChild->isLoaded(), 'First child should remain unloaded');
         $this->assertTrue($secondChild->isLoaded(), 'Second child should be loaded');
 

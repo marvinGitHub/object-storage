@@ -9,8 +9,8 @@ class LazyLoadReferenceSerializationTest extends TestCase
 {
     public function testSerialize(): void
     {
-        $parent = new \stdClass();
-        $child = new \stdClass();
+        $parent = new stdClass();
+        $child = new stdClass();
         $child->name = 'Child';
         $child->age = 30;
         $parent->child = $child;
@@ -21,7 +21,7 @@ class LazyLoadReferenceSerializationTest extends TestCase
         $this->storage->clearCache();
 
         $parent = $this->storage->load($uuid);
-        $this->assertInstanceOf(\stdClass::class, $parent);
+        $this->assertInstanceOf(stdClass::class, $parent);
         $this->assertInstanceOf(LazyLoadReference::class, $parent->child);
 
         $uuidChild = $parent->child->getUUID();
@@ -37,8 +37,8 @@ class LazyLoadReferenceSerializationTest extends TestCase
 
     public function testIsset()
     {
-        $parent = new \stdClass();
-        $child = new \stdClass();
+        $parent = new stdClass();
+        $child = new stdClass();
         $child->name = 'Child';
         $child->age = 30;
         $parent->child = $child;

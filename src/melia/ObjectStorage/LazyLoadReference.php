@@ -75,13 +75,6 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         $reflection->set($name, $value);
     }
 
-    public function __isset(string $name): bool
-    {
-        $this->loadIfNeeded();
-        $reflection = new Reflection($this->loadedObject);
-        return $reflection->initialized($name);
-    }
-
     /**
      * Ensures the object is loaded from storage if it has not already been loaded.
      *
@@ -187,6 +180,13 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         }
 
         return null;
+    }
+
+    public function __isset(string $name): bool
+    {
+        $this->loadIfNeeded();
+        $reflection = new Reflection($this->loadedObject);
+        return $reflection->initialized($name);
     }
 
     /**

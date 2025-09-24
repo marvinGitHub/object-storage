@@ -2,4 +2,6 @@
 
 namespace melia\ObjectStorage\Exception;
 
-class MetadataNotFoundException extends Exception {}
+class MetadataNotFoundException extends Exception
+{
+}

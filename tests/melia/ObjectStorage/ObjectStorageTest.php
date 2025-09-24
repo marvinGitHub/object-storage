@@ -4,9 +4,13 @@ namespace Tests\melia\ObjectStorage;
 
 use Error;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
+use melia\ObjectStorage\Exception\Exception;
+use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\LazyLoadReference;
+use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
+use melia\ObjectStorage\UUID\Generator;
 use stdClass;
 use Throwable;
 
@@ -14,7 +18,7 @@ class ObjectStorageTest extends TestCase
 {
     public function testStoreWithDynamicAttributes()
     {
-        $object = new \stdClass();
+        $object = new stdClass();
         $object->foo = 'bar';
         $object->bar = 'baz';
 
@@ -63,7 +67,7 @@ class ObjectStorageTest extends TestCase
 
     public function testStoredUnmodified()
     {
-        $object = new \stdClass();
+        $object = new stdClass();
         $object->foo = 'bar';
         $uuid = $this->storage->store($object);
         $this->assertCount(1, $this->storage->list());
@@ -78,7 +82,7 @@ class ObjectStorageTest extends TestCase
 
     public function testStore()
     {
-        $object = new \stdClass();
+        $object = new stdClass();
         $object->foo = 'bar';
         $uuid = $this->storage->store($object);
 
@@ -104,13 +108,13 @@ class ObjectStorageTest extends TestCase
         $loaded = $this->storage->load($uuid);
 
         $this->assertEquals(get_class($object), get_class($loaded));
-        $this->assertTrue($loaded->self instanceof \melia\ObjectStorage\LazyLoadReference);
+        $this->assertTrue($loaded->self instanceof LazyLoadReference);
         $this->assertEquals(spl_object_hash($loaded), spl_object_hash($loaded->self->getObject()));
     }
 
     public function testDelete()
     {
-        $uuid = $this->storage->store(new \stdClass());
+        $uuid = $this->storage->store(new stdClass());
         $this->assertTrue($this->storage->exists($uuid));
         $this->storage->delete($uuid);
         $this->assertFalse($this->storage->exists($uuid));
@@ -118,91 +122,91 @@ class ObjectStorageTest extends TestCase
 
     public function testExists()
     {
-        $this->assertFalse($this->storage->exists(\melia\ObjectStorage\UUID\Generator::generate()));
+        $this->assertFalse($this->storage->exists(Generator::generate()));
         $this->assertFalse($this->storage->exists('foo'));
     }
 
     public function testStoreWithExclusiveLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->lock($uuid, true);
-        $this->assertTrue($this->storage->hasActiveLock($uuid));
-        $this->assertTrue($this->storage->hasActiveSharedLock($uuid));
+        $this->storage->getLockAdapter()->aquireSharedLock($uuid);
+        $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
 
-        $this->expectException(\melia\ObjectStorage\Exception\LockException::class);
+        $this->expectException(LockException::class);
         $this->storage->store(new stdClass(), $uuid);
     }
 
     public function testDeleteWithExclusiveLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->lock($uuid, true);
-        $this->assertTrue($this->storage->hasActiveLock($uuid));
-        $this->assertTrue($this->storage->hasActiveSharedLock($uuid));
+        $this->storage->getLockAdapter()->aquireSharedLock($uuid);
+        $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
 
-        $this->expectException(\melia\ObjectStorage\Exception\LockException::class);
+        $this->expectException(LockException::class);
         $this->storage->delete($uuid);
     }
 
     public function testSharedLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->assertFalse($this->storage->hasActiveLock($uuid));
-        $this->assertCount(0, $this->storage->getActiveLocks());
-        $this->storage->lock($uuid, true);
-        $this->assertTrue($this->storage->hasActiveLock($uuid));
-        $this->assertCount(1, $this->storage->getActiveLocks());
-        $this->assertTrue($this->storage->hasActiveSharedLock($uuid));
+        $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertCount(0, $this->storage->getLockAdapter()->getActiveLocks());
+        $this->storage->getLockAdapter()->aquireSharedLock($uuid);
+        $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertCount(1, $this->storage->getLockAdapter()->getActiveLocks());
+        $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
     }
 
     public function testStoreWithConcurrentLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->lock($uuid);
+        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
 
-        $anotherStorage = new \melia\ObjectStorage\ObjectStorage($this->storageDir);
+        $anotherStorage = new ObjectStorage($this->storageDir);
 
-        $this->expectException(\melia\ObjectStorage\Exception\LockException::class);
+        $this->expectException(LockException::class);
         $anotherStorage->store(new stdClass(), $uuid);
     }
 
     public function testUnlock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->lock($uuid);
-        $this->assertTrue($this->storage->hasActiveLock($uuid));
-        $this->storage->unlock($uuid);
-        $this->assertFalse($this->storage->hasActiveLock($uuid));
+        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
+        $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->storage->getLockAdapter()->releaseLock($uuid);
+        $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
     }
 
     public function testUnlockOfLockedObjectFromOtherProcess()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->lock($uuid);
+        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
 
-        $anotherStorage = new \melia\ObjectStorage\ObjectStorage($this->storageDir);
-        $this->assertTrue($anotherStorage->isLocked($uuid));
-        $this->assertFalse($anotherStorage->hasActiveLock($uuid));
-        $this->assertFalse($anotherStorage->hasActiveSharedLock($uuid));
-        $this->assertFalse($anotherStorage->hasActiveExclusiveLock($uuid));
+        $anotherStorage = new ObjectStorage($this->storageDir);
+        $this->assertTrue($anotherStorage->getLockAdapter()->isLockedByOtherProcess($uuid));
+        $this->assertFalse($anotherStorage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertFalse($anotherStorage->getLockAdapter()->hasActiveSharedLock($uuid));
+        $this->assertFalse($anotherStorage->getLockAdapter()->hasActiveExclusiveLock($uuid));
 
-        $this->expectException(\melia\ObjectStorage\Exception\LockException::class);
-        $anotherStorage->unlock($uuid);
+        $this->expectException(LockException::class);
+        $anotherStorage->getLockAdapter()->releaseLock($uuid);
     }
 
     public function testStoreWithLockFromOtherProcess()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->lock($uuid);
+        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
 
-        $this->expectException(\melia\ObjectStorage\Exception\LockException::class);
-        $anotherStorage = new \melia\ObjectStorage\ObjectStorage($this->storageDir);
+        $this->expectException(LockException::class);
+        $anotherStorage = new ObjectStorage($this->storageDir);
         $anotherStorage->store(new stdClass(), $uuid);
     }
 
     public function testList()
     {
-        $someStorage = new \melia\ObjectStorage\ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
         $someUUID = $someStorage->store(new stdClass());
         $anotherUUID = $someStorage->store(new stdClass());
 
@@ -218,8 +222,8 @@ class ObjectStorageTest extends TestCase
 
     public function testAssume()
     {
-        $someStorage = new \melia\ObjectStorage\ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
-        $someOtherStorage = new \melia\ObjectStorage\ObjectStorage($someOtherDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someOtherStorage = new ObjectStorage($someOtherDir = $this->reserveRandomStorageDirectory());
 
         $this->assertEquals(0, $someStorage->count());
         $this->assertEquals(0, $someOtherStorage->count());
@@ -237,7 +241,7 @@ class ObjectStorageTest extends TestCase
 
     public function testStoreWithArrayReference()
     {
-        $someStorage = new \melia\ObjectStorage\ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
 
         $someObject = new stdClass();
         $someObject->foo = ['test' => new stdClass()];
@@ -251,11 +255,11 @@ class ObjectStorageTest extends TestCase
 
     /**
      * @throws Throwable
-     * @throws \melia\ObjectStorage\Exception\Exception|\Throwable
+     * @throws Exception|Throwable
      */
     public function testLazyLoadReferenceUpdatesParent()
     {
-        $someStorage = new \melia\ObjectStorage\ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
 
         $someObject = new stdClass();
         $test = new stdClass();
@@ -270,14 +274,14 @@ class ObjectStorageTest extends TestCase
 
         $someObject = $someStorage->load($someUUID);
 
-        $this->assertInstanceOf(\melia\ObjectStorage\LazyLoadReference::class, $someObject->foo['test']);
+        $this->assertInstanceOf(LazyLoadReference::class, $someObject->foo['test']);
 
         /* access some attribute to resolve lazy load reference and update parent */
         $someObject->test->someAttribute;
 
         $this->assertInstanceOf('stdClass', $someObject->test);
 
-        $this->assertInstanceOf(\melia\ObjectStorage\LazyLoadReference::class, $someObject->foo['test']);
+        $this->assertInstanceOf(LazyLoadReference::class, $someObject->foo['test']);
         $lazyLoadReference = $someObject->foo['test'];
         $lazyLoadReference->someAttribute;
 
@@ -413,7 +417,7 @@ class ObjectStorageTest extends TestCase
         $this->storage->setLifetime($childUuid, 0);
 
         $this->assertTrue($this->storage->exists($childUuid));
-        $this->assertEquals(0, $this->storage->getLifetime($childUuid));;
+        $this->assertEquals(0, $this->storage->getLifetime($childUuid));
 
 
         $this->assertEquals($childUuid, $reloadedParent->child->getUUID());

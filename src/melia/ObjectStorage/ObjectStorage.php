@@ -2,8 +2,8 @@
 
 namespace melia\ObjectStorage;
 
-use GlobIterator;
 use FilterIterator;
+use GlobIterator;
 use Iterator;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
@@ -23,12 +23,14 @@ use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\File\Reader;
 use melia\ObjectStorage\File\ReaderInterface;
-use melia\ObjectStorage\File\Writer;
-use melia\ObjectStorage\File\WriterInterface;
+use melia\ObjectStorage\File\WriterAwareTrait;
+use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
+use melia\ObjectStorage\Locking\LockAdapterInterface;
+use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageInterface;
-use melia\ObjectStorage\Storage\StorageLockingInterface;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
@@ -47,12 +49,9 @@ use Traversable;
  * Handles serialization, metadata processing, and nested structures.
  * Supports handling circular references, maximum nesting levels, and in-memory caching.
  */
-class ObjectStorage extends StorageAbstract implements StorageInterface, StorageLockingInterface, StorageMemoryConsumptionInterface
+class ObjectStorage extends StorageAbstract implements StorageInterface, StorageMemoryConsumptionInterface
 {
-    /**
-     * Defines the suffix used for lock files to indicate processing or restricted access.
-     */
-    private const FILE_SUFFIX_LOCK = '.lock';
+    use WriterAwareTrait;
 
     /**
      * The suffix used for metadata files.
@@ -61,11 +60,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     private const FILE_SUFFIX_STUB = '.stub';
     private const FILE_SUFFIX_OBJECT = '.obj';
-
-    /**
-     * An array to store currently active locks.
-     */
-    private array $activeLocks = [];
 
     /**
      * An array used to cache objects for reuse, minimizing redundant object creation.
@@ -82,74 +76,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /** @var array<string>|null */
     private ?array $registeredClassnamesCache = null;
 
-    private WriterInterface $writer;
-
     private ReaderInterface $reader;
-
-    /**
-     * Constructs the object storage handler by initializing directory, file settings,
-     * caching, and maximum nesting level configurations.
-     *
-     * @param string $storageDir The directory path where objects will be stored.
-     * @param string $reservedReferenceName
-     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
-     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
-     * @throws IOException If the storage directory cannot be created.
-     */
-    public function __construct(
-        private string $storageDir,
-        private string $reservedReferenceName = '__reference',
-        private bool   $enableCache = true,
-        private int    $maxNestingLevel = 100
-    )
-    {
-        $this->storageDir = rtrim($storageDir, '/\\');
-        $this->createDirectoryIfNotExist($this->storageDir);
-    }
-
-    /**
-     * @throws IOException
-     */
-    protected function createDirectoryIfNotExist(string $directory): void
-    {
-        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
-            throw new IOException('Unable to open storage directory: ' . $directory);
-        }
-    }
-
-    /**
-     * Creates an empty file with the specified filename.
-     *
-     * @param string $filename The name of the file to be created.
-     * @return void
-     */
-    protected function createEmptyFile(string $filename): void
-    {
-        $this->getWriter()->atomicWrite($filename);
-    }
-
-    /**
-     * Retrieves the directory path where storage operations are performed.
-     *
-     * @return string The storage directory path as a string.
-     */
-    public function getStorageDir(): string
-    {
-        return $this->storageDir;
-    }
-
-    /**
-     * Disables safe mode by removing the related safe mode file if it exists.
-     *
-     * @return bool Returns true if the safe mode file was successfully removed or does not exist.
-     */
-    public function disableSafeMode(): bool
-    {
-        if (file_exists($filename = $this->getFilePathSafeMode())) {
-            return unlink($filename);
-        }
-        return true;
-    }
 
     /**
      * Deletes an object based on its UUID.
@@ -158,19 +85,19 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param bool $force Determines whether errors should be ignored if the object does not exist. If true, returns false if the object does not exist.
      * @return bool Returns true if the object was successfully deleted, or false if the object does not exist and $force is true.
      * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
-     * @throws ObjectDeletionFailureException|LockException Thrown when the object could not be deleted.
+     * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
      * @throws MetataDeletionFailureException
      */
     public function delete(string $uuid, bool $force = false): bool
     {
-        if ($this->safeModeEnabled()) {
+        if ($this->getStateHandler()->safeModeEnabled()) {
             throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
         }
 
         $filePath = $this->getFilePathData($uuid);
 
         try {
-            $this->lock($uuid, false);
+            $this->getLockAdapter()->aquireExclusiveLock($uuid);
 
             if ($this->enableCache) {
                 unset($this->objectCache[$uuid]);
@@ -196,21 +123,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             return true;
         } finally {
-            if ($this->hasActiveLock($uuid)) {
-                $this->unlock($uuid);
+            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()->releaseLock($uuid);
             }
         }
-    }
-
-    /**
-     * Determines whether the safe mode is enabled by checking the existence and content of a specific file.
-     *
-     * @return bool Returns true if safe mode is enabled, otherwise false.
-     */
-    public function safeModeEnabled(): bool
-    {
-        $filename = $this->getFilePathSafeMode();
-        return file_exists($filename) && (bool)file_get_contents($filename) === true;
     }
 
     /**
@@ -225,140 +141,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Retrieves the path to the stub directory.
-     *
-     * @return string The full path to the stub directory.
-     */
-    protected function getStubDirectory(): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
-    }
-
-    /**
-     * Retrieves the directory path where the class stub for the given class name is stored.
-     *
-     * @param string $classname The name of the class for which the stub directory path is being generated.
-     * @return string The full path to the class stub directory.
-     */
-    protected function getClassStubDirectory(string $classname): string
-    {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($classname);
-    }
-
-    /**
-     * Generates the file path for a stub associated with a specific class and UUID.
-     *
-     * @param string $classname The name of the class for which the stub is being generated.
-     * @param string $uuid The unique identifier used to differentiate the stub file.
-     * @return string The full file path for the stub.
-     */
-    protected function getFilePathStub(string $classname, string $uuid): string
-    {
-        return $this->getClassStubDirectory($classname) . DIRECTORY_SEPARATOR . $uuid . '.stub';
-    }
-
-    /**
-     * Acquires a lock for a given resource identified by a unique identifier (UUID).
-     * Locks can be exclusive or shared, with a configurable timeout.
-     *
-     * @param string $uuid A unique identifier for the resource to lock.
-     * @param bool $shared Whether the lock should be shared (reader lock) or exclusive (writer lock). Default is exclusive.
-     * @param float $timeout The maximum duration (in seconds) to wait for acquiring the lock. Defaults to the class constant LOCK_TIMEOUT.
-     * @return void
-     * @throws LockException If the lock file cannot be opened, or if the timeout is reached while waiting for the lock.
-     */
-    public function lock(string $uuid, bool $shared = false, float $timeout = self::LOCK_TIMEOUT_DEFAULT): void
-    {
-        if ($this->safeModeEnabled()) {
-            throw new LockException('Safe mode is enabled. Object cannot be locked.');
-        }
-
-        if ($shared && $this->hasActiveSharedLock($uuid)) {
-            return;
-        }
-
-        if (!$shared && $this->hasActiveExclusiveLock($uuid)) {
-            return;
-        }
-
-        if ($this->isLocked($uuid)) {
-            throw new LockException(sprintf('Lock already acquired from other process for uuid %s', $uuid));
-        }
-
-        $lockFile = $this->getLockFilePath($uuid);
-        $startTime = microtime(true);
-        $lockType = $shared ? LOCK_SH : LOCK_EX;
-
-        if (!file_exists($lockFile)) {
-            file_put_contents($lockFile, '');
-        }
-
-        $handle = fopen($lockFile, 'r+');
-        if ($handle === false) {
-            throw new LockException('Unable to open lock file: ' . $lockFile);
-        }
-
-        while (!flock($handle, $lockType | LOCK_NB)) {
-            if (microtime(true) - $startTime > $timeout) {
-                fclose($handle);
-                throw new LockException(sprintf('Timeout while waiting for lock: %s (%s)', $uuid, ($shared ? 'shared' : 'exclusive')));
-            }
-            usleep(100000); // 100ms
-        }
-
-        $this->activeLocks[$uuid] = [
-            'handle' => $handle,
-            'shared' => $shared,
-            'exclusive' => !$shared,
-        ];
-    }
-
-    /**
-     * Checks whether a specified resource identified by a UUID has a shared lock.
-     *
-     * @param string $uuid The unique identifier of the resource to check.
-     * @return bool Returns true if the resource has a shared lock; otherwise, returns false.
-     */
-    public function hasActiveSharedLock(string $uuid): bool
-    {
-        return isset($this->activeLocks[$uuid]) && $this->activeLocks[$uuid]['shared'];
-    }
-
-    /**
-     * Checks if an exclusive lock is held for the given unique identifier.
-     *
-     * @param string $uuid The unique identifier to check for an exclusive lock.
-     * @return bool Returns true if an exclusive lock is held for the given identifier; otherwise, false.
-     */
-    public function hasActiveExclusiveLock(string $uuid): bool
-    {
-        return isset($this->activeLocks[$uuid]) && $this->activeLocks[$uuid]['exclusive'];
-    }
-
-    /**
-     * Determines whether a lock exists for the specified unique identifier.
-     *
-     * @param string $uuid The unique identifier to check for an existing lock.
-     * @return bool Returns true if a lock exists for the given identifier, otherwise false.
-     */
-    public function isLocked(string $uuid): bool
-    {
-        return file_exists($this->getLockFilePath($uuid));
-    }
-
-    /**
-     * Generates the full file path for a lock file associated with a given unique identifier.
-     * The path includes the storage directory, the UUID, and a predefined lock file suffix.
-     *
-     * @param string $uuid A unique identifier used to generate the lock file path.
-     * @return string Returns the full file path for the lock file.
-     */
-    private function getLockFilePath(string $uuid): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . self::FILE_SUFFIX_LOCK;
-    }
-
-    /**
      * Checks if a file exists for a specific UUID.
      *
      * @param string $uuid The UUID to check if the associated file exists.
@@ -370,48 +152,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Checks if the object associated with the given UUID is expired.
+     * Generates the file path for the metadata associated with a specific UUID.
      *
-     * @param string $uuid The unique identifier of the object.
-     * @return bool Returns true if the object is expired, false otherwise.
+     * @param string $uuid The unique identifier used to build the metadata file path.
+     * @return string Returns the file path of the metadata corresponding to the provided UUID.
      */
-    public function expired(string $uuid): bool
+    public function getFilePathMetadata(string $uuid): string
     {
-        try {
-            $lifetime = $this->getLifetime($uuid);
-            return null !== $lifetime && $lifetime <= 0;
-        } catch (MetadataNotFoundException $e) {
-            $this->getLogger()?->log($e);
-            return !$this->exists($uuid);
-        }
-    }
-
-    /**
-     * Retrieves the expiration timestamp for the given UUID from its metadata.
-     * Throws an exception if metadata cannot be loaded for the specified UUID.
-     *
-     * @param string $uuid The unique identifier used to retrieve metadata.
-     * @return int|null The expiration timestamp if available, or null if not set.
-     */
-    public function getExpiration(string $uuid): ?int
-    {
-        $metadata = $this->loadMetadata($uuid);
-        return $metadata['expiresAt'] ?? null;
-    }
-
-    /**
-     * Calculates the remaining lifetime in seconds for the given UUID based on its expiration time.
-     *
-     * @param string $uuid The unique identifier for which to calculate the remaining lifetime.
-     * @return int|null Returns the remaining lifetime in seconds, or null if the expiration time is not set. Negative values represent the lifetime since expiration
-     */
-    public function getLifetime(string $uuid): ?int
-    {
-        $expiresAt = $this->getExpiration($uuid);
-        if (null === $expiresAt) {
-            return null;
-        }
-        return $expiresAt - time();
+        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
     }
 
     /**
@@ -442,6 +190,59 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Loads metadata associated with the given unique identifier.
+     *
+     * @param string $uuid The unique identifier for which the metadata is being loaded.
+     * @return array|null Returns the metadata as an associative array if available, or null if an error occurs or metadata is not found.
+     */
+    public function loadMetadata(string $uuid): ?array
+    {
+        try {
+            return $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return null;
+        }
+    }
+
+    /**
+     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
+     *
+     * @param string $filename The path to the file to read and decode data from.
+     * @return array|null Returns the decoded data as an associative array.
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException If the file content cannot be decoded.
+     */
+    private function loadFromJsonFile(string $filename): ?array
+    {
+        try {
+            $data = $this->getReader()->read($filename);
+        } catch (IOException $e) {
+            $this->getLogger()?->log($e);
+            return null;
+        }
+
+        $data = json_decode($data, true, $this->maxNestingLevel);
+
+        if (null === $data) {
+            $this->getStateHandler()->enableSafeMode();
+            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
+        }
+
+        return $data;
+    }
+
+    public function getReader(): ReaderInterface
+    {
+        return $this->reader ?? new Reader();
+    }
+
+    public function setReader(ReaderInterface $reader): void
+    {
+        $this->reader = $reader;
+    }
+
+    /**
      * Saves metadata associated with a specific UUID by writing the data
      * to a file in an atomic operation. The metadata is serialized into JSON
      * format before being written to the file.
@@ -456,64 +257,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Generates the file path for the metadata associated with a specific UUID.
-     *
-     * @param string $uuid The unique identifier used to build the metadata file path.
-     * @return string Returns the file path of the metadata corresponding to the provided UUID.
-     */
-    public function getFilePathMetadata(string $uuid): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
-    }
-
-    /**
-     * Checks if there is an active lock associated with the given unique identifier.
-     *
-     * @param null|string $uuid The unique identifier to check for an active lock.
-     * @return bool Returns true if an active lock exists for the provided identifier, false otherwise.
-     */
-    public function hasActiveLock(?string $uuid): bool
-    {
-        if (null === $uuid) {
-            return false;
-        }
-        return isset($this->activeLocks[$uuid]);
-    }
-
-    /**
-     * Releases an active lock associated with the given unique identifier (UUID).
-     * Frees the associated file handle, removes the lock, and deletes the lock file.
-     *
-     * @param string $uuid The unique identifier for the lock to be released.
-     * @return void
-     * @throws LockException If no active lock is found for the given UUID.
-     */
-    public function unlock(string $uuid): void
-    {
-        $lock = $this->activeLocks[$uuid] ?? null;
-
-        if (null === $lock) {
-            throw new LockException('No active lock found for uuid: ' . $uuid);
-        }
-
-        if (false === flock($lock['handle'], LOCK_UN)) {
-            throw new LockException('Unable to release lock: ' . $uuid);
-        }
-
-        if (false === fclose($lock['handle'])) {
-            throw new LockException('Unable to close lock file: ' . $uuid);
-        }
-
-        $path = $this->getLockFilePath($uuid);
-
-        if (file_exists($path) && false === @unlink($this->getLockFilePath($uuid))) {
-            throw new LockException('Unable to delete lock file: ' . $uuid);
-        }
-
-        unset($this->activeLocks[$uuid]);
-    }
-
-    /**
      * Clears the internal object cache by resetting it to an empty array.
      *
      * @return void
@@ -523,121 +266,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->objectCache = [];
         $this->hashToUuid = [];
         $this->registeredClassnamesCache = null;
-    }
-
-    /**
-     * Creates an iterator for traversing through stub files located in the specified
-     * class stubs directory, applying a filter to match files with the stub file suffix.
-     *
-     * @param string $pathClassStubs The path to the directory containing class stub files.
-     *
-     * @return Traversable An iterator that provides filtered access to stub files in the directory.
-     */
-    private function createStubIterator(string $pathClassStubs): Traversable
-    {
-        $pattern = $pathClassStubs . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_STUB;
-
-        return new class (new GlobIterator($pattern), static::FILE_SUFFIX_STUB, $pathClassStubs) extends FilterIterator {
-            private string $extension;
-            private string $pathClassStubs;
-
-            public function __construct(Iterator $iterator, string $extension, string $pathClassStubs)
-            {
-                parent::__construct($iterator);
-                $this->extension = $extension;
-                $this->pathClassStubs = $pathClassStubs;
-            }
-
-            public function rewind(): void
-            {
-                clearstatcache(true, $this->pathClassStubs);
-                parent::rewind();
-            }
-
-            public function accept(): bool
-            {
-                return true;
-            }
-
-            public function current(): string
-            {
-                return basename(parent::current(), $this->extension);
-            }
-
-            public function key(): string
-            {
-                return $this->current();
-            }
-        };
-    }
-
-    /**
-     * Creates an iterator that filters objects based on the provided classname and retrieves them from storage.
-     *
-     * @param string|null $classname The classname to filter objects by. If null, no filtering is applied.
-     * @return Traversable An iterator for traversing filtered objects.
-     */
-    private function createObjectIterator(?string $classname): Traversable
-    {
-        $pattern = $this->storageDir . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
-        return new class (new GlobIterator($pattern), $classname, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
-
-            private ?string $expectedClassname = null;
-            private string $extension;
-            private ObjectStorage $storage;
-
-            public function __construct(GlobIterator $iterator, ?string $classname, string $extension, ObjectStorage $storage)
-            {
-                parent::__construct($iterator);
-                $this->expectedClassname = $classname;
-                $this->storage = $storage;
-                $this->extension = $extension;
-            }
-
-            public function rewind(): void
-            {
-                clearstatcache(true, $this->storage->getStorageDir());
-                parent::rewind();
-            }
-
-            public function accept(): bool
-            {
-                if (null !== $this->expectedClassname) {
-                    try {
-                        $uuid = $this->current();
-                        $assignedClassname = $this->storage->getClassname($uuid);
-                        return $assignedClassname === $this->expectedClassname;
-                    } catch (Throwable $e) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-
-            public function current(): string
-            {
-                return basename(parent::current(), $this->extension);
-            }
-
-            public function key(): string
-            {
-                return $this->current();
-            }
-        };
-    }
-
-    /**
-     * Retrieves a list of all available UUIDs by extracting keys from the stored files.
-     *
-     * @return Traversable  Returns a traversable of UUIDs
-     */
-    public function list(?string $classname = null): Traversable
-    {
-        if (null !== $classname && is_dir($pathClassStubs = $this->getClassStubDirectory($classname))) {
-            return $this->createStubIterator($pathClassStubs);
-        }
-
-        return $this->createObjectIterator($classname);
     }
 
     /**
@@ -657,18 +285,63 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $this->lock($uuid, !$exclusive);
+            $this->getLockAdapter()->aquireSharedLock($uuid);
             $object = $this->loadFromStorage($uuid);
             if (!$exclusive) {
-                $this->unlock($uuid);
+                $this->getLockAdapter()->releaseLock($uuid);
             }
             return $object;
         } catch (Throwable $e) {
-            if ($this->hasActiveLock($uuid)) {
-                $this->unlock($uuid);
+            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()->releaseLock($uuid);
             }
             throw $e;
         }
+    }
+
+    /**
+     * Checks if the object associated with the given UUID is expired.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool Returns true if the object is expired, false otherwise.
+     */
+    public function expired(string $uuid): bool
+    {
+        try {
+            $lifetime = $this->getLifetime($uuid);
+            return null !== $lifetime && $lifetime <= 0;
+        } catch (MetadataNotFoundException $e) {
+            $this->getLogger()?->log($e);
+            return !$this->exists($uuid);
+        }
+    }
+
+    /**
+     * Calculates the remaining lifetime in seconds for the given UUID based on its expiration time.
+     *
+     * @param string $uuid The unique identifier for which to calculate the remaining lifetime.
+     * @return int|null Returns the remaining lifetime in seconds, or null if the expiration time is not set. Negative values represent the lifetime since expiration
+     */
+    public function getLifetime(string $uuid): ?int
+    {
+        $expiresAt = $this->getExpiration($uuid);
+        if (null === $expiresAt) {
+            return null;
+        }
+        return $expiresAt - time();
+    }
+
+    /**
+     * Retrieves the expiration timestamp for the given UUID from its metadata.
+     * Throws an exception if metadata cannot be loaded for the specified UUID.
+     *
+     * @param string $uuid The unique identifier used to retrieve metadata.
+     * @return int|null The expiration timestamp if available, or null if not set.
+     */
+    public function getExpiration(string $uuid): ?int
+    {
+        $metadata = $this->loadMetadata($uuid);
+        return $metadata['expiresAt'] ?? null;
     }
 
     /**
@@ -696,12 +369,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         $classname = $this->getClassname($uuid);
         if (null === $classname) {
-            $this->enableSafeMode();
+            $this->getStateHandler()->enableSafeMode();
             throw new InvalidFileFormatException('Unable to determine className for: ' . $uuid);
         }
 
         if (false === $data) {
-            $this->enableSafeMode();
+            $this->getStateHandler()->enableSafeMode();
             throw new SerializationFailureException('Unable to deserialize data from file: ' . $filename);
         }
 
@@ -717,76 +390,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
+     * Get a classname for a certain object
      *
-     * @param string $filename The path to the file to read and decode data from.
-     * @return array|null Returns the decoded data as an associative array.
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException If the file content cannot be decoded.
+     * @param string $uuid
+     * @return string|null
      */
-    private function loadFromJsonFile(string $filename): ?array
+    public function getClassname(string $uuid): ?string
     {
-        try {
-            $data = $this->getReader()->read($filename);
-        } catch (IOException $e) {
-            $this->getLogger()?->log($e);
-            return null;
-        }
-
-        $data = json_decode($data, true, $this->maxNestingLevel);
-
-        if (null === $data) {
-            $this->enableSafeMode();
-            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
-        }
-
-        return $data;
-    }
-
-    public function getReader(): ReaderInterface
-    {
-        return $this->reader ?? new Reader();
-    }
-
-    public function setReader(ReaderInterface $reader): void
-    {
-        $this->reader = $reader;
-    }
-
-    /**
-     * Enables safe mode by performing an atomic writing to a designated file.
-     *
-     * @return bool Returns true if safe mode was successfully enabled, or false if an error occurred during the process.
-     * @throws SafeModeActivationFailedException
-     */
-    public function enableSafeMode(): bool
-    {
-        try {
-            $this->getWriter()->atomicWrite($this->getFilePathSafeMode(), '1');
-            return true;
-        } catch (Throwable $e) {
-            throw new SafeModeActivationFailedException('Unable to enable safe mode', 0, $e);
-        }
-    }
-
-    public function getWriter(): WriterInterface
-    {
-        return $this->writer ?? new Writer();
-    }
-
-    public function setWriter(WriterInterface $writer): void
-    {
-        $this->writer = $writer;
-    }
-
-    /**
-     * Retrieves the file path for safe mode storage based on the storage directory.
-     *
-     * @return string Returns the full file path for safe mode storage.
-     */
-    private function getFilePathSafeMode(): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'safeMode';
+        return $this->loadMetadata($uuid)['className'] ?? null;
     }
 
     /**
@@ -888,20 +499,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Destructor method that ensures all active locks are released.
-     * Logs an error message if unlocking fails for any object.
+     * Releases all active locks held by the lock adapter before object destruction.
      *
      * @return void
      */
     public function __destruct()
     {
-        foreach (array_keys($this->activeLocks) as $uuid) {
-            try {
-                $this->unlock($uuid);
-            } catch (Throwable $e) {
-                $this->getLogger()?->log(new LockException(sprintf('Error while unlocking object %s', $uuid), Exception::CODE_FAILURE_OBJECT_UNLOCK, $e));
-            }
-        }
+        $this->lockAdapter->releaseActiveLocks();
     }
 
     /**
@@ -927,7 +531,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function store(object $object, ?string $uuid = null, ?int $ttl = null): string
     {
-        if ($this->safeModeEnabled()) {
+        if ($this->getStateHandler()->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
 
@@ -952,16 +556,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->hashToUuid[$objectHash] = $uuid;
 
             // 3) Kein Early-Return: serializeAndStore IMMER aufrufen, damit Updates via Checksumme erkannt werden
-            $this->lock($uuid, false);
+            $this->getLockAdapter()->aquireExclusiveLock($uuid);
             $this->serializeAndStore($object, $uuid, $ttl);
-            if ($this->hasActiveLock($uuid)) {
-                $this->unlock($uuid);
+            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()->releaseLock($uuid);
             }
 
             return $uuid;
         } catch (Throwable $e) {
-            if ($this->hasActiveLock($uuid)) {
-                $this->unlock($uuid);
+            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()->releaseLock($uuid);
             }
             throw $e;
         }
@@ -1037,40 +641,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         } finally {
             // Rekursionsschutz entfernen
             array_pop($this->processingStack);
-        }
-    }
-
-    /**
-     * @param string $classname
-     * @param string $uuid
-     * @throws IOException
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     */
-    private function createStub(string $classname, string $uuid): void
-    {
-        $this->registerClassname($classname);
-        $pathname = $this->getFilePathStub($classname, $uuid);
-        $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-        $this->createEmptyFile($pathname);
-    }
-
-    /**
-     * @throws SerializationFailureException
-     * @throws SafeModeActivationFailedException
-     * @throws IOException
-     */
-    private function registerClassname(string $classname): void
-    {
-        $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
-
-        if (!in_array($classname, $registeredClassnames, true)) {
-            $this->registeredClassnamesCache[] = $classname;
-            $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->getWriter()->atomicWrite(
-                $this->getFilePathClassnames(),
-                json_encode($this->registeredClassnamesCache, JSON_UNESCAPED_SLASHES)
-            );
         }
     }
 
@@ -1200,30 +770,37 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Loads metadata associated with the given unique identifier.
-     *
-     * @param string $uuid The unique identifier for which the metadata is being loaded.
-     * @return array|null Returns the metadata as an associative array if available, or null if an error occurs or metadata is not found.
+     * @param string $classname
+     * @param string $uuid
+     * @throws IOException
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException
      */
-    public function loadMetadata(string $uuid): ?array
+    private function createStub(string $classname, string $uuid): void
     {
-        try {
-            return $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            return null;
-        }
+        $this->registerClassname($classname);
+        $pathname = $this->getFilePathStub($classname, $uuid);
+        $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
+        $this->createEmptyFile($pathname);
     }
 
     /**
-     * Get a classname for a certain object
-     *
-     * @param string $uuid
-     * @return string|null
+     * @throws SerializationFailureException
+     * @throws SafeModeActivationFailedException
+     * @throws IOException
      */
-    public function getClassname(string $uuid): ?string
+    private function registerClassname(string $classname): void
     {
-        return $this->loadMetadata($uuid)['className'] ?? null;
+        $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
+
+        if (!in_array($classname, $registeredClassnames, true)) {
+            $this->registeredClassnamesCache[] = $classname;
+            $this->createDirectoryIfNotExist($this->getStubDirectory());
+            $this->getWriter()->atomicWrite(
+                $this->getFilePathClassnames(),
+                json_encode($this->registeredClassnamesCache, JSON_UNESCAPED_SLASHES)
+            );
+        }
     }
 
     /**
@@ -1244,6 +821,70 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         return $this->registeredClassnamesCache;
+    }
+
+    /**
+     * Retrieves the file path for the classnames JSON file.
+     *
+     * @return string The file path of the classnames JSON file.
+     */
+    protected function getFilePathClassnames(): string
+    {
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
+    }
+
+    /**
+     * Retrieves the path to the stub directory.
+     *
+     * @return string The full path to the stub directory.
+     */
+    protected function getStubDirectory(): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
+    }
+
+    /**
+     * @throws IOException
+     */
+    protected function createDirectoryIfNotExist(string $directory): void
+    {
+        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
+            throw new IOException('Unable to open storage directory: ' . $directory);
+        }
+    }
+
+    /**
+     * Generates the file path for a stub associated with a specific class and UUID.
+     *
+     * @param string $classname The name of the class for which the stub is being generated.
+     * @param string $uuid The unique identifier used to differentiate the stub file.
+     * @return string The full file path for the stub.
+     */
+    protected function getFilePathStub(string $classname, string $uuid): string
+    {
+        return $this->getClassStubDirectory($classname) . DIRECTORY_SEPARATOR . $uuid . '.stub';
+    }
+
+    /**
+     * Retrieves the directory path where the class stub for the given class name is stored.
+     *
+     * @param string $classname The name of the class for which the stub directory path is being generated.
+     * @return string The full path to the class stub directory.
+     */
+    protected function getClassStubDirectory(string $classname): string
+    {
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($classname);
+    }
+
+    /**
+     * Creates an empty file with the specified filename.
+     *
+     * @param string $filename The name of the file to be created.
+     * @return void
+     */
+    protected function createEmptyFile(string $filename): void
+    {
+        $this->getWriter()->atomicWrite($filename);
     }
 
     /**
@@ -1271,16 +912,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
         }
         return array_values($classnames);
-    }
-
-    /**
-     * Retrieves a list of uuids for all currently active locks.
-     *
-     * @return array
-     */
-    public function getActiveLocks(): array
-    {
-        return array_keys($this->activeLocks);
     }
 
     /**
@@ -1320,12 +951,164 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Retrieves the file path for the classnames JSON file.
+     * Retrieves a list of all available UUIDs by extracting keys from the stored files.
      *
-     * @return string The file path of the classnames JSON file.
+     * @return Traversable  Returns a traversable of UUIDs
      */
-    protected function getFilePathClassnames(): string
+    public function list(?string $classname = null): Traversable
     {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
+        if (null !== $classname && is_dir($pathClassStubs = $this->getClassStubDirectory($classname))) {
+            return $this->createStubIterator($pathClassStubs);
+        }
+
+        return $this->createObjectIterator($classname);
+    }
+
+    /**
+     * Creates an iterator for traversing through stub files located in the specified
+     * class stubs directory, applying a filter to match files with the stub file suffix.
+     *
+     * @param string $pathClassStubs The path to the directory containing class stub files.
+     *
+     * @return Traversable An iterator that provides filtered access to stub files in the directory.
+     */
+    private function createStubIterator(string $pathClassStubs): Traversable
+    {
+        $pattern = $pathClassStubs . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_STUB;
+
+        return new class (new GlobIterator($pattern), static::FILE_SUFFIX_STUB, $pathClassStubs) extends FilterIterator {
+            private string $extension;
+            private string $pathClassStubs;
+
+            public function __construct(Iterator $iterator, string $extension, string $pathClassStubs)
+            {
+                parent::__construct($iterator);
+                $this->extension = $extension;
+                $this->pathClassStubs = $pathClassStubs;
+            }
+
+            public function rewind(): void
+            {
+                clearstatcache(true, $this->pathClassStubs);
+                parent::rewind();
+            }
+
+            public function accept(): bool
+            {
+                return true;
+            }
+
+            public function current(): string
+            {
+                return basename(parent::current(), $this->extension);
+            }
+
+            public function key(): string
+            {
+                return $this->current();
+            }
+        };
+    }
+
+    /**
+     * Constructs the object storage handler by initializing directory, file settings,
+     * caching, and maximum nesting level configurations.
+     *
+     * @param string $storageDir The directory path where objects will be stored.
+     * @param LoggerInterface|null $logger
+     * @param LockAdapterInterface|null $lockAdapter
+     * @param StateHandler|null $stateHandler
+     * @param string $reservedReferenceName
+     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
+     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
+     * @throws IOException If the storage directory cannot be created.
+     */
+    public function __construct(
+        private string                  $storageDir,
+        protected ?LoggerInterface      $logger = null,
+        protected ?LockAdapterInterface $lockAdapter = null,
+        protected ?StateHandler         $stateHandler = null,
+        private string                  $reservedReferenceName = '__reference',
+        private bool                    $enableCache = true,
+        private int                     $maxNestingLevel = 100
+    )
+    {
+        if (null === $stateHandler) {
+            $stateHandler = new StateHandler($this->storageDir);
+            $this->setStateHandler($stateHandler);
+        }
+        if (null === $lockAdapter) {
+            $lockAdapter = new FileSystemLockingBackend($this->storageDir);
+            $lockAdapter->setStateHandler($stateHandler);
+            $lockAdapter->setLogger($this->logger);
+            $this->setLockAdapter($lockAdapter);
+        }
+        $this->storageDir = rtrim($storageDir, '/\\');
+        $this->createDirectoryIfNotExist($this->storageDir);
+    }
+
+    /**
+     * Creates an iterator that filters objects based on the provided classname and retrieves them from storage.
+     *
+     * @param string|null $classname The classname to filter objects by. If null, no filtering is applied.
+     * @return Traversable An iterator for traversing filtered objects.
+     */
+    private function createObjectIterator(?string $classname): Traversable
+    {
+        $pattern = $this->storageDir . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
+        return new class (new GlobIterator($pattern), $classname, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
+
+            private ?string $expectedClassname = null;
+            private string $extension;
+            private ObjectStorage $storage;
+
+            public function __construct(GlobIterator $iterator, ?string $classname, string $extension, ObjectStorage $storage)
+            {
+                parent::__construct($iterator);
+                $this->expectedClassname = $classname;
+                $this->storage = $storage;
+                $this->extension = $extension;
+            }
+
+            public function rewind(): void
+            {
+                clearstatcache(true, $this->storage->getStorageDir());
+                parent::rewind();
+            }
+
+            public function accept(): bool
+            {
+                if (null !== $this->expectedClassname) {
+                    try {
+                        $uuid = $this->current();
+                        $assignedClassname = $this->storage->getClassname($uuid);
+                        return $assignedClassname === $this->expectedClassname;
+                    } catch (Throwable $e) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            public function current(): string
+            {
+                return basename(parent::current(), $this->extension);
+            }
+
+            public function key(): string
+            {
+                return $this->current();
+            }
+        };
+    }
+
+    /**
+     * Retrieves the directory path where storage operations are performed.
+     *
+     * @return string The storage directory path as a string.
+     */
+    public function getStorageDir(): string
+    {
+        return $this->storageDir;
     }
 }

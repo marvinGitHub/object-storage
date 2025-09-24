@@ -2,4 +2,6 @@
 
 namespace melia\ObjectStorage\Exception;
 
-class InvalidBufferSizeException extends Exception {}
+class InvalidBufferSizeException extends Exception
+{
+}

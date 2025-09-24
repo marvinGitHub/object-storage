@@ -16,20 +16,6 @@ class PrettyJSONError extends Error {
 }
 
 class PrettyJSON extends HTMLElement {
-    /**
-     * @type {any}
-     */
-    #input;
-
-    /**
-     * @type {boolean}
-     */
-    #isExpanded;
-
-    static get observedAttributes() {
-        return ["expand", "key", "truncate-string"];
-    }
-
     // Default colors and styles
     static DEFAULT_VARIABLES = {
         light: {
@@ -63,42 +49,24 @@ class PrettyJSON extends HTMLElement {
             fontFamily: "monospace",
         },
     };
+    /**
+     * @type {any}
+     */
+    #input;
+    /**
+     * @type {boolean}
+     */
+    #isExpanded;
 
-    #getCssVariables() {
-        const prefersDarkMode = window.matchMedia(
-            "(prefers-color-scheme: dark)"
-        ).matches;
-        const variables = prefersDarkMode
-            ? PrettyJSON.DEFAULT_VARIABLES.dark
-            : PrettyJSON.DEFAULT_VARIABLES.light;
-        if (!this.shadowRoot) {
-            return variables;
-        }
-        const style = getComputedStyle(this.shadowRoot.host);
+    constructor() {
+        super();
 
-        return {
-            keyColor: style.getPropertyValue("--key-color") || variables.keyColor,
-            arrowColor:
-                style.getPropertyValue("--arrow-color") || variables.arrowColor,
-            braceColor:
-                style.getPropertyValue("--brace-color") || variables.braceColor,
-            bracketColor:
-                style.getPropertyValue("--bracket-color") || variables.bracketColor,
-            stringColor:
-                style.getPropertyValue("--string-color") || variables.stringColor,
-            numberColor:
-                style.getPropertyValue("--number-color") || variables.numberColor,
-            nullColor: style.getPropertyValue("--null-color") || variables.nullColor,
-            booleanColor:
-                style.getPropertyValue("--boolean-color") || variables.booleanColor,
-            commaColor:
-                style.getPropertyValue("--comma-color") || variables.commaColor,
-            ellipsisColor:
-                style.getPropertyValue("--ellipsis-color") || variables.ellipsisColor,
-            indent: style.getPropertyValue("--indent") || variables.indent,
-            fontSize: style.getPropertyValue("--font-size") || variables.fontSize,
-            fontFamily: style.getPropertyValue("--font-family") || variables.fontFamily,
-        };
+        this.#isExpanded = true;
+        this.attachShadow({mode: "open"});
+    }
+
+    static get observedAttributes() {
+        return ["expand", "key", "truncate-string"];
     }
 
     get #styles() {
@@ -196,13 +164,6 @@ class PrettyJSON extends HTMLElement {
   `;
     }
 
-    constructor() {
-        super();
-
-        this.#isExpanded = true;
-        this.attachShadow({ mode: "open" });
-    }
-
     get #expandAttributeValue() {
         const expandAttribute = this.getAttribute("expand");
         if (expandAttribute === null) {
@@ -222,6 +183,43 @@ class PrettyJSON extends HTMLElement {
         return isNaN(truncateStringValue) || truncateStringValue < 0
             ? 0
             : truncateStringValue;
+    }
+
+    #getCssVariables() {
+        const prefersDarkMode = window.matchMedia(
+            "(prefers-color-scheme: dark)"
+        ).matches;
+        const variables = prefersDarkMode
+            ? PrettyJSON.DEFAULT_VARIABLES.dark
+            : PrettyJSON.DEFAULT_VARIABLES.light;
+        if (!this.shadowRoot) {
+            return variables;
+        }
+        const style = getComputedStyle(this.shadowRoot.host);
+
+        return {
+            keyColor: style.getPropertyValue("--key-color") || variables.keyColor,
+            arrowColor:
+                style.getPropertyValue("--arrow-color") || variables.arrowColor,
+            braceColor:
+                style.getPropertyValue("--brace-color") || variables.braceColor,
+            bracketColor:
+                style.getPropertyValue("--bracket-color") || variables.bracketColor,
+            stringColor:
+                style.getPropertyValue("--string-color") || variables.stringColor,
+            numberColor:
+                style.getPropertyValue("--number-color") || variables.numberColor,
+            nullColor: style.getPropertyValue("--null-color") || variables.nullColor,
+            booleanColor:
+                style.getPropertyValue("--boolean-color") || variables.booleanColor,
+            commaColor:
+                style.getPropertyValue("--comma-color") || variables.commaColor,
+            ellipsisColor:
+                style.getPropertyValue("--ellipsis-color") || variables.ellipsisColor,
+            indent: style.getPropertyValue("--indent") || variables.indent,
+            fontSize: style.getPropertyValue("--font-size") || variables.fontSize,
+            fontFamily: style.getPropertyValue("--font-family") || variables.fontFamily,
+        };
     }
 
     #toggle() {
@@ -286,7 +284,7 @@ class PrettyJSON extends HTMLElement {
                 container.appendChild(this.#createTruncatedStringElement(input));
             } else {
                 if (ReferenceLinkGenerator.isValidUUID(input)) {
-                    container.innerHTML =  ReferenceLinkGenerator.getAnchor(input);
+                    container.innerHTML = ReferenceLinkGenerator.getAnchor(input);
                 } else {
                     container.textContent = JSON.stringify(input);
                 }
@@ -421,7 +419,7 @@ class PrettyJSON extends HTMLElement {
      * @param {{ expanded?: boolean }} [options]
      * @returns {SVGElement}
      */
-    #createArrowElement({ expanded = false } = {}) {
+    #createArrowElement({expanded = false} = {}) {
         const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         svg.setAttribute("width", "100");
         svg.setAttribute("height", "100");
@@ -449,11 +447,11 @@ class PrettyJSON extends HTMLElement {
      * @param {{ withArrow?: boolean, expanded?: boolean }} [options]
      * @returns {HTMLElement}
      */
-    #createKeyElement(key, { withArrow = false, expanded = false } = {}) {
+    #createKeyElement(key, {withArrow = false, expanded = false} = {}) {
         const keyElement = document.createElement(withArrow ? "button" : "span");
         keyElement.className = "key";
         if (withArrow) {
-            const arrow = this.#createArrowElement({ expanded });
+            const arrow = this.#createArrowElement({expanded});
             keyElement.appendChild(arrow);
         }
         const keyName = document.createElement("span");
