@@ -15,6 +15,7 @@ use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
+use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
@@ -1019,12 +1020,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $value = $reflection->get($propertyName);
 
-            /* skip resources */
-            if (is_resource($value)) {
-                continue;
+            try {
+                $result[$propertyName] = $this->processValueForStorage($value, [$propertyName], 0);
+            } catch (ResourceSerializationNotSupportedException $e) {
+                $this->getLogger()?->log($e);
             }
-
-            $result[$propertyName] = $this->processValueForStorage($value, [$propertyName], 0);
         }
 
         return $result;
@@ -1043,11 +1043,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws ResourceSerializationNotSupportedException
      */
     private function processValueForStorage(mixed $value, array $path, int $level): mixed
     {
         if ($level > $this->maxNestingLevel) {
             throw new MaxNestingLevelExceededException('Maximum nesting level of ' . $this->maxNestingLevel . ' exceeded');
+        }
+
+        if (is_resource($value)) {
+            throw new ResourceSerializationNotSupportedException('Resources are not supported');
         }
 
         if (is_object($value)) {
@@ -1076,7 +1081,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         if (is_array($value)) {
             $out = [];
             foreach ($value as $k => $v) {
-                $out[$k] = $this->processValueForStorage($v, array_merge($path, [$k]), $level + 1);
+                try {
+                    $out[$k] = $this->processValueForStorage($v, array_merge($path, [$k]), $level + 1);
+                } catch (ResourceSerializationNotSupportedException $e) {
+                    $this->getLogger()?->log($e);
+                }
             }
             return $out;
         }

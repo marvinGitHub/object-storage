@@ -331,7 +331,11 @@ class ObjectStorageTest extends TestCase
     {
         $object = new TestObject();
         $object->a = 'test';
-        $object->someResource = fopen(__FILE__, 'r');
+        $resource = fopen(__FILE__, 'r');
+        $object->someResource = $resource;
+        $object->nested = [
+            $resource, 10
+        ];
 
         $json = $this->storage->createJSONSchema($object);
         $data = json_decode($json, true);
@@ -339,6 +343,8 @@ class ObjectStorageTest extends TestCase
         $this->assertIsArray($data);
         $this->assertArrayHasKey('a', $data);
         $this->assertArrayNotHasKey('someResource', $data);
-
+        $this->assertArrayHasKey('nested', $data);
+        $this->assertIsArray($data['nested']);
+        $this->assertCount(1, $data['nested']);
     }
 }

@@ -83,6 +83,13 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
         }, $className));
     }
 
+    /**
+     * Retrieves a collection of unique and valid UUIDs based on the provided subset.
+     * If no subset is provided, retrieves the complete list of objects.
+     *
+     * @param array|null $subSet An optional array of UUIDs to filter. If provided, both array keys and values are considered.
+     * @return iterable An iterable collection containing unique and valid UUIDs.
+     */
     protected function getSelection(?array $subSet = null): iterable
     {
         return $subSet ? array_unique(array_filter([...array_values($subSet), ...array_keys($subSet)], function ($uuid) {
