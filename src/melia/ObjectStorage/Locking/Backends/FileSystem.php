@@ -178,7 +178,7 @@ class FileSystem extends LockAdapterAbstract
      */
     public function releaseActiveLocks(): void
     {
-        foreach (array_keys($this->activeLocks) as $uuid) {
+        foreach ($this->getActiveLocks() as $uuid) {
             try {
                 $this->releaseLock($uuid);
             } catch (Throwable $e) {
@@ -222,6 +222,6 @@ class FileSystem extends LockAdapterAbstract
 
     public function getActiveLocks(): array
     {
-        return $this->activeLocks;
+        return array_keys($this->activeLocks);
     }
 }

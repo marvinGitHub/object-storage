@@ -75,19 +75,11 @@ When a lazy reference loads, it:
 - store(object $obj, ?string $uuid = null, ?int $ttl = null): string
     - Persists object and its referenced children; returns UUID. Optional lifetime in seconds.
 - load(string $uuid, bool $exclusive = false): ?object
-    - Loads object with a read lock (shared by default). Returns null if expired.
+    - Loads object with locking (shared when $exclusive=false). Returns null if expired.
 - exists(string $uuid): bool
     - Checks if object data file exists.
 - delete(string $uuid, bool $force = false): bool
     - Deletes object and its metadata; returns true on success. With $force=true, returns false if not found.
-- lock(string $uuid, bool $shared = false, float $timeout = 5.0): void
-    - Acquires a shared (read) or exclusive (write) lock with timeout.
-- unlock(string $uuid): void
-    - Releases a previously acquired lock.
-- isLocked(string $uuid): bool
-    - Checks if a lock file exists for the UUID.
-- getActiveLocks(): array
-    - Returns UUIDs currently locked by this process.
 - list(?string $class = null): Traversable
     - Iterates UUIDs; optionally filtered by class (via stubs).
 - loadMetadata(string $uuid): ?array
@@ -98,14 +90,41 @@ When a lazy reference loads, it:
     - Clears in-memory caches.
 - rebuildStubs(): void
     - Rebuilds class stub index.
+    - 
+### Locking (use LockAdapter)
+Use when you need explicit control over concurrent access (e.g., long-running writes, cross-process coordination). ObjectStorage uses the lock adapter internally in store/load/delete; call these for advanced scenarios.
 
-### Lifetime (TTL):
+- acquireSharedLock(string $uuid, int $timeout): void
+    - Obtain a read/shared lock (multiple readers allowed).
+- acquireExclusiveLock(string $uuid, int $timeout): void
+    - Obtain a write/exclusive lock (mutually exclusive).
+- releaseLock(string $uuid): void
+    - Release a held lock (shared or exclusive).
+- isLocked(string $uuid): bool
+    - Check if a lock exists (by any process).
+- isLockedByThisProcess(string $uuid): bool
+    - Check if the current process holds the lock.
+- getActiveLocks(): array
+    - UUIDs currently locked by this process.
+
+When to use:
+- Use LockAdapter methods when orchestrating multi-step operations where you must hold a lock across several API calls.
+- Rely on internal locking via load/store/delete for single atomic operations.
+
+### State (use StateHandler)
+Use when you need to gate operations globally (e.g., fail-safe after corruption) or query/process-wide state.
+- safeModeEnabled(): bool
+    - Check if safe mode is active.
+- enableSafeMode(): bool
+    - Activate safe mode to prevent further mutations.
+
+### Lifetime (TTL)
 - getLifetime(string $uuid): ?int
     - Remaining seconds (0 at expiry, negative after expiry, null if unlimited).
 - setLifetime(string $uuid, int $ttl): void
     - Sets/updates lifetime in seconds.
 - expired(string $uuid): bool
-    - Indicates whether the object is expired.
+    - Indicates whether the object is expired (load() returns null for expired objects).
 
 ## Locking, Caching, Safe Mode
 
