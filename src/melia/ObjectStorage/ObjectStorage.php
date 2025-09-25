@@ -310,7 +310,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $this->getLockAdapter()->acquireSharedLock($uuid);
+            if ($exclusive) {
+                $this->getLockAdapter()->acquireExclusiveLock($uuid);
+            } else {
+                $this->getLockAdapter()->acquireSharedLock($uuid);
+            }
             $object = $this->loadFromStorage($uuid);
             if (!$exclusive) {
                 $this->getLockAdapter()->releaseLock($uuid);

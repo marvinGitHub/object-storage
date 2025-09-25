@@ -427,4 +427,15 @@ class ObjectStorageTest extends TestCase
         // Accessing property triggers loadIfNeeded()
         $unused = $reloadedParent->child->name;
     }
+
+    public function testLoadWithExclusiveLock()
+    {
+        $uuid = $this->storage->store(new stdClass());
+        $loaded = $this->storage->load($uuid, true);
+        $this->assertInstanceOf(stdClass::class, $loaded);
+        $this->assertFalse($this->storage->getLockAdapter()->isLockedByOtherProcess($uuid));;
+        $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertTrue($this->storage->getLockAdapter()->hasActiveExclusiveLock($uuid));
+        $this->assertFalse($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
+    }
 }
