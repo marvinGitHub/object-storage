@@ -129,7 +129,7 @@ class ObjectStorageTest extends TestCase
     public function testStoreWithExclusiveLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->getLockAdapter()->aquireSharedLock($uuid);
+        $this->storage->getLockAdapter()->acquireSharedLock($uuid);
         $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
 
@@ -140,7 +140,7 @@ class ObjectStorageTest extends TestCase
     public function testDeleteWithExclusiveLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->getLockAdapter()->aquireSharedLock($uuid);
+        $this->storage->getLockAdapter()->acquireSharedLock($uuid);
         $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
 
@@ -153,7 +153,7 @@ class ObjectStorageTest extends TestCase
         $uuid = $this->storage->store(new stdClass());
         $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->assertCount(0, $this->storage->getLockAdapter()->getActiveLocks());
-        $this->storage->getLockAdapter()->aquireSharedLock($uuid);
+        $this->storage->getLockAdapter()->acquireSharedLock($uuid);
         $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->assertCount(1, $this->storage->getLockAdapter()->getActiveLocks());
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
@@ -162,7 +162,7 @@ class ObjectStorageTest extends TestCase
     public function testStoreWithConcurrentLock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
+        $this->storage->getLockAdapter()->acquireExclusiveLock($uuid);
 
         $anotherStorage = new ObjectStorage($this->storageDir);
 
@@ -173,7 +173,7 @@ class ObjectStorageTest extends TestCase
     public function testUnlock()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
+        $this->storage->getLockAdapter()->acquireExclusiveLock($uuid);
         $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->storage->getLockAdapter()->releaseLock($uuid);
         $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
@@ -182,7 +182,7 @@ class ObjectStorageTest extends TestCase
     public function testUnlockOfLockedObjectFromOtherProcess()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
+        $this->storage->getLockAdapter()->acquireExclusiveLock($uuid);
 
         $anotherStorage = new ObjectStorage($this->storageDir);
         $this->assertTrue($anotherStorage->getLockAdapter()->isLockedByOtherProcess($uuid));
@@ -197,7 +197,7 @@ class ObjectStorageTest extends TestCase
     public function testStoreWithLockFromOtherProcess()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->storage->getLockAdapter()->aquireExclusiveLock($uuid);
+        $this->storage->getLockAdapter()->acquireExclusiveLock($uuid);
 
         $this->expectException(LockException::class);
         $anotherStorage = new ObjectStorage($this->storageDir);

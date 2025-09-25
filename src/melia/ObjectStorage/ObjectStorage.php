@@ -97,7 +97,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $filePath = $this->getFilePathData($uuid);
 
         try {
-            $this->getLockAdapter()->aquireExclusiveLock($uuid);
+            $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
             if ($this->enableCache) {
                 unset($this->objectCache[$uuid]);
@@ -285,7 +285,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $this->getLockAdapter()->aquireSharedLock($uuid);
+            $this->getLockAdapter()->acquireSharedLock($uuid);
             $object = $this->loadFromStorage($uuid);
             if (!$exclusive) {
                 $this->getLockAdapter()->releaseLock($uuid);
@@ -556,7 +556,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->hashToUuid[$objectHash] = $uuid;
 
             // 3) Kein Early-Return: serializeAndStore IMMER aufrufen, damit Updates via Checksumme erkannt werden
-            $this->getLockAdapter()->aquireExclusiveLock($uuid);
+            $this->getLockAdapter()->acquireExclusiveLock($uuid);
             $this->serializeAndStore($object, $uuid, $ttl);
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()->releaseLock($uuid);

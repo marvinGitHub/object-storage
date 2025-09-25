@@ -10,7 +10,7 @@ use Throwable;
 class FileSystem extends LockAdapterAbstract
 {
     const TYPE_SHARED = 0;
-    const TYPE_EXLUSIVE = 1;
+    const TYPE_EXCLUSIVE = 1;
 
     use LoggerAwareTrait;
 
@@ -44,7 +44,7 @@ class FileSystem extends LockAdapterAbstract
     /**
      * @throws LockException
      */
-    public function aquireSharedLock(string $uuid, int $timeout = 10): void
+    public function acquireSharedLock(string $uuid, int $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_SHARED, $timeout);
     }
@@ -69,7 +69,7 @@ class FileSystem extends LockAdapterAbstract
             return;
         }
 
-        if ($type === static::TYPE_EXLUSIVE && $this->hasActiveExclusiveLock($uuid)) {
+        if ($type === static::TYPE_EXCLUSIVE && $this->hasActiveExclusiveLock($uuid)) {
             return;
         }
 
@@ -79,7 +79,11 @@ class FileSystem extends LockAdapterAbstract
 
         $lockFile = $this->getLockFilePath($uuid);
         $startTime = microtime(true);
-        $lockType = $type === static::TYPE_SHARED ? LOCK_SH : LOCK_EX;
+        $lockType = match($type){
+            static::TYPE_SHARED => LOCK_SH,
+            static::TYPE_EXCLUSIVE => LOCK_EX,
+            default => throw new LockException('Invalid lock type'),
+        };
 
         if (!file_exists($lockFile)) {
             file_put_contents($lockFile, '');
@@ -101,7 +105,7 @@ class FileSystem extends LockAdapterAbstract
         $this->activeLocks[$uuid] = [
             'handle' => $handle,
             'shared' => $type === static::TYPE_SHARED,
-            'exclusive' => $type === static::TYPE_EXLUSIVE,
+            'exclusive' => $type === static::TYPE_EXCLUSIVE,
         ];
     }
 
@@ -161,9 +165,9 @@ class FileSystem extends LockAdapterAbstract
     /**
      * @throws LockException
      */
-    public function aquireExclusiveLock(string $uuid, int $timeout = 10): void
+    public function acquireExclusiveLock(string $uuid, int $timeout = 10): void
     {
-        $this->lock($uuid, static::TYPE_EXLUSIVE, $timeout);
+        $this->lock($uuid, static::TYPE_EXCLUSIVE, $timeout);
     }
 
     /**
