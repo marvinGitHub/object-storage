@@ -96,7 +96,7 @@ try {
             try {
                 $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
                 $exists = $storage->exists($uuid);
-                $storage->lock($uuid);
+                $storage->getLockAdapter()->acquireExclusiveLock($uuid);
 
                 $uuidNew = $storage->getNextAvailableUuid();
 
@@ -105,7 +105,7 @@ try {
 
                 $dataWritten = false !== file_put_contents($storage->getFilePathData($uuidNew), $data);
                 $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuidNew), $medata);
-                $storage->unlock($uuid);
+                $storage->getLockAdapter()->releaseLock($uuid);
                 $success = $dataWritten && $metadataWritten;
             } catch (Throwable $e) {
                 $success = false;
@@ -126,7 +126,7 @@ try {
             $storage = new ObjectStorage($storageDir);
 
             $exists = $storage->exists($uuid);
-            $isLocked = $storage->isLocked($uuid);
+            $isLocked = $storage->getLockAdapter()->isLockedByOtherProcess($uuid);
             if (false === $isLocked && $exists) {
                 $metadata = $storage->loadMetadata($uuid);
                 $classname = $storage->getClassName($uuid);
@@ -145,6 +145,7 @@ try {
                 'classname' => $classname ?? '',
                 'checksum' => $metadata['checksum'] ?? '',
                 'isLocked' => $isLocked,
+                'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited'
             ]);
             break;
         case 'save-record':
@@ -160,12 +161,12 @@ try {
                 } else {
                     try {
                         $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
-                        $storage->lock($uuid);
+                        $storage->getLockAdapter()->acquireExclusiveLock($uuid);
                         $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
                         $metadata = $storage->loadMetadata($uuid);
                         $metadata['checksum'] = md5($json);
                         $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), json_encode($metadata));
-                        $storage->unlock($uuid);
+                        $storage->getLockAdapter()->releaseLock($uuid);
                         $success = $dataWritten && $metadataWritten;
                     } catch (Throwable $e) {
                         $success = false;
