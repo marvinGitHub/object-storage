@@ -21,8 +21,7 @@ use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\File\Directory;
-use melia\ObjectStorage\File\Reader;
-use melia\ObjectStorage\File\ReaderInterface;
+use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
@@ -52,6 +51,7 @@ use Traversable;
 class ObjectStorage extends StorageAbstract implements StorageInterface, StorageMemoryConsumptionInterface
 {
     use WriterAwareTrait;
+    use ReaderAwareTrait;
 
     /**
      * The suffix used for metadata files.
@@ -76,7 +76,42 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /** @var array<string>|null */
     private ?array $registeredClassnamesCache = null;
 
-    private ReaderInterface $reader;
+    /**
+     * Constructs the object storage handler by initializing directory, file settings,
+     * caching, and maximum nesting level configurations.
+     *
+     * @param string $storageDir The directory path where objects will be stored.
+     * @param LoggerInterface|null $logger
+     * @param LockAdapterInterface|null $lockAdapter
+     * @param StateHandler|null $stateHandler
+     * @param string $reservedReferenceName
+     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
+     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
+     * @throws IOException If the storage directory cannot be created.
+     */
+    public function __construct(
+        private string                  $storageDir,
+        protected ?LoggerInterface      $logger = null,
+        protected ?LockAdapterInterface $lockAdapter = null,
+        protected ?StateHandler         $stateHandler = null,
+        private string                  $reservedReferenceName = '__reference',
+        private bool                    $enableCache = true,
+        private int                     $maxNestingLevel = 100
+    )
+    {
+        if (null === $stateHandler) {
+            $stateHandler = new StateHandler($this->storageDir);
+            $this->setStateHandler($stateHandler);
+        }
+        if (null === $lockAdapter) {
+            $lockAdapter = new FileSystemLockingBackend($this->storageDir);
+            $lockAdapter->setStateHandler($stateHandler);
+            $lockAdapter->setLogger($this->logger);
+            $this->setLockAdapter($lockAdapter);
+        }
+        $this->storageDir = rtrim($storageDir, '/\\');
+        $this->createDirectoryIfNotExist($this->storageDir);
+    }
 
     /**
      * Deletes an object based on its UUID.
@@ -230,16 +265,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         return $data;
-    }
-
-    public function getReader(): ReaderInterface
-    {
-        return $this->reader ?? new Reader();
-    }
-
-    public function setReader(ReaderInterface $reader): void
-    {
-        $this->reader = $reader;
     }
 
     /**
@@ -505,7 +530,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function __destruct()
     {
-        $this->lockAdapter->releaseActiveLocks();
+        $this->getLockAdapter()->releaseActiveLocks();
     }
 
     /**
@@ -546,11 +571,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         try {
             $objectHash = $this->getObjectHash($object);
-            $assignedUUID = Helper::getAssigned($object);
 
             // 1) UUID bevorzugt aus Param, sonst aus AwareInterface, sonst aus hashToUuid-Mapping WIEDERVERWENDEN,
             //    nur wenn nichts vorhanden ist, eine neue UUID erzeugen
-            $uuid ??= $assignedUUID ?? ($this->hashToUuid[$objectHash] ?? $this->getNextAvailableUuid());
+            $uuid ??= Helper::getAssigned($object) ?? $this->hashToUuid[$objectHash] ?? $this->getNextAvailableUuid();
 
             // 2) Mapping aktualisieren (wichtig für Referenzen und Folge-Store-Aufrufe)
             $this->hashToUuid[$objectHash] = $uuid;
@@ -666,12 +690,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Serialisiert ein Objekt als Array. Objektreferenzen werden als UUID-Referenz gespeichert,
-     * sodass keine Rekursion entsteht. Bereits verarbeitete Objekte werden erkannt und
-     * als Referenz markiert (__reference), anstatt erneut serialisiert zu werden.
+     * Creates a graph representation of the given object's properties and stores
+     * referenced child elements, ensuring deterministic property order.
      *
-     * @param object $object
-     * @return array
+     * @param object $object The object whose properties are to be processed for the graph.
+     * @return array An associative array representing the graph structure of the object's properties.
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
@@ -685,7 +708,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $result = [];
         $reflection = new Reflection($object);
 
-        // Deterministische Reihenfolge sicherstellen
+        // ensure deterministic order of properties
         $propertyNames = $reflection->getPropertyNames();
         sort($propertyNames, SORT_STRING);
 
@@ -1008,43 +1031,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 return $this->current();
             }
         };
-    }
-
-    /**
-     * Constructs the object storage handler by initializing directory, file settings,
-     * caching, and maximum nesting level configurations.
-     *
-     * @param string $storageDir The directory path where objects will be stored.
-     * @param LoggerInterface|null $logger
-     * @param LockAdapterInterface|null $lockAdapter
-     * @param StateHandler|null $stateHandler
-     * @param string $reservedReferenceName
-     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
-     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
-     * @throws IOException If the storage directory cannot be created.
-     */
-    public function __construct(
-        private string                  $storageDir,
-        protected ?LoggerInterface      $logger = null,
-        protected ?LockAdapterInterface $lockAdapter = null,
-        protected ?StateHandler         $stateHandler = null,
-        private string                  $reservedReferenceName = '__reference',
-        private bool                    $enableCache = true,
-        private int                     $maxNestingLevel = 100
-    )
-    {
-        if (null === $stateHandler) {
-            $stateHandler = new StateHandler($this->storageDir);
-            $this->setStateHandler($stateHandler);
-        }
-        if (null === $lockAdapter) {
-            $lockAdapter = new FileSystemLockingBackend($this->storageDir);
-            $lockAdapter->setStateHandler($stateHandler);
-            $lockAdapter->setLogger($this->logger);
-            $this->setLockAdapter($lockAdapter);
-        }
-        $this->storageDir = rtrim($storageDir, '/\\');
-        $this->createDirectoryIfNotExist($this->storageDir);
     }
 
     /**
