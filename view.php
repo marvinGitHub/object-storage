@@ -105,6 +105,7 @@ try {
 
                 $dataWritten = false !== file_put_contents($storage->getFilePathData($uuidNew), $data);
                 $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuidNew), $medata);
+                $storage->createStub($storage->getClassName($uuid), $uuidNew);
                 $storage->getLockAdapter()->releaseLock($uuid);
                 $success = $dataWritten && $metadataWritten;
             } catch (Throwable $e) {
@@ -114,7 +115,7 @@ try {
             echo $twig->render('duplicate-record.html', [
                 'storage' => $storageDir,
                 'exists' => $exists ?? false,
-                'success' => $success ?? false,
+                'success' => $success,
                 'uuidNew' => $uuidNew ?? '',
             ]);
 

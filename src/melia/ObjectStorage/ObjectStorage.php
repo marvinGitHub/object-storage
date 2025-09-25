@@ -803,7 +803,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    private function createStub(string $classname, string $uuid): void
+    public function createStub(string $classname, string $uuid): void
     {
         $this->registerClassname($classname);
         $pathname = $this->getFilePathStub($classname, $uuid);
@@ -887,7 +887,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $uuid The unique identifier used to differentiate the stub file.
      * @return string The full file path for the stub.
      */
-    protected function getFilePathStub(string $classname, string $uuid): string
+    public function getFilePathStub(string $classname, string $uuid): string
     {
         return $this->getClassStubDirectory($classname) . DIRECTORY_SEPARATOR . $uuid . '.stub';
     }
