@@ -195,7 +195,7 @@ do {
         // Back off briefly before retrying to avoid lock contention
         usleep(200_000 * $attempts); // 200ms, 400ms, 600ms
     }
-} while ($storage->isLocked($uuid));
+} while ($storage->getLockAdapter()->isLockedByOtherProcess($uuid));
 ```
 
 
