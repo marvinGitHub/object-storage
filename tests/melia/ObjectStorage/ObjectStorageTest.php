@@ -438,4 +438,14 @@ class ObjectStorageTest extends TestCase
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveExclusiveLock($uuid));
         $this->assertFalse($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
     }
+
+    public function testDeletionOfFiles()
+    {
+        $uuid = $this->storage->store(new stdClass());
+        $this->storage->delete($uuid);
+        $this->assertFalse($this->storage->exists($uuid));
+        $this->assertFalse(file_exists($this->storage->getFilePathData($uuid)));
+        $this->assertFalse(file_exists($this->storage->getFilePathMetadata($uuid)));
+        $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class,$uuid)));
+    }
 }

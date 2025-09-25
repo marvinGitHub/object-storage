@@ -129,6 +129,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
         }
 
+        $className = $this->getClassname($uuid);
         $filePath = $this->getFilePathData($uuid);
 
         try {
@@ -153,6 +154,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (file_exists($filePathMetadata)) {
                 if (!unlink($filePathMetadata)) {
                     throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
+                }
+            }
+
+            $filePathStub = $this->getFilePathStub($className, $uuid);
+            if (file_exists($filePathStub)) {
+                if (!unlink($filePathStub)) {
+                    throw new MetataDeletionFailureException('Stub for uuid ' . $uuid . ' could not be deleted');
                 }
             }
 

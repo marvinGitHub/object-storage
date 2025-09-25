@@ -120,7 +120,6 @@ try {
             ]);
 
             break;
-
         case 'view-record':
             $storageDir = $_GET['storage'] ?? null;
             $uuid = $_GET['uuid'] ?? null;
