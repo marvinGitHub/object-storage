@@ -131,9 +131,7 @@ try {
             if (false === $isLocked && $exists) {
                 $metadata = $storage->loadMetadata($uuid);
                 $classname = $storage->getClassName($uuid);
-
-                $record = $storage->load($uuid);
-                $json = $storage->exportGraphAndStoreReferencedChildren($record);
+                $json = file_get_contents($storage->getFilePathData($uuid));
             }
 
             echo $twig->render('view-record.html', [

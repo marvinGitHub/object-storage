@@ -7,6 +7,7 @@ use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\LazyLoadReference;
+use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
@@ -343,7 +344,12 @@ class ObjectStorageTest extends TestCase
             $resource, 10
         ];
 
-        $json = $this->storage->exportGraphAndStoreReferencedChildren($object);
+        $uuid = $this->storage->store($object);
+
+        $this->storage->clearCache();
+        $loaded = $this->storage->load($uuid);
+
+        $json = json_encode($loaded);
         $data = json_decode($json, true);
 
         $this->assertIsArray($data);
@@ -447,5 +453,23 @@ class ObjectStorageTest extends TestCase
         $this->assertFalse(file_exists($this->storage->getFilePathData($uuid)));
         $this->assertFalse(file_exists($this->storage->getFilePathMetadata($uuid)));
         $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class,$uuid)));
+    }
+
+    public function testStoreWithReservedReferenceName()
+    {
+        $a = new stdClass();
+        $b = new stdClass();
+        $b->{Metadata::RESERVED_REFERENCE_NAME_DEFAULT} = 'someOtherValueThenUUID';
+        $a->b = $b;
+
+        $uuidB = $this->storage->store($b);
+        $uuidA = $this->storage->store($a);
+        $loaded = $this->storage->load($uuidA);
+
+        $metadata = $this->storage->loadMetadata($uuidB);
+        $this->assertNotEquals(Metadata::RESERVED_REFERENCE_NAME_DEFAULT, $metadata->getReservedReferenceName());
+
+        $metadata = $this->storage->loadMetadata($uuidA);
+        $this->assertEquals(Metadata::RESERVED_REFERENCE_NAME_DEFAULT, $metadata->getReservedReferenceName());
     }
 }

@@ -5,6 +5,7 @@ namespace melia\ObjectStorage;
 use FilterIterator;
 use GlobIterator;
 use Iterator;
+use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
@@ -26,6 +27,7 @@ use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Logger\LoggerInterface;
+use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
@@ -75,43 +77,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /** @var array<string>|null */
     private ?array $registeredClassnamesCache = null;
-
-    /**
-     * Constructs the object storage handler by initializing directory, file settings,
-     * caching, and maximum nesting level configurations.
-     *
-     * @param string $storageDir The directory path where objects will be stored.
-     * @param LoggerInterface|null $logger
-     * @param LockAdapterInterface|null $lockAdapter
-     * @param StateHandler|null $stateHandler
-     * @param string $reservedReferenceName
-     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
-     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
-     * @throws IOException If the storage directory cannot be created.
-     */
-    public function __construct(
-        private string                  $storageDir,
-        protected ?LoggerInterface      $logger = null,
-        protected ?LockAdapterInterface $lockAdapter = null,
-        protected ?StateHandler         $stateHandler = null,
-        private string                  $reservedReferenceName = '__reference',
-        private bool                    $enableCache = true,
-        private int                     $maxNestingLevel = 100
-    )
-    {
-        if (null === $stateHandler) {
-            $stateHandler = new StateHandler($this->storageDir);
-            $this->setStateHandler($stateHandler);
-        }
-        if (null === $lockAdapter) {
-            $lockAdapter = new FileSystemLockingBackend($this->storageDir);
-            $lockAdapter->setStateHandler($stateHandler);
-            $lockAdapter->setLogger($this->logger);
-            $this->setLockAdapter($lockAdapter);
-        }
-        $this->storageDir = rtrim($storageDir, '/\\');
-        $this->createDirectoryIfNotExist($this->storageDir);
-    }
 
     /**
      * Deletes an object based on its UUID.
@@ -173,63 +138,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Generates the file path for a given UUID.
+     * Get a classname for a certain object
      *
-     * @param string $uuid The unique identifier used to generate the file path.
-     * @return string The full file path constructed using the UUID.
+     * @param string $uuid
+     * @return string|null
      */
-    public function getFilePathData(string $uuid): string
+    public function getClassname(string $uuid): ?string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
-    }
-
-    /**
-     * Checks if a file exists for a specific UUID.
-     *
-     * @param string $uuid The UUID to check if the associated file exists.
-     * @return bool True if the file exists, false otherwise.
-     */
-    public function exists(string $uuid): bool
-    {
-        return file_exists($this->getFilePathData($uuid));
-    }
-
-    /**
-     * Generates the file path for the metadata associated with a specific UUID.
-     *
-     * @param string $uuid The unique identifier used to build the metadata file path.
-     * @return string Returns the file path of the metadata corresponding to the provided UUID.
-     */
-    public function getFilePathMetadata(string $uuid): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
-    }
-
-    /**
-     * @throws MetadataNotFoundException
-     */
-    public function setLifetime(string $uuid, int $ttl): void
-    {
-        $this->setExpiration($uuid, time() + $ttl);
-    }
-
-    /**
-     * Updates the expiration timestamp for a given UUID in the metadata storage.
-     *
-     * @param string $uuid The unique identifier for which the expiration needs to be set.
-     * @param int|null $expiresAt The Unix timestamp specifying the expiration time, or null to unset the expiration.
-     *
-     * @return void
-     * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
-     */
-    public function setExpiration(string $uuid, ?int $expiresAt): void
-    {
-        $metadata = $this->loadMetadata($uuid);
-        if (null === $metadata) {
-            throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
-        }
-        $metadata->setTimestampExpiresAt($expiresAt);
-        $this->saveMetadata($metadata);
+        return $this->loadMetadata($uuid)?->getClassName() ?? null;
     }
 
     /**
@@ -279,6 +195,99 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         return $data;
+    }
+
+    /**
+     * Generates the file path for the metadata associated with a specific UUID.
+     *
+     * @param string $uuid The unique identifier used to build the metadata file path.
+     * @return string Returns the file path of the metadata corresponding to the provided UUID.
+     */
+    public function getFilePathMetadata(string $uuid): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+    }
+
+    /**
+     * Generates the file path for a given UUID.
+     *
+     * @param string $uuid The unique identifier used to generate the file path.
+     * @return string The full file path constructed using the UUID.
+     */
+    public function getFilePathData(string $uuid): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+    }
+
+    /**
+     * Checks if a file exists for a specific UUID.
+     *
+     * @param string $uuid The UUID to check if the associated file exists.
+     * @return bool True if the file exists, false otherwise.
+     */
+    public function exists(string $uuid): bool
+    {
+        return file_exists($this->getFilePathData($uuid));
+    }
+
+    /**
+     * Generates the file path for a stub associated with a specific class and UUID.
+     *
+     * @param string $classname The name of the class for which the stub is being generated.
+     * @param string $uuid The unique identifier used to differentiate the stub file.
+     * @return string The full file path for the stub.
+     */
+    public function getFilePathStub(string $classname, string $uuid): string
+    {
+        return $this->getClassStubDirectory($classname) . DIRECTORY_SEPARATOR . $uuid . '.stub';
+    }
+
+    /**
+     * Retrieves the directory path where the class stub for the given class name is stored.
+     *
+     * @param string $classname The name of the class for which the stub directory path is being generated.
+     * @return string The full path to the class stub directory.
+     */
+    protected function getClassStubDirectory(string $classname): string
+    {
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($classname);
+    }
+
+    /**
+     * Retrieves the path to the stub directory.
+     *
+     * @return string The full path to the stub directory.
+     */
+    protected function getStubDirectory(): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
+    }
+
+    /**
+     * @throws MetadataNotFoundException
+     */
+    public function setLifetime(string $uuid, int $ttl): void
+    {
+        $this->setExpiration($uuid, time() + $ttl);
+    }
+
+    /**
+     * Updates the expiration timestamp for a given UUID in the metadata storage.
+     *
+     * @param string $uuid The unique identifier for which the expiration needs to be set.
+     * @param int|null $expiresAt The Unix timestamp specifying the expiration time, or null to unset the expiration.
+     *
+     * @return void
+     * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
+     */
+    public function setExpiration(string $uuid, ?int $expiresAt): void
+    {
+        $metadata = $this->loadMetadata($uuid);
+        if (null === $metadata) {
+            throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+        }
+        $metadata->setTimestampExpiresAt($expiresAt);
+        $this->saveMetadata($metadata);
     }
 
     /**
@@ -412,7 +421,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new SerializationFailureException('Unable to deserialize data from file: ' . $filename);
         }
 
-        $object = $this->processLoadedData($data, $classname);
+        $metadata = $this->loadMetadata($uuid);
+        $object = $this->processLoadedData($data, $metadata);
 
         if ($this->enableCache) {
             $this->objectCache[$uuid] = $object;
@@ -424,28 +434,21 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Get a classname for a certain object
-     *
-     * @param string $uuid
-     * @return string|null
-     */
-    public function getClassname(string $uuid): ?string
-    {
-        return $this->loadMetadata($uuid)?->getClassName() ?? null;
-    }
-
-    /**
      * Converts the provided data array into an object of the specified class
      * by mapping the data to the class's properties.
      *
      * @param array $data An associative array containing property names and their corresponding values.
-     * @param string $classname The fully qualified name of the class to create an instance of.
+     * @param Metadata $metadata
      * @return object An instance of the specified class with its properties populated from the provided data.
+     * @throws ClassAliasCreationFailureException
+     * @throws DanglingReferenceException
+     * @throws InvalidUUIDException
      * @throws ReflectionException
-     * @throws InvalidUUIDException|TypeConversionFailureException|Exception|DanglingReferenceException
+     * @throws TypeConversionFailureException
      */
-    private function processLoadedData(array $data, string $classname): object
+    private function processLoadedData(array $data, Metadata $metadata): object
     {
+        $classname = $metadata->getClassname();
         if (false === class_exists($classname)) {
             if (false === class_alias(get_class(new class {
                 }), $classname)) {
@@ -459,11 +462,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         foreach ($data as $propertyName => $value) {
             $type = $reflection->getPropertyType($propertyName);
 
-            if (is_array($value) && isset($value[$this->reservedReferenceName])) {
-                $refUUID = $value[$this->reservedReferenceName];
+            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+                $refUUID = $value[$metadata->getReservedReferenceName()];
                 if (false === Validator::validate($refUUID)) {
                     /* reference UUID is not valid, so we just set the property to the value */
-                    $reflection->set($propertyName, [$this->reservedReferenceName => $refUUID]);
+                    $reflection->set($propertyName, [$metadata->getReservedReferenceName() => $refUUID]);
                 } else {
                     $reference = new LazyLoadReference($this, $refUUID, $object, [$propertyName]);
                     /* if LazyLoadReference is not allowed, then we need to convert the reference to the real object */
@@ -488,7 +491,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $reflection->set($propertyName, $reference);
                 }
             } else if (is_array($value)) {
-                $reflection->set($propertyName, $this->processLoadedArray($object, $value, [$propertyName]));
+                $reflection->set($propertyName, $this->processLoadedArray($metadata, $object, $value, [$propertyName]));
             } else {
                 /* type conversion of non-union types */
                 if ($type instanceof ReflectionNamedType) {
@@ -509,22 +512,27 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Processes a loaded array and converts specific elements into lazy load references or recursively processes subarrays.
+     * Processes a loaded array by iterating through its elements and converting specific
+     * nested structures into lazy load references or recursively processing subarrays,
+     * based on the metadata provided.
      *
-     * @param object $object The related object used in the creation of lazy load references.
-     * @param array $array The array to be processed, potentially containing nested arrays or special references.
-     * @param array $path The current hierarchy path being processed within the array, used for lazy load reference creation.
-     * @return array Returns the processed array with lazy load references or recursively processed subarrays.
+     * @param Metadata $metadata The metadata object used to identify and process reserved references.
+     * @param object $object The object to be used in creating LazyLoadReference instances.
+     * @param array $array The input array to be processed.
+     * @param array $path An array representing the traversal path within the structure for recursion.
+     *
+     * @return array The processed array, with applicable elements converted into lazy load references
+     *               or recursively processed subarrays.
      * @throws InvalidUUIDException
      */
-    private function processLoadedArray(object $object, array $array, array $path): array
+    private function processLoadedArray(Metadata $metadata, object $object, array $array, array $path): array
     {
         $processed = [];
         foreach ($array as $key => $value) {
-            if (is_array($value) && isset($value[$this->reservedReferenceName])) {
-                $processed[$key] = new LazyLoadReference($this, $value[$this->reservedReferenceName], $object, [...$path, $key]);
+            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, [...$path, $key]);
             } else if (is_array($value)) {
-                $processed[$key] = $this->processLoadedArray($object, $value, [...$path, $key]);
+                $processed[$key] = $this->processLoadedArray($metadata, $object, $value, [...$path, $key]);
             } else {
                 $processed[$key] = $value;
             }
@@ -649,15 +657,23 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->processingStack[] = $objectHash;
 
-            $jsonGraph = $this->exportGraphAndStoreReferencedChildren($object);
-
             $metadata = new Metadata();
             $metadata->setTimestampCreation(time());
             $metadata->setUuid($uuid);
             $metadata->setClassName($classname = get_class($object));
             $metadata->setVersion(1);
-            $metadata->setChecksum(md5($jsonGraph));
             $metadata->setTimestampExpiresAt($ttl ? time() + $ttl : null);
+
+            $jsonGraph = json_encode(
+                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata)),
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+            );
+
+            if (false === $jsonGraph) {
+                throw new SerializationFailureException('Unable export object graph to JSON');
+            }
+
+            $metadata->setChecksum(md5($jsonGraph));
 
             $loadedMetadata = $this->loadMetadata($uuid);
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
@@ -678,50 +694,38 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * @param object $object
-     * @return string
-     *
-     * @throws DanglingReferenceException
-     * @throws GenerationFailureException
-     * @throws IOException
-     * @throws MaxNestingLevelExceededException
-     * @throws ReflectionException
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     * @throws InvalidUUIDException
-     */
-    public function exportGraphAndStoreReferencedChildren(object $object): string
-    {
-        $json = json_encode($this->createGraphAndStoreReferencedChildren($object), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if (false === $json) {
-            throw new SerializationFailureException('Unable export object graph to JSON');
-        }
-        return $json;
-    }
-
-    /**
      * Creates a graph representation of the given object's properties and stores
      * referenced child elements, ensuring deterministic property order.
      *
-     * @param object $object The object whose properties are to be processed for the graph.
+     * @param GraphBuilderContext $context
      * @return array An associative array representing the graph structure of the object's properties.
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
+     * @throws InvalidUUIDException
      * @throws MaxNestingLevelExceededException
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws InvalidUUIDException
      */
-    private function createGraphAndStoreReferencedChildren(object $object): array
+    private function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
     {
         $result = [];
-        $reflection = new Reflection($object);
+        $reflection = new Reflection($context->getTarget());
 
         // ensure deterministic order of properties
         $propertyNames = $reflection->getPropertyNames();
         sort($propertyNames, SORT_STRING);
+
+        // Pre-scan property names to avoid reserved reference name collision
+        $reserved = $context->getMetadata()->getReservedReferenceName();
+        if (in_array($reserved, $propertyNames, true)) {
+            // Pick a unique name that does not collide with any property on this object
+            do {
+                $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
+            } while (in_array($reserved, $propertyNames, true));
+            $context->getMetadata()->setReservedReferenceName($reserved);
+        }
 
         foreach ($propertyNames as $propertyName) {
             if (false === $reflection->initialized($propertyName)) {
@@ -731,7 +735,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $value = $reflection->get($propertyName);
 
             try {
-                $result[$propertyName] = $this->transformValueForGraph($value, [$propertyName], 0);
+                $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], 0);
             } catch (ResourceSerializationNotSupportedException $e) {
                 $this->getLogger()?->log($e);
             }
@@ -741,6 +745,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * @param GraphBuilderContext $context
      * @param mixed $value
      * @param array $path
      * @param int $level
@@ -749,14 +754,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
+     * @throws InvalidUUIDException
      * @throws MaxNestingLevelExceededException
      * @throws ReflectionException
+     * @throws ResourceSerializationNotSupportedException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws ResourceSerializationNotSupportedException
-     * @throws InvalidUUIDException
      */
-    private function transformValueForGraph(mixed $value, array $path, int $level): mixed
+    private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {
         if ($level > $this->maxNestingLevel) {
             throw new MaxNestingLevelExceededException('Maximum nesting level of ' . $this->maxNestingLevel . ' exceeded');
@@ -770,7 +775,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if ($value instanceof LazyLoadReference) {
                 if (!$value->isLoaded()) {
                     $refUuid = $value->getUUID();
-                    return [$this->reservedReferenceName => $refUuid];
+                    return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
                 }
 
                 $loaded = $value->getObject();
@@ -786,14 +791,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->serializeAndStore($value, $refUuid);
             }
 
-            return [$this->reservedReferenceName => $refUuid];
+            return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
         }
 
         if (is_array($value)) {
             $out = [];
             foreach ($value as $k => $v) {
                 try {
-                    $out[$k] = $this->transformValueForGraph($v, array_merge($path, [$k]), $level + 1);
+                    $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level + 1);
                 } catch (ResourceSerializationNotSupportedException $e) {
                     $this->getLogger()?->log($e);
                 }
@@ -866,49 +871,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function getFilePathClassnames(): string
     {
         return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
-    }
-
-    /**
-     * Retrieves the path to the stub directory.
-     *
-     * @return string The full path to the stub directory.
-     */
-    protected function getStubDirectory(): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
-    }
-
-    /**
-     * @throws IOException
-     */
-    protected function createDirectoryIfNotExist(string $directory): void
-    {
-        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
-            throw new IOException('Unable to open storage directory: ' . $directory);
-        }
-    }
-
-    /**
-     * Generates the file path for a stub associated with a specific class and UUID.
-     *
-     * @param string $classname The name of the class for which the stub is being generated.
-     * @param string $uuid The unique identifier used to differentiate the stub file.
-     * @return string The full file path for the stub.
-     */
-    public function getFilePathStub(string $classname, string $uuid): string
-    {
-        return $this->getClassStubDirectory($classname) . DIRECTORY_SEPARATOR . $uuid . '.stub';
-    }
-
-    /**
-     * Retrieves the directory path where the class stub for the given class name is stored.
-     *
-     * @param string $classname The name of the class for which the stub directory path is being generated.
-     * @return string The full path to the class stub directory.
-     */
-    protected function getClassStubDirectory(string $classname): string
-    {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($classname);
     }
 
     /**
@@ -1043,6 +1005,51 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 return $this->current();
             }
         };
+    }
+
+    /**
+     * Constructs the object storage handler by initializing directory, file settings,
+     * caching, and maximum nesting level configurations.
+     *
+     * @param string $storageDir The directory path where objects will be stored.
+     * @param LoggerInterface|null $logger
+     * @param LockAdapterInterface|null $lockAdapter
+     * @param StateHandler|null $stateHandler
+     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
+     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
+     * @throws IOException If the storage directory cannot be created.
+     */
+    public function __construct(
+        private string                  $storageDir,
+        protected ?LoggerInterface      $logger = null,
+        protected ?LockAdapterInterface $lockAdapter = null,
+        protected ?StateHandler         $stateHandler = null,
+        private bool                    $enableCache = true,
+        private int                     $maxNestingLevel = 100
+    )
+    {
+        if (null === $stateHandler) {
+            $stateHandler = new StateHandler($this->storageDir);
+            $this->setStateHandler($stateHandler);
+        }
+        if (null === $lockAdapter) {
+            $lockAdapter = new FileSystemLockingBackend($this->storageDir);
+            $lockAdapter->setStateHandler($stateHandler);
+            $lockAdapter->setLogger($this->logger);
+            $this->setLockAdapter($lockAdapter);
+        }
+        $this->storageDir = rtrim($storageDir, '/\\');
+        $this->createDirectoryIfNotExist($this->storageDir);
+    }
+
+    /**
+     * @throws IOException
+     */
+    protected function createDirectoryIfNotExist(string $directory): void
+    {
+        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
+            throw new IOException('Unable to open storage directory: ' . $directory);
+        }
     }
 
     /**

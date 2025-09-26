@@ -94,6 +94,7 @@ class ObjectStorageSpyWriterTest extends TestCase
         $this->assertArrayHasKey('timestampCreation', $metadataArray);
         $this->assertArrayHasKey('uuid', $metadataArray);
         $this->assertArrayHasKey('timestampExpiresAt', $metadataArray);
+        $this->assertArrayHasKey('reservedReferenceName', $metadataArray);
         $this->assertEquals(TestUser::class, $metadataArray['className']);
 
     }

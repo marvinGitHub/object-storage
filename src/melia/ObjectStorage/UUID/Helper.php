@@ -17,8 +17,12 @@ class Helper
      *                     Otherwise, returns null.
      * @throws ReflectionException
      */
-    public static function getAssigned(object $object): ?string
+    public static function getAssigned(?object $object): ?string
     {
+        if (null === $object) {
+            return null;
+        }
+
         $instanceOfAwareInterface = $object instanceof AwareInterface;
         $hasMethod = method_exists($object, 'getUUID');
         if ($instanceOfAwareInterface && $hasMethod) {

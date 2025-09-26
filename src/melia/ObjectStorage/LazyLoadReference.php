@@ -11,6 +11,7 @@ use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
+use melia\ObjectStorage\UUID\Helper;
 use ReflectionException;
 use RuntimeException;
 use Throwable;
@@ -231,10 +232,6 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         return $this->root;
     }
 
-    /**
-     * @throws ReflectionException
-     * @throws DanglingReferenceException
-     */
     public function jsonSerialize(): mixed
     {
         $this->loadIfNeeded();
@@ -243,14 +240,12 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
 
     /**
      * @throws ReflectionException
-     * @throws DanglingReferenceException
      */
     public function __serialize()
     {
-        $this->loadIfNeeded();
         return [
             'uuid' => $this->uuid,
-            'root' => $this->root instanceof AwareInterface ? $this->root->getUUID() : null,
+            'root' => Helper::getAssigned($this->root),
             'path' => $this->path,
         ];
     }

@@ -79,7 +79,7 @@ class FileSystem extends LockAdapterAbstract
 
         $lockFile = $this->getLockFilePath($uuid);
         $startTime = microtime(true);
-        $lockType = match($type){
+        $lockType = match ($type) {
             static::TYPE_SHARED => LOCK_SH,
             static::TYPE_EXCLUSIVE => LOCK_EX,
             default => throw new LockException('Invalid lock type'),
@@ -187,6 +187,11 @@ class FileSystem extends LockAdapterAbstract
         }
     }
 
+    public function getActiveLocks(): array
+    {
+        return array_keys($this->activeLocks);
+    }
+
     /**
      * Releases an active lock associated with the given unique identifier (UUID).
      * Frees the associated file handle, removes the lock, and deletes the lock file.
@@ -218,10 +223,5 @@ class FileSystem extends LockAdapterAbstract
         }
 
         unset($this->activeLocks[$uuid]);
-    }
-
-    public function getActiveLocks(): array
-    {
-        return array_keys($this->activeLocks);
     }
 }

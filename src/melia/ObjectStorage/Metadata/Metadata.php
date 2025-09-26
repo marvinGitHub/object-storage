@@ -1,6 +1,6 @@
 <?php
 
-namespace melia\ObjectStorage;
+namespace melia\ObjectStorage\Metadata;
 
 use JsonSerializable;
 use melia\ObjectStorage\UUID\AwareTrait;
@@ -8,6 +8,8 @@ use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 
 class Metadata implements JsonSerializable
 {
+    const RESERVED_REFERENCE_NAME_DEFAULT = '__reference';
+
     use AwareTrait;
 
     private string $className;
@@ -15,6 +17,39 @@ class Metadata implements JsonSerializable
     private int $version;
     private string $checksum;
     private ?int $timestampExpiresAt = null;
+
+    private array $references = [];
+    private string $reservedReferenceName = Metadata::RESERVED_REFERENCE_NAME_DEFAULT;
+
+    /**
+     * @throws InvalidUUIDException
+     */
+    public static function createFromArray(array $data): Metadata
+    {
+        $metadata = new Metadata();
+        if (array_key_exists('className', $data)) {
+            $metadata->setClassName($data['className']);
+        }
+        if (array_key_exists('timestampCreation', $data)) {
+            $metadata->setTimestampCreation($data['timestampCreation']);
+        }
+        if (array_key_exists('version', $data)) {
+            $metadata->setVersion($data['version']);
+        }
+        if (array_key_exists('checksum', $data)) {
+            $metadata->setChecksum($data['checksum']);
+        }
+        if (array_key_exists('timestampExpiresAt', $data)) {
+            $metadata->setTimestampExpiresAt($data['timestampExpiresAt']);
+        }
+        if (array_key_exists('uuid', $data)) {
+            $metadata->setUuid($data['uuid']);
+        }
+        if (array_key_exists('reservedReferenceName', $data)) {
+            $metadata->setReservedReferenceName($data['reservedReferenceName']);
+        }
+        return $metadata;
+    }
 
     /**
      * Retrieves the class name of the current instance.
@@ -121,36 +156,30 @@ class Metadata implements JsonSerializable
         $this->timestampExpiresAt = $timestampExpiresAt;
     }
 
-    public function validate(): void
+    /**
+     * Retrieves the reserved reference name.
+     *
+     * @return string The reserved reference name associated with this instance.
+     */
+    public function getReservedReferenceName(): string
     {
-        /* TODO */
+        return $this->reservedReferenceName;
     }
 
     /**
-     * @throws InvalidUUIDException
+     * Sets the reserved reference name.
+     *
+     * @param string $reservedReferenceName The reserved reference name to set.
+     * @return void
      */
-    public static function createFromArray(array $data): Metadata
+    public function setReservedReferenceName(string $reservedReferenceName): void
     {
-        $metadata = new Metadata();
-        if (array_key_exists('className', $data)) {
-            $metadata->setClassName($data['className']);
-        }
-        if (array_key_exists('timestampCreation', $data)) {
-            $metadata->setTimestampCreation($data['timestampCreation']);
-        }
-        if (array_key_exists('version', $data)) {
-            $metadata->setVersion($data['version']);
-        }
-        if (array_key_exists('checksum', $data)) {
-            $metadata->setChecksum($data['checksum']);
-        }
-        if (array_key_exists('timestampExpiresAt', $data)) {
-            $metadata->setTimestampExpiresAt($data['timestampExpiresAt']);
-        }
-        if (array_key_exists('uuid', $data)) {
-            $metadata->setUuid($data['uuid']);
-        }
-        return $metadata;
+        $this->reservedReferenceName = $reservedReferenceName;
+    }
+
+    public function validate(): void
+    {
+        /* TODO */
     }
 
     /**
@@ -167,6 +196,7 @@ class Metadata implements JsonSerializable
             'checksum' => $this->checksum,
             'timestampExpiresAt' => $this->timestampExpiresAt,
             'uuid' => $this->uuid,
+            'reservedReferenceName' => $this->reservedReferenceName,
         ];
     }
 }

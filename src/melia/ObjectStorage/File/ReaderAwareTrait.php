@@ -2,7 +2,8 @@
 
 namespace melia\ObjectStorage\File;
 
-trait ReaderAwareTrait {
+trait ReaderAwareTrait
+{
     protected ?ReaderInterface $reader = null;
 
     public function getReader(): ?ReaderInterface
