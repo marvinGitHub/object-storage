@@ -127,6 +127,7 @@ try {
 
             $exists = $storage->exists($uuid);
             $isLocked = $storage->getLockAdapter()->isLockedByOtherProcess($uuid);
+            $metadata = null;
             if (false === $isLocked && $exists) {
                 $metadata = $storage->loadMetadata($uuid);
                 $classname = $storage->getClassName($uuid);
@@ -143,7 +144,7 @@ try {
                 'exists' => $exists,
                 'uuid' => $uuid,
                 'classname' => $classname ?? '',
-                'checksum' => $metadata['checksum'] ?? '',
+                'checksum' => $metadata?->getChecksum() ?? '',
                 'isLocked' => $isLocked,
                 'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited'
             ]);

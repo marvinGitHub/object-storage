@@ -228,24 +228,36 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         if (null === $metadata) {
             throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
         }
-        $metadata['expiresAt'] = $expiresAt;
-        $this->saveMetadata($uuid, $metadata);
+        $metadata->setTimestampExpiresAt($expiresAt);
+        $this->saveMetadata($metadata);
     }
 
     /**
-     * Loads metadata associated with the given unique identifier.
+     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
+     * If an error occurs during the process, it is logged, and null is returned.
      *
-     * @param string $uuid The unique identifier for which the metadata is being loaded.
-     * @return array|null Returns the metadata as an associative array if available, or null if an error occurs or metadata is not found.
+     * @param string $uuid The unique identifier for the metadata to be loaded.
+     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
      */
-    public function loadMetadata(string $uuid): ?array
+    public function loadMetadata(string $uuid): ?Metadata
     {
         try {
-            return $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+            $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+            if (is_array($metadata)) {
+                $metadata = Metadata::createFromArray($metadata);
+                $metadata->validate();
+                return $metadata;
+            }
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
-            return null;
         }
+        return null;
+    }
+
+    private function validateMetadata(array $metadata): void
+    {
+
+        $requiredFields = ['timestamp', 'className', 'uuid', 'version', 'checksum', 'expiresAt'];
     }
 
     /**
@@ -276,17 +288,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Saves metadata associated with a specific UUID by writing the data
-     * to a file in an atomic operation. The metadata is serialized into JSON
-     * format before being written to the file.
+     * Saves the provided metadata to a file by serializing it to JSON and writing it atomically.
      *
-     * @param string $uuid The unique identifier associated with the metadata.
-     * @param array $metadata An associative array containing the metadata to be saved.
+     * @param Metadata $metadata The metadata to be serialized and saved.
      * @return void
      */
-    private function saveMetadata(string $uuid, array $metadata): void
+    private function saveMetadata(Metadata $metadata): void
     {
-        $this->getWriter()->atomicWrite($this->getFilePathMetadata($uuid), json_encode($metadata, depth: $this->maxNestingLevel));
+        $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
     }
 
     /**
@@ -377,8 +386,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getExpiration(string $uuid): ?int
     {
-        $metadata = $this->loadMetadata($uuid);
-        return $metadata['expiresAt'] ?? null;
+        return $this->loadMetadata($uuid)?->getTimestampExpiresAt();
     }
 
     /**
@@ -434,7 +442,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getClassname(string $uuid): ?string
     {
-        return $this->loadMetadata($uuid)['className'] ?? null;
+        return $this->loadMetadata($uuid)?->getClassName() ?? null;
     }
 
     /**
@@ -630,6 +638,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidUUIDException
      */
     private function serializeAndStore(object $object, string $uuid, ?int $ttl = null): void
     {
@@ -653,21 +662,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $jsonGraph = $this->exportGraphAndStoreReferencedChildren($object);
 
-            $metadata = [
-                'timestamp' => time(),
-                'className' => $classname = get_class($object),
-                'uuid' => $uuid,
-                'version' => '1.0',
-                'checksum' => md5($jsonGraph),
-                'expiresAt' => $ttl ? time() + $ttl : null,
-            ];
+            $metadata = new Metadata();
+            $metadata->setTimestampCreation(time());
+            $metadata->setUuid($uuid);
+            $metadata->setClassName($classname = get_class($object));
+            $metadata->setVersion(1);
+            $metadata->setChecksum(md5($jsonGraph));
+            $metadata->setTimestampExpiresAt($ttl ? time() + $ttl : null);
 
             $loadedMetadata = $this->loadMetadata($uuid);
-            $checksumChanged = $loadedMetadata === null || $metadata['checksum'] !== ($loadedMetadata['checksum'] ?? null);
+            $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
 
             if ($checksumChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
-                $this->saveMetadata($uuid, $metadata);
+                $this->saveMetadata($metadata);
                 $this->createStub($classname, $uuid);
             }
 
@@ -755,6 +763,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      * @throws ResourceSerializationNotSupportedException
+     * @throws InvalidUUIDException
      */
     private function transformValueForGraph(mixed $value, array $path, int $level): mixed
     {
