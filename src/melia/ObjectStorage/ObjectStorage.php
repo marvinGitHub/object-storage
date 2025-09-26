@@ -722,6 +722,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidUUIDException
      */
     private function createGraphAndStoreReferencedChildren(object $object): array
     {

@@ -102,7 +102,7 @@ Size: {{ size }} Bytes
         jsonView.innerHTML = ReferenceLinkGenerator.generate('{{ data | json_encode | raw }}');
 
         const script = document.createElement('script');
-        script.src = '../assets/index.js';
+        script.src = window.href + '/../assets/index.js';
         document.head.appendChild(script);
 
         for (const element of [objectView]) {
