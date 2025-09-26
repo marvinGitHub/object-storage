@@ -254,12 +254,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         return null;
     }
 
-    private function validateMetadata(array $metadata): void
-    {
-
-        $requiredFields = ['timestamp', 'className', 'uuid', 'version', 'checksum', 'expiresAt'];
-    }
-
     /**
      * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
      *
@@ -353,13 +347,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function expired(string $uuid): bool
     {
-        try {
-            $lifetime = $this->getLifetime($uuid);
-            return null !== $lifetime && $lifetime <= 0;
-        } catch (MetadataNotFoundException $e) {
-            $this->getLogger()?->log($e);
-            return !$this->exists($uuid);
-        }
+        $lifetime = $this->getLifetime($uuid);
+        return null !== $lifetime && $lifetime <= 0;
     }
 
     /**
@@ -699,6 +688,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidUUIDException
      */
     public function exportGraphAndStoreReferencedChildren(object $object): string
     {
