@@ -77,7 +77,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private array $hashToUuid = [];
 
     /** @var array<string>|null */
-    private ?array $registeredClassnamesCache = null;
+    private ?array $registeredClassNamesCache = null;
 
     /**
      * Deletes an object based on its UUID.
@@ -324,7 +324,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->objectCache = [];
         $this->hashToUuid = [];
-        $this->registeredClassnamesCache = null;
+        $this->registeredClassNamesCache = null;
     }
 
     /**
@@ -859,11 +859,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
 
         if (!in_array($className, $registeredClassnames, true)) {
-            $this->registeredClassnamesCache[] = $className;
+            $this->registeredClassNamesCache[] = $className;
             $this->createDirectoryIfNotExist($this->getStubDirectory());
             $this->getWriter()->atomicWrite(
                 $this->getFilePathClassnames(),
-                json_encode($this->registeredClassnamesCache, JSON_UNESCAPED_SLASHES)
+                json_encode($this->registeredClassNamesCache, JSON_UNESCAPED_SLASHES)
             );
         }
     }
@@ -874,18 +874,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getRegisteredClassnames(): ?array
     {
-        if ($this->registeredClassnamesCache !== null) {
-            return $this->registeredClassnamesCache;
+        if ($this->registeredClassNamesCache !== null) {
+            return $this->registeredClassNamesCache;
         }
 
         $filenameClassnames = $this->getFilePathClassnames();
         if (file_exists($filenameClassnames)) {
-            $this->registeredClassnamesCache = $this->loadFromJsonFile($filenameClassnames) ?? [];
+            $this->registeredClassNamesCache = $this->loadFromJsonFile($filenameClassnames) ?? [];
         } else {
-            $this->registeredClassnamesCache = [];
+            $this->registeredClassNamesCache = [];
         }
 
-        return $this->registeredClassnamesCache;
+        return $this->registeredClassNamesCache;
     }
 
     /**
