@@ -15,7 +15,7 @@ interface StorageInterface
 
     public function delete(string $uuid, bool $force = false): bool;
 
-    public function list(?string $classname = null): Traversable;
+    public function list(?string $className = null): Traversable;
 
     public function expired(string $uuid): bool;
 
