@@ -8,6 +8,7 @@ use Iterator;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
 use melia\ObjectStorage\Event\Context\StubCreationContext;
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherInterface;
@@ -725,7 +726,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             if ($checksumChanged || $classNameChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
-                $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new Context($uuid));
+                $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new ObjectPersistenceContext($uuid, $object));
 
                 $this->saveMetadata($metadata);
                 $this->createStub($className, $uuid);
