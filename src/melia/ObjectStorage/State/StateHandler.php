@@ -2,6 +2,8 @@
 
 namespace melia\ObjectStorage\State;
 
+use melia\ObjectStorage\Event\AwareTrait;
+use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\File\WriterAwareTrait;
 use Throwable;
@@ -13,6 +15,7 @@ class StateHandler
     }
 
     use WriterAwareTrait;
+    use AwareTrait;
 
     /**
      * Disables safe mode by removing the related safe mode file if it exists.
@@ -22,7 +25,9 @@ class StateHandler
     public function disableSafeMode(): bool
     {
         if (file_exists($filename = $this->getFilePathSafeMode())) {
-            return unlink($filename);
+            $success = unlink($filename);
+            $this->eventDispatcher->dispatch(Events::SAFE_MODE_DISABLED);
+            return $success;
         }
         return true;
     }
@@ -58,6 +63,7 @@ class StateHandler
     {
         try {
             $this->getWriter()->atomicWrite($this->getFilePathSafeMode(), '1');
+            $this->getEventDispatcher()?->dispatch(Events::SAFE_MODE_ENABLED);
             return true;
         } catch (Throwable $e) {
             throw new SafeModeActivationFailedException('Unable to enable safe mode', 0, $e);

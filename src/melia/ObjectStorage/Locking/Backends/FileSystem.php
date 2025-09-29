@@ -2,9 +2,13 @@
 
 namespace melia\ObjectStorage\Locking\Backends;
 
+use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
+use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\Logger\LoggerAwareTrait;
+use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use Throwable;
 
 class FileSystem extends LockAdapterAbstract
@@ -13,6 +17,7 @@ class FileSystem extends LockAdapterAbstract
     const TYPE_EXCLUSIVE = 1;
 
     use LoggerAwareTrait;
+    use WriterAwareTrait;
 
     /**
      * Defines the suffix used for lock files to indicate processing or restricted access.
@@ -43,10 +48,12 @@ class FileSystem extends LockAdapterAbstract
 
     /**
      * @throws LockException
+     * @throws InvalidUUIDException
      */
     public function acquireSharedLock(string $uuid, int $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_SHARED, $timeout);
+        $this->getEventDispatcher()?->dispatch(Events::SHARED_LOCK_ACQUIRED, new Context($uuid));
     }
 
     /**
@@ -85,8 +92,8 @@ class FileSystem extends LockAdapterAbstract
             default => throw new LockException('Invalid lock type'),
         };
 
-        if (!file_exists($lockFile)) {
-            file_put_contents($lockFile, '');
+        if (false === file_exists($lockFile)) {
+            $this->getWriter()->atomicWrite($lockFile, '');
         }
 
         $handle = fopen($lockFile, 'r+');
@@ -164,10 +171,12 @@ class FileSystem extends LockAdapterAbstract
 
     /**
      * @throws LockException
+     * @throws InvalidUUIDException
      */
     public function acquireExclusiveLock(string $uuid, int $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_EXCLUSIVE, $timeout);
+        $this->getEventDispatcher()?->dispatch(Events::EXCLUSIVE_LOCK_ACQUIRED, new Context($uuid));
     }
 
     /**
@@ -199,6 +208,7 @@ class FileSystem extends LockAdapterAbstract
      * @param string $uuid The unique identifier for the lock to be released.
      * @return void
      * @throws LockException If no active lock is found for the given UUID.
+     * @throws InvalidUUIDException
      */
     public function releaseLock(string $uuid): void
     {
@@ -223,5 +233,7 @@ class FileSystem extends LockAdapterAbstract
         }
 
         unset($this->activeLocks[$uuid]);
+
+        $this->getEventDispatcher()?->dispatch(Events::LOCK_RELEASED, new Context($uuid));
     }
 }

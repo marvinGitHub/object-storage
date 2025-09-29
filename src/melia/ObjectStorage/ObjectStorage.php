@@ -6,6 +6,12 @@ use FilterIterator;
 use GlobIterator;
 use Iterator;
 use melia\ObjectStorage\Context\GraphBuilderContext;
+use melia\ObjectStorage\Event\AwareTrait;
+use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\StubCreationContext;
+use melia\ObjectStorage\Event\Dispatcher;
+use melia\ObjectStorage\Event\DispatcherInterface;
+use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
@@ -55,6 +61,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 {
     use WriterAwareTrait;
     use ReaderAwareTrait;
+    use AwareTrait;
 
     /**
      * The suffix used for metadata files.
@@ -84,13 +91,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier of the object to be deleted.
      * @param bool $force Determines whether errors should be ignored if the object does not exist. If true, returns false if the object does not exist.
-     * @return bool Returns true if the object was successfully deleted, or false if the object does not exist and $force is true.
-     * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
-     * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
+     * @return void Returns true if the object was successfully deleted, or false if the object does not exist and $force is true.
      * @throws MetataDeletionFailureException
+     * @throws InvalidUUIDException
+     * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
+     * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
      */
-    public function delete(string $uuid, bool $force = false): bool
+    public function delete(string $uuid, bool $force = false): void
     {
+        $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, new Context($uuid));
+
         if ($this->getStateHandler()->safeModeEnabled()) {
             throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
         }
@@ -106,9 +116,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             if (!$this->exists($uuid)) {
-                if ($force) {
-                    return false;
-                }
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
             }
 
@@ -124,31 +131,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             $this->deleteStub($className, $uuid);
-
-            return true;
         } finally {
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()->releaseLock($uuid);
             }
         }
-    }
 
-    /**
-     * Deletes a stub file for the specified class name and UUID if it exists.
-     *
-     * @param string $className The name of the class associated with the stub.
-     * @param string $uuid The unique identifier associated with the stub.
-     * @return void
-     * @throws StubDeletionFailureException If the stub file could not be deleted.
-     */
-    private function deleteStub(string $className, string $uuid) : void
-    {
-        $filePathStub = $this->getFilePathStub($className, $uuid);
-        if (file_exists($filePathStub)) {
-            if (!unlink($filePathStub)) {
-                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
-            }
-        }
+        $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, new Context($uuid));
     }
 
     /**
@@ -245,6 +234,24 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Deletes a stub file for the specified class name and UUID if it exists.
+     *
+     * @param string $className The name of the class associated with the stub.
+     * @param string $uuid The unique identifier associated with the stub.
+     * @return void
+     * @throws StubDeletionFailureException If the stub file could not be deleted.
+     */
+    private function deleteStub(string $className, string $uuid): void
+    {
+        $filePathStub = $this->getFilePathStub($className, $uuid);
+        if (file_exists($filePathStub)) {
+            if (!unlink($filePathStub)) {
+                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
+            }
+        }
+    }
+
+    /**
      * Generates the file path for a stub associated with a specific class and UUID.
      *
      * @param string $className The name of the class for which the stub is being generated.
@@ -313,6 +320,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private function saveMetadata(Metadata $metadata): void
     {
         $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
+        $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, new Context($metadata->getUUID()));
     }
 
     /**
@@ -325,6 +333,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->objectCache = [];
         $this->hashToUuid = [];
         $this->registeredClassNamesCache = null;
+        $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
     }
 
     /**
@@ -338,6 +347,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function load(string $uuid, bool $exclusive = false): ?object
     {
+        $this->getEventDispatcher()?->dispatch(Events::BEFORE_LOAD, new Context($uuid));
+
         if ($this->expired($uuid)) {
             /* do not delete an expired object since the ttl might be updated later */
             return null;
@@ -349,10 +360,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             } else {
                 $this->getLockAdapter()->acquireSharedLock($uuid);
             }
+
             $object = $this->loadFromStorage($uuid);
+
             if (!$exclusive) {
                 $this->getLockAdapter()->releaseLock($uuid);
             }
+
+            $this->getEventDispatcher()?->dispatch(Events::AFTER_LOAD, new Context($uuid));
+
             return $object;
         } catch (Throwable $e) {
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
@@ -587,6 +603,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function store(object $object, ?string $uuid = null, ?int $ttl = null): string
     {
+        $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new Context($uuid));
+
         if ($this->getStateHandler()->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
@@ -626,6 +644,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()->releaseLock($uuid);
             }
+
+            $this->getEventDispatcher()?->dispatch(Events::AFTER_STORE, new Context($uuid));
 
             return $uuid;
         } catch (Throwable $e) {
@@ -705,6 +725,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             if ($checksumChanged || $classNameChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
+                $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new Context($uuid));
+
                 $this->saveMetadata($metadata);
                 $this->createStub($className, $uuid);
             }
@@ -840,6 +862,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws IOException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidUUIDException
      */
     public function createStub(string $className, string $uuid): void
     {
@@ -847,6 +870,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $pathname = $this->getFilePathStub($className, $uuid);
         $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
         $this->createEmptyFile($pathname);
+        $this->getEventDispatcher()?->dispatch(Events::STUB_SAVED, new StubCreationContext($uuid, $className));
     }
 
     /**
@@ -896,6 +920,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function getFilePathClassnames(): string
     {
         return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
+    }
+
+    /**
+     * @throws IOException
+     */
+    protected function createDirectoryIfNotExist(string $directory): void
+    {
+        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
+            throw new IOException('Unable to open storage directory: ' . $directory);
+        }
     }
 
     /**
@@ -1040,6 +1074,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param LoggerInterface|null $logger
      * @param LockAdapterInterface|null $lockAdapter
      * @param StateHandler|null $stateHandler
+     * @param DispatcherInterface|null $eventDispatcher
      * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
      * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
@@ -1049,32 +1084,32 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         protected ?LoggerInterface      $logger = null,
         protected ?LockAdapterInterface $lockAdapter = null,
         protected ?StateHandler         $stateHandler = null,
+        ?DispatcherInterface            $eventDispatcher = null,
         private bool                    $enableCache = true,
         private int                     $maxNestingLevel = 100
     )
     {
+        if (null === $eventDispatcher) {
+            $eventDispatcher = new Dispatcher();
+        }
+        $this->setEventDispatcher($eventDispatcher);
+
         if (null === $stateHandler) {
             $stateHandler = new StateHandler($this->storageDir);
-            $this->setStateHandler($stateHandler);
+            $stateHandler->setEventDispatcher($eventDispatcher);
         }
+        $this->setStateHandler($stateHandler);
+
         if (null === $lockAdapter) {
             $lockAdapter = new FileSystemLockingBackend($this->storageDir);
             $lockAdapter->setStateHandler($stateHandler);
             $lockAdapter->setLogger($this->logger);
-            $this->setLockAdapter($lockAdapter);
+            $lockAdapter->setEventDispatcher($eventDispatcher);
         }
+        $this->setLockAdapter($lockAdapter);
+
         $this->storageDir = rtrim($storageDir, '/\\');
         $this->createDirectoryIfNotExist($this->storageDir);
-    }
-
-    /**
-     * @throws IOException
-     */
-    protected function createDirectoryIfNotExist(string $directory): void
-    {
-        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
-            throw new IOException('Unable to open storage directory: ' . $directory);
-        }
     }
 
     /**

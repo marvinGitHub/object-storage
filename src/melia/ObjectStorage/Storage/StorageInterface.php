@@ -13,7 +13,7 @@ interface StorageInterface
 
     public function load(string $uuid): ?object;
 
-    public function delete(string $uuid, bool $force = false): bool;
+    public function delete(string $uuid): void;
 
     public function list(?string $className = null): Traversable;
 

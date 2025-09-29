@@ -2,7 +2,9 @@
 
 namespace melia\ObjectStorage\Exception;
 
-class StubDeletionFailureException extends \RuntimeException
+use RuntimeException;
+
+class StubDeletionFailureException extends RuntimeException
 {
 
 }

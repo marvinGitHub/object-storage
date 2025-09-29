@@ -143,6 +143,39 @@ If a class recorded in metadata does not exist at load time, the storage creates
 - Use exclusive load/store for read-modify-write sequences.
 - Monitor safe mode and logs; rebuild stubs if you reorganize storage.
 
+## Object Storage Lifecycle Events
+
+The object storage emits lifecycle events around critical operations. You can subscribe to these events to implement indexing, auditing, metrics, cache invalidation, background jobs, etc.
+
+### Event names
+
+- BEFORE_STORE — dispatched before an object is persisted.
+- AFTER_STORE — dispatched after an object has been persisted (and locks released).
+- OBJECT_SAVED — dispatched when the main object data file is written (before metadata/stub).
+- METADATA_SAVED — dispatched after metadata has been written.
+- STUB_SAVED — dispatched after a class stub has been written.
+- BEFORE_LOAD — dispatched before an object is loaded.
+- AFTER_LOAD — dispatched after an object has been loaded.
+- BEFORE_DELETE — dispatched before an object is deleted.
+- AFTER_DELETE — dispatched after an object has been deleted.
+- CACHE_CLEARED — dispatched when the in-memory cache is cleared.
+
+Event constants are defined in melia\ObjectStorage\Event\Events.
+
+### Context payloads
+
+Listeners receive a context object implementing melia\ObjectStorage\Event\Context\ContextInterface. Common contexts include:
+
+- Context(uuid) — carries the UUID related to the operation.
+- StubCreationContext(uuid, className) — carries UUID and class name during stub creation.
+
+Tip: Some events (like CACHE_CLEARED) may have no contextual UUID.
+
+### Subscribing to events
+
+You can obtain the dispatcher via the AwareTrait (getEventDispatcher/setEventDispatcher) and register listeners:
+
+
 ## Example End-to-End
 
 ```php
