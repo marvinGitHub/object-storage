@@ -84,7 +84,7 @@ When a lazy reference loads, it:
     - Iterates UUIDs; optionally filtered by class (via stubs).
 - loadMetadata(string $uuid): ?array
     - Returns metadata (className, checksum, timestamp, etc.) or null.
-- getClassname(string $uuid): ?string
+- getClassName(string $uuid): ?string
     - Returns stored class name for the UUID.
 - clearCache(): void
     - Clears in-memory caches.

@@ -480,7 +480,7 @@ class ObjectStorageTest extends TestCase
 
         $this->storage->store(new TestObjectWithReference(), $uuid);
         $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class, $uuid)));
-        $this->assertEquals(TestObjectWithReference::class, $this->storage->getClassname($uuid));
+        $this->assertEquals(TestObjectWithReference::class, $this->storage->getClassName($uuid));
         $this->assertFileExists($this->storage->getFilePathStub(TestObjectWithReference::class, $uuid));
  }
 }

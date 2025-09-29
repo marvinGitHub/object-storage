@@ -95,7 +95,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
         }
 
-        $className = $this->getClassname($uuid);
+        $className = $this->getClassName($uuid);
         $filePath = $this->getFilePathData($uuid);
 
         try {
@@ -157,7 +157,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $uuid
      * @return string|null
      */
-    public function getClassname(string $uuid): ?string
+    public function getClassName(string $uuid): ?string
     {
         return $this->loadMetadata($uuid)?->getClassName() ?? null;
     }
@@ -424,7 +424,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        $className = $this->getClassname($uuid);
+        $className = $this->getClassName($uuid);
         if (null === $className) {
             $this->getStateHandler()->enableSafeMode();
             throw new InvalidFileFormatException('Unable to determine className for: ' . $uuid);
@@ -462,7 +462,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function processLoadedData(array $data, Metadata $metadata): object
     {
-        $className = $metadata->getClassname();
+        $className = $metadata->getClassName();
         if (false === class_exists($className)) {
             if (false === class_alias(get_class(new class {
                 }), $className)) {
@@ -614,7 +614,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
             /* if classname change we should remove the previous stub */
-            $previousClassname = $this->getClassname($uuid);
+            $previousClassname = $this->getClassName($uuid);
             $removePreviousStub = null !== $previousClassname && $previousClassname !== $object::class;
 
             if ($removePreviousStub) {
@@ -701,7 +701,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $loadedMetadata = $this->loadMetadata($uuid);
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
-            $classNameChanged = $metadata->getClassName() !== ($loadedMetadata?->getClassname() ?? null);
+            $classNameChanged = $metadata->getClassName() !== ($loadedMetadata?->getClassName() ?? null);
 
             if ($checksumChanged || $classNameChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
@@ -917,7 +917,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    public function getClassnames(?array $subSet = null): array
+    public function getClassNames(?array $subSet = null): array
     {
         if (null === $subSet) {
             $registeredClassnames = $this->getRegisteredClassnames();
@@ -928,7 +928,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         $classNames = [];
         foreach ($this->getSelection($subSet) as $uuid) {
-            $className = $this->getClassname($uuid);
+            $className = $this->getClassName($uuid);
             if ($className) {
                 $classNames[$className] = $className;
             }
@@ -967,7 +967,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $directory->tearDown();
 
         foreach ($this->list() as $uuid) {
-            $className = $this->getClassname($uuid);
+            $className = $this->getClassName($uuid);
             $this->createStub($className, $uuid);
         }
     }
@@ -1111,7 +1111,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 if (null !== $this->expectedClassname) {
                     try {
                         $uuid = $this->current();
-                        $assignedClassname = $this->storage->getClassname($uuid);
+                        $assignedClassname = $this->storage->getClassName($uuid);
                         return $assignedClassname === $this->expectedClassname;
                     } catch (Throwable $e) {
                         return false;

@@ -26,7 +26,7 @@ try {
 
             $exists = is_dir($storageDir);
             try {
-                $classnames = $exists ? (new ObjectStorage($storageDir))->getClassnames() : [];
+                $classnames = $exists ? (new ObjectStorage($storageDir))->getClassNames() : [];
             } catch (IOException $e) {
                 $classnames = [];
             }
