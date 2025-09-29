@@ -136,17 +136,17 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * Deletes a stub file for the specified class name and UUID if it exists.
      *
-     * @param string $classname The name of the class associated with the stub.
+     * @param string $className The name of the class associated with the stub.
      * @param string $uuid The unique identifier associated with the stub.
      * @return void
      * @throws StubDeletionFailureException If the stub file could not be deleted.
      */
-    private function deleteStub(string $classname, string $uuid) : void
+    private function deleteStub(string $className, string $uuid) : void
     {
-        $filePathStub = $this->getFilePathStub($classname, $uuid);
+        $filePathStub = $this->getFilePathStub($className, $uuid);
         if (file_exists($filePathStub)) {
             if (!unlink($filePathStub)) {
-                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $classname));
+                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
             }
         }
     }
@@ -247,24 +247,24 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * Generates the file path for a stub associated with a specific class and UUID.
      *
-     * @param string $classname The name of the class for which the stub is being generated.
+     * @param string $className The name of the class for which the stub is being generated.
      * @param string $uuid The unique identifier used to differentiate the stub file.
      * @return string The full file path for the stub.
      */
-    public function getFilePathStub(string $classname, string $uuid): string
+    public function getFilePathStub(string $className, string $uuid): string
     {
-        return $this->getClassStubDirectory($classname) . DIRECTORY_SEPARATOR . $uuid . '.stub';
+        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
     }
 
     /**
      * Retrieves the directory path where the class stub for the given class name is stored.
      *
-     * @param string $classname The name of the class for which the stub directory path is being generated.
+     * @param string $className The name of the class for which the stub directory path is being generated.
      * @return string The full path to the class stub directory.
      */
-    protected function getClassStubDirectory(string $classname): string
+    protected function getClassStubDirectory(string $className): string
     {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($classname);
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
     }
 
     /**
@@ -424,8 +424,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        $classname = $this->getClassname($uuid);
-        if (null === $classname) {
+        $className = $this->getClassname($uuid);
+        if (null === $className) {
             $this->getStateHandler()->enableSafeMode();
             throw new InvalidFileFormatException('Unable to determine className for: ' . $uuid);
         }
@@ -462,15 +462,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function processLoadedData(array $data, Metadata $metadata): object
     {
-        $classname = $metadata->getClassname();
-        if (false === class_exists($classname)) {
+        $className = $metadata->getClassname();
+        if (false === class_exists($className)) {
             if (false === class_alias(get_class(new class {
-                }), $classname)) {
-                throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $classname);
+                }), $className)) {
+                throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
             }
         }
 
-        $object = (new ReflectionClass($classname))->newInstanceWithoutConstructor();
+        $object = (new ReflectionClass($className))->newInstanceWithoutConstructor();
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {
@@ -514,7 +514,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
                     if ($givenType !== $expectedType && in_array($givenType, ['integer', 'double', 'boolean', 'string'])) {
                         if (false === settype($value, $expectedType)) {
-                            throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $classname);
+                            throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
                         }
                     }
                 }
@@ -684,7 +684,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $metadata = new Metadata();
             $metadata->setTimestampCreation(time());
             $metadata->setUuid($uuid);
-            $metadata->setClassName($classname = get_class($object));
+            $metadata->setClassName($className = get_class($object));
             $metadata->setVersion(1);
             $metadata->setTimestampExpiresAt($ttl ? time() + $ttl : null);
 
@@ -701,12 +701,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $loadedMetadata = $this->loadMetadata($uuid);
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
-            $classnameChanged = $metadata->getClassName() !== ($loadedMetadata?->getClassname() ?? null);
+            $classNameChanged = $metadata->getClassName() !== ($loadedMetadata?->getClassname() ?? null);
 
-            if ($checksumChanged || $classnameChanged) {
+            if ($checksumChanged || $classNameChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
                 $this->saveMetadata($metadata);
-                $this->createStub($classname, $uuid);
+                $this->createStub($className, $uuid);
             }
 
             if ($this->enableCache) {
@@ -835,16 +835,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * @param string $classname
+     * @param string $className
      * @param string $uuid
      * @throws IOException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
-    public function createStub(string $classname, string $uuid): void
+    public function createStub(string $className, string $uuid): void
     {
-        $this->registerClassname($classname);
-        $pathname = $this->getFilePathStub($classname, $uuid);
+        $this->registerClassname($className);
+        $pathname = $this->getFilePathStub($className, $uuid);
         $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
         $this->createEmptyFile($pathname);
     }
@@ -854,12 +854,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws IOException
      */
-    private function registerClassname(string $classname): void
+    private function registerClassname(string $className): void
     {
         $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
 
-        if (!in_array($classname, $registeredClassnames, true)) {
-            $this->registeredClassnamesCache[] = $classname;
+        if (!in_array($className, $registeredClassnames, true)) {
+            $this->registeredClassnamesCache[] = $className;
             $this->createDirectoryIfNotExist($this->getStubDirectory());
             $this->getWriter()->atomicWrite(
                 $this->getFilePathClassnames(),
@@ -926,14 +926,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
         }
 
-        $classnames = [];
+        $classNames = [];
         foreach ($this->getSelection($subSet) as $uuid) {
-            $classname = $this->getClassname($uuid);
-            if ($classname) {
-                $classnames[$classname] = $classname;
+            $className = $this->getClassname($uuid);
+            if ($className) {
+                $classNames[$className] = $className;
             }
         }
-        return array_values($classnames);
+        return array_values($classNames);
     }
 
     /**
@@ -967,8 +967,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $directory->tearDown();
 
         foreach ($this->list() as $uuid) {
-            $classname = $this->getClassname($uuid);
-            $this->createStub($classname, $uuid);
+            $className = $this->getClassname($uuid);
+            $this->createStub($className, $uuid);
         }
     }
 
@@ -977,13 +977,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return Traversable  Returns a traversable of UUIDs
      */
-    public function list(?string $classname = null): Traversable
+    public function list(?string $className = null): Traversable
     {
-        if (null !== $classname && is_dir($pathClassStubs = $this->getClassStubDirectory($classname))) {
+        if (null !== $className && is_dir($pathClassStubs = $this->getClassStubDirectory($className))) {
             return $this->createStubIterator($pathClassStubs);
         }
 
-        return $this->createObjectIterator($classname);
+        return $this->createObjectIterator($className);
     }
 
     /**
@@ -1080,22 +1080,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * Creates an iterator that filters objects based on the provided classname and retrieves them from storage.
      *
-     * @param string|null $classname The classname to filter objects by. If null, no filtering is applied.
+     * @param string|null $className The classname to filter objects by. If null, no filtering is applied.
      * @return Traversable An iterator for traversing filtered objects.
      */
-    private function createObjectIterator(?string $classname): Traversable
+    private function createObjectIterator(?string $className): Traversable
     {
         $pattern = $this->storageDir . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
-        return new class (new GlobIterator($pattern), $classname, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
+        return new class (new GlobIterator($pattern), $className, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
 
             private ?string $expectedClassname = null;
             private string $extension;
             private ObjectStorage $storage;
 
-            public function __construct(GlobIterator $iterator, ?string $classname, string $extension, ObjectStorage $storage)
+            public function __construct(GlobIterator $iterator, ?string $className, string $extension, ObjectStorage $storage)
             {
                 parent::__construct($iterator);
-                $this->expectedClassname = $classname;
+                $this->expectedClassname = $className;
                 $this->storage = $storage;
                 $this->extension = $extension;
             }
