@@ -146,7 +146,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $filePathStub = $this->getFilePathStub($classname, $uuid);
         if (file_exists($filePathStub)) {
             if (!unlink($filePathStub)) {
-                throw new StubDeletionFailureException('Stub for uuid ' . $uuid . ' could not be deleted');
+                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $classname));
             }
         }
     }
@@ -617,11 +617,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $previousClassname = $this->getClassname($uuid);
             $removePreviousStub = null !== $previousClassname && $previousClassname !== $object::class;
 
-            $this->serializeAndStore($object, $uuid, $ttl);
-
             if ($removePreviousStub) {
                 $this->deleteStub($previousClassname, $uuid);
             }
+
+            $this->serializeAndStore($object, $uuid, $ttl);
 
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()->releaseLock($uuid);
