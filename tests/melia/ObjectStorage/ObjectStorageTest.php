@@ -472,4 +472,15 @@ class ObjectStorageTest extends TestCase
         $metadata = $this->storage->loadMetadata($uuidA);
         $this->assertEquals(Metadata::RESERVED_REFERENCE_NAME_DEFAULT, $metadata->getReservedReferenceName());
     }
+
+    public function testStubRegenerationAfterClassChange()
+    {
+        $uuid = $this->storage->store(new stdClass());
+        $this->assertFileExists($this->storage->getFilePathStub(stdClass::class, $uuid));
+
+        $this->storage->store(new TestObjectWithReference(), $uuid);
+        $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class, $uuid)));
+        $this->assertEquals(TestObjectWithReference::class, $this->storage->getClassname($uuid));
+        $this->assertFileExists($this->storage->getFilePathStub(TestObjectWithReference::class, $uuid));
+ }
 }

@@ -20,6 +20,7 @@ use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
+use melia\ObjectStorage\Exception\StubDeletionFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\File\ReaderAwareTrait;
@@ -122,17 +123,30 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 }
             }
 
-            $filePathStub = $this->getFilePathStub($className, $uuid);
-            if (file_exists($filePathStub)) {
-                if (!unlink($filePathStub)) {
-                    throw new MetataDeletionFailureException('Stub for uuid ' . $uuid . ' could not be deleted');
-                }
-            }
+            $this->deleteStub($className, $uuid);
 
             return true;
         } finally {
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()->releaseLock($uuid);
+            }
+        }
+    }
+
+    /**
+     * Deletes a stub file for the specified class name and UUID if it exists.
+     *
+     * @param string $classname The name of the class associated with the stub.
+     * @param string $uuid The unique identifier associated with the stub.
+     * @return void
+     * @throws StubDeletionFailureException If the stub file could not be deleted.
+     */
+    private function deleteStub(string $classname, string $uuid) : void
+    {
+        $filePathStub = $this->getFilePathStub($classname, $uuid);
+        if (file_exists($filePathStub)) {
+            if (!unlink($filePathStub)) {
+                throw new StubDeletionFailureException('Stub for uuid ' . $uuid . ' could not be deleted');
             }
         }
     }
@@ -598,7 +612,17 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             // 3) Kein Early-Return: serializeAndStore IMMER aufrufen, damit Updates via Checksumme erkannt werden
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
+
+            /* if classname change we should remove the previous stub */
+            $previousClassname = $this->getClassname($uuid);
+            $removePreviousStub = null !== $previousClassname && $previousClassname !== $object::class;
+
             $this->serializeAndStore($object, $uuid, $ttl);
+
+            if ($removePreviousStub) {
+                $this->deleteStub($previousClassname, $uuid);
+            }
+
             if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()->releaseLock($uuid);
             }
@@ -677,8 +701,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $loadedMetadata = $this->loadMetadata($uuid);
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
+            $classnameChanged = $metadata->getClassName() !== ($loadedMetadata?->getClassname() ?? null);
 
-            if ($checksumChanged) {
+            if ($checksumChanged || $classnameChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
                 $this->saveMetadata($metadata);
                 $this->createStub($classname, $uuid);
