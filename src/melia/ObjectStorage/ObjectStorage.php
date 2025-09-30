@@ -71,7 +71,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private const FILE_SUFFIX_METADATA = '.metadata';
 
+    /**
+     * The suffix used for stub files.
+     */
     private const FILE_SUFFIX_STUB = '.stub';
+
+    /**
+     * The suffix used for object files.
+     */
     private const FILE_SUFFIX_OBJECT = '.obj';
 
     /**
@@ -1005,6 +1012,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws IOException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidUUIDException
      */
     public function rebuildStubs(): void
     {
