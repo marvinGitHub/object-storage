@@ -153,12 +153,20 @@ The object storage emits lifecycle events around critical operations. You can su
 - AFTER_STORE — dispatched after an object has been persisted (and locks released).
 - OBJECT_SAVED — dispatched when the main object data file is written (before metadata/stub).
 - METADATA_SAVED — dispatched after metadata has been written.
-- STUB_SAVED — dispatched after a class stub has been written.
+- STUB_CREATED — dispatched after a class stub has been created.
+- STUB_REMOVED — dispatched after a class stub has been removed.
 - BEFORE_LOAD — dispatched before an object is loaded.
 - AFTER_LOAD — dispatched after an object has been loaded.
 - BEFORE_DELETE — dispatched before an object is deleted.
 - AFTER_DELETE — dispatched after an object has been deleted.
 - CACHE_CLEARED — dispatched when the in-memory cache is cleared.
+- SHARED_LOCK_ACQUIRED — dispatched when a shared lock is acquired.
+- EXCLUSIVE_LOCK_ACQUIRED — dispatched when an exclusive lock is acquired.
+- LOCK_RELEASED — dispatched when a lock is released.
+- SAFE_MODE_ENABLED — dispatched when safe mode is enabled.
+- SAFE_MODE_DISABLED — dispatched when safe mode is disabled.
+- LIFETIME_CHANGED — dispatched when an object’s lifetime value changes.
+- OBJECT_EXPIRED — dispatched when an object reaches/exceeds its lifetime and expires.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 
@@ -167,10 +175,11 @@ Event constants are defined in melia\ObjectStorage\Event\Events.
 Listeners receive a context object implementing melia\ObjectStorage\Event\Context\ContextInterface. Common contexts include:
 
 - Context(uuid) — carries the UUID related to the operation.
-- StubCreationContext(uuid, className) — carries UUID and class name during stub creation.
+- ObjectPersistenceContext(uuid, path) — carries UUID and path for persistence ops.
+- StubContext(uuid, className) — carries UUID and class name during stub lifecycle.
+- LifetimeContext(uuid, previous, current) — carries lifetime changes (e.g., TTL).
 
-Tip: Some events (like CACHE_CLEARED) may have no contextual UUID.
-
+Tip: Some events (like CACHE_CLEARED or SAFE_MODE_* and lock events) may have no contextual UUID.
 ### Subscribing to events
 
 You can obtain the dispatcher via the AwareTrait (getEventDispatcher/setEventDispatcher) and register listeners:

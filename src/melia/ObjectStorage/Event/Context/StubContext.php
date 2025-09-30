@@ -2,7 +2,7 @@
 
 namespace melia\ObjectStorage\Event\Context;
 
-class StubCreationContext extends Context
+class StubContext extends Context
 {
 
     public function __construct(string $uuid, protected string $className)

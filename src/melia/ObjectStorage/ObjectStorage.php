@@ -8,8 +8,9 @@ use Iterator;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
-use melia\ObjectStorage\Event\Context\StubCreationContext;
+use melia\ObjectStorage\Event\Context\StubContext;
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
@@ -241,6 +242,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $uuid The unique identifier associated with the stub.
      * @return void
      * @throws StubDeletionFailureException If the stub file could not be deleted.
+     * @throws InvalidUUIDException
      */
     private function deleteStub(string $className, string $uuid): void
     {
@@ -249,6 +251,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (!unlink($filePathStub)) {
                 throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
             }
+            $this->getEventDispatcher()->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
         }
     }
 
@@ -287,6 +290,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /**
      * @throws MetadataNotFoundException
+     * @throws InvalidUUIDException
      */
     public function setLifetime(string $uuid, int $ttl): void
     {
@@ -301,6 +305,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return void
      * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
+     * @throws InvalidUUIDException
      */
     public function setExpiration(string $uuid, ?int $expiresAt): void
     {
@@ -310,6 +315,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
         $metadata->setTimestampExpiresAt($expiresAt);
         $this->saveMetadata($metadata);
+        $this->getEventDispatcher()->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
     }
 
     /**
@@ -317,6 +323,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param Metadata $metadata The metadata to be serialized and saved.
      * @return void
+     * @throws InvalidUUIDException
      */
     private function saveMetadata(Metadata $metadata): void
     {
@@ -351,6 +358,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_LOAD, new Context($uuid));
 
         if ($this->expired($uuid)) {
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, new Context($uuid));
             /* do not delete an expired object since the ttl might be updated later */
             return null;
         }
@@ -871,7 +879,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $pathname = $this->getFilePathStub($className, $uuid);
         $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
         $this->createEmptyFile($pathname);
-        $this->getEventDispatcher()?->dispatch(Events::STUB_SAVED, new StubCreationContext($uuid, $className));
+        $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, new StubContext($uuid, $className));
     }
 
     /**
