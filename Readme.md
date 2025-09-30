@@ -167,6 +167,7 @@ The object storage emits lifecycle events around critical operations. You can su
 - SAFE_MODE_DISABLED — dispatched when safe mode is disabled.
 - LIFETIME_CHANGED — dispatched when an object’s lifetime value changes.
 - OBJECT_EXPIRED — dispatched when an object reaches/exceeds its lifetime and expires.
+- CLASS_ALIAS_CREATED — dispatched when an alias is created for an unknown class.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 

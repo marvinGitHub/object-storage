@@ -7,6 +7,7 @@ use GlobIterator;
 use Iterator;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
+use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
@@ -493,6 +494,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 }), $className)) {
                 throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
             }
+            $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, new ClassAliasCreationContext($className));
         }
 
         $object = (new ReflectionClass($className))->newInstanceWithoutConstructor();

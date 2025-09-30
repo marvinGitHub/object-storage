@@ -22,4 +22,5 @@ interface Events
     public const SAFE_MODE_DISABLED = 'object-storage.safe_mode_disabled';
     public const LIFETIME_CHANGED = 'object-storage.lifetime_changed';
     public const OBJECT_EXPIRED = 'object-storage.object_expired';
+    public const CLASS_ALIAS_CREATED = 'object-storage.class_alias_created';
 }
