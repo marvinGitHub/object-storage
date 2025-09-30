@@ -90,7 +90,7 @@ When a lazy reference loads, it:
     - Clears in-memory caches.
 - rebuildStubs(): void
     - Rebuilds class stub index.
-    - 
+
 ### Locking (use LockAdapter)
 Use when you need explicit control over concurrent access (e.g., long-running writes, cross-process coordination). ObjectStorage uses the lock adapter internally in store/load/delete; call these for advanced scenarios.
 
@@ -180,6 +180,7 @@ Listeners receive a context object implementing melia\ObjectStorage\Event\Contex
 - LifetimeContext(uuid, previous, current) — carries lifetime changes (e.g., TTL).
 
 Tip: Some events (like CACHE_CLEARED or SAFE_MODE_* and lock events) may have no contextual UUID.
+
 ### Subscribing to events
 
 You can obtain the dispatcher via the AwareTrait (getEventDispatcher/setEventDispatcher) and register listeners:
