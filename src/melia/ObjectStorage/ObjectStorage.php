@@ -317,13 +317,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function setExpiration(string $uuid, ?int $expiresAt): void
     {
+        $this->getLockAdapter()->acquireExclusiveLock($uuid);
+
         $metadata = $this->loadMetadata($uuid);
         if (null === $metadata) {
             throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
         }
+
         $metadata->setTimestampExpiresAt($expiresAt);
         $this->saveMetadata($metadata);
         $this->getEventDispatcher()->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
+
+        $this->getLockAdapter()->releaseLock($uuid);
     }
 
     /**
