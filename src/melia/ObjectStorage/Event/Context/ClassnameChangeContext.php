@@ -1,7 +1,6 @@
 <?php
 
-namespace Melia\ObjectStorage\Event\Context;
-
+namespace melia\ObjectStorage\Event\Context;
 
 class ClassnameChangeContext extends Context
 {

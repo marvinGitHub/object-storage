@@ -8,7 +8,7 @@ use Iterator;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
-use Melia\ObjectStorage\Event\Context\ClassnameChangeContext;
+use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
@@ -756,7 +756,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->createStub($className, $uuid);
             }
 
-            if ($classNameChanged) {
+            if ((null !== $previousClassname) && $classNameChanged) {
                 $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
