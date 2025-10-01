@@ -5,6 +5,8 @@ namespace melia\ObjectStorage;
 use FilterIterator;
 use GlobIterator;
 use Iterator;
+use melia\ObjectStorage\Cache\CacheInterface;
+use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
@@ -66,6 +68,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use WriterAwareTrait;
     use ReaderAwareTrait;
     use AwareTrait;
+    use Cache\AwareTrait;
 
     /**
      * The suffix used for metadata files.
@@ -81,11 +84,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * The suffix used for object files.
      */
     private const FILE_SUFFIX_OBJECT = '.obj';
-
-    /**
-     * An array used to cache objects for reuse, minimizing redundant object creation.
-     */
-    private array $objectCache = [];
 
     /**
      * An array used to maintain a stack of items during processing.
@@ -122,9 +120,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         try {
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
-            if ($this->enableCache) {
-                unset($this->objectCache[$uuid]);
-            }
+            $this->getCache()?->delete($uuid);
 
             if (!$this->exists($uuid)) {
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
@@ -352,7 +348,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function clearCache(): void
     {
-        $this->objectCache = [];
+        $this->getCache()?->clear();
         $this->hashToUuid = [];
         $this->registeredClassNamesCache = null;
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
@@ -454,8 +450,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function loadFromStorage(string $uuid): ?object
     {
-        if ($this->enableCache && isset($this->objectCache[$uuid])) {
-            return $this->objectCache[$uuid];
+        $cached = $this->getCache()?->get($uuid);
+        if (null !== $cached) {
+            return $cached;
         }
 
         $data = $this->loadFromJsonFile($filename = $this->getFilePathData($uuid));
@@ -477,9 +474,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $metadata = $this->loadMetadata($uuid);
         $object = $this->processLoadedData($data, $metadata);
 
-        if ($this->enableCache) {
-            $this->objectCache[$uuid] = $object;
-        }
+        $this->getCache()?->set($uuid, $object);
 
         Helper::assign($object, $uuid);
 
@@ -760,9 +755,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
-            if ($this->enableCache) {
-                $this->objectCache[$uuid] = $object;
-            }
+            $this->getCache()?->set($uuid, $object);
         } finally {
             // Rekursionsschutz entfernen
             array_pop($this->processingStack);
@@ -1105,7 +1098,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param LockAdapterInterface|null $lockAdapter
      * @param StateHandler|null $stateHandler
      * @param DispatcherInterface|null $eventDispatcher
-     * @param bool $enableCache Whether to enable in-memory caching for stored objects. Defaults to true.
+     * @param CacheInterface|null $cache
      * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
      */
@@ -1115,10 +1108,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         protected ?LockAdapterInterface $lockAdapter = null,
         protected ?StateHandler         $stateHandler = null,
         ?DispatcherInterface            $eventDispatcher = null,
-        private bool                    $enableCache = true,
+        ?CacheInterface                 $cache = null,
         private int                     $maxNestingLevel = 100
     )
     {
+        if (null === $cache) {
+            $cache = new InMemoryCache();
+        }
+        $this->setCache($cache);
+
         if (null === $eventDispatcher) {
             $eventDispatcher = new Dispatcher();
         }
