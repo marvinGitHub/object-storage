@@ -8,6 +8,7 @@ use Iterator;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
+use Melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
@@ -744,7 +745,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $loadedMetadata = $this->loadMetadata($uuid);
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
-            $classNameChanged = $metadata->getClassName() !== ($loadedMetadata?->getClassName() ?? null);
+            $previousClassname = $loadedMetadata?->getClassName() ?? null;
+            $classNameChanged = $metadata->getClassName() !== $previousClassname;
 
             if ($checksumChanged || $classNameChanged) {
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
@@ -752,6 +754,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
                 $this->saveMetadata($metadata);
                 $this->createStub($className, $uuid);
+            }
+
+            if ($classNameChanged) {
+                $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
             if ($this->enableCache) {
