@@ -373,6 +373,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
+        $cached = $this->getCache()?->get($uuid);
+        if (null !== $cached) {
+            return $cached;
+        }
+
         try {
             if ($exclusive) {
                 $this->getLockAdapter()->acquireExclusiveLock($uuid);
@@ -450,11 +455,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function loadFromStorage(string $uuid): ?object
     {
-        $cached = $this->getCache()?->get($uuid);
-        if (null !== $cached) {
-            return $cached;
-        }
-
         $data = $this->loadFromJsonFile($filename = $this->getFilePathData($uuid));
         if (false === is_array($data)) {
             return null;
@@ -739,13 +739,21 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $metadata->setChecksum(md5($jsonGraph));
 
             $loadedMetadata = $this->loadMetadata($uuid);
-            $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
+
+            $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
             $classNameChanged = $metadata->getClassName() !== $previousClassname;
 
             if ($checksumChanged || $classNameChanged) {
+                try {
+                    $previousObject = $this->exists($uuid) ? $this->load($uuid) : null;
+                } catch (Throwable $e) {
+                    $this->getLogger()?->log($e);
+                    $previousObject = null;
+                }
+
                 $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
-                $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new ObjectPersistenceContext($uuid, $object));
+                $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new ObjectPersistenceContext($uuid, $object, $previousObject));
 
                 $this->saveMetadata($metadata);
                 $this->createStub($className, $uuid);

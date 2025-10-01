@@ -437,6 +437,7 @@ class ObjectStorageTest extends TestCase
     public function testLoadWithExclusiveLock()
     {
         $uuid = $this->storage->store(new stdClass());
+        $this->storage->clearCache();
         $loaded = $this->storage->load($uuid, true);
         $this->assertInstanceOf(stdClass::class, $loaded);
         $this->assertFalse($this->storage->getLockAdapter()->isLockedByOtherProcess($uuid));;

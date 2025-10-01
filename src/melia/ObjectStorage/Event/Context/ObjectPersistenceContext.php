@@ -4,7 +4,7 @@ namespace melia\ObjectStorage\Event\Context;
 
 class ObjectPersistenceContext extends Context
 {
-    public function __construct(string $uuid, protected object $object)
+    public function __construct(string $uuid, protected object $object, protected ?object $previousObject)
     {
         parent::__construct($uuid);
     }
@@ -12,5 +12,10 @@ class ObjectPersistenceContext extends Context
     public function getObject(): object
     {
         return $this->object;
+    }
+
+    public function getPreviousObject(): ?object
+    {
+        return $this->previousObject;
     }
 }
