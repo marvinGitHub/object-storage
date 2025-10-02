@@ -24,4 +24,5 @@ interface Events
     public const OBJECT_EXPIRED = 'object-storage.object_expired';
     public const CLASS_ALIAS_CREATED = 'object-storage.class_alias_created';
     public const CLASSNAME_CHANGED = 'object-storage.classname_changed';
+    public const CACHE_HIT = 'object-storage.cache_hit';
 }

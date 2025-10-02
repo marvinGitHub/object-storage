@@ -169,6 +169,7 @@ The object storage emits lifecycle events around critical operations. You can su
 - OBJECT_EXPIRED — dispatched when an object reaches/exceeds its lifetime and expires.
 - CLASS_ALIAS_CREATED — dispatched when an alias is created for an unknown class.
 - CLASSNAME_CHANGED — dispatched when the class name of an object is changed.
+- CACHE_HIT — dispatched when an object is loaded from cache.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 
