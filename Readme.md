@@ -114,7 +114,7 @@ When to use:
 ### State (use StateHandler)
 Use when you need to gate operations globally (e.g., fail-safe after corruption) or query/process-wide state.
 - safeModeEnabled(): bool
-    - Check if safe mode is active.
+    - Check if the safe mode is active.
 - enableSafeMode(): bool
     - Activate safe mode to prevent further mutations.
 
@@ -186,10 +186,9 @@ Tip: Some events (like CACHE_CLEARED or SAFE_MODE_* and lock events) may have no
 
 ### Subscribing to events
 
-You can obtain the dispatcher via the AwareTrait (getEventDispatcher/setEventDispatcher) and register listeners:
+You can get the dispatcher via the AwareTrait (getEventDispatcher/setEventDispatcher) and register listeners:
 
-
-## Example End-to-End
+## Example Storing and Loading
 
 ```php
 <?php
@@ -244,6 +243,78 @@ do {
 } while ($storage->getLockAdapter()->isLockedByOtherProcess($uuid));
 ```
 
+## Example Event Listener
+
+```php
+<?php
+use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Event\Events;
+use melia\ObjectStorage\Event\DispatcherInterface;
+use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
+use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
+use melia\ObjectStorage\Event\Context\LifetimeContext;
+use melia\ObjectStorage\Event\Context\StubContext;
+
+// Initialize storage (using defaults)
+$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
+
+// Get the dispatcher and register listeners
+/** @var DispatcherInterface $dispatcher */
+$dispatcher = $storage->getEventDispatcher();
+
+// Called before an object is stored
+$dispatcher->addListener(Events::BEFORE_STORE, function (Context $ctx) {
+    // $ctx->getUuid()
+});
+
+// Called after an object is stored (with previous object if available)
+$dispatcher->addListener(Events::OBJECT_SAVED, function (ObjectPersistenceContext $ctx) {
+    // $ctx->getUuid(), $ctx->getObject(), $ctx->getPreviousObject()
+});
+
+// Called after metadata is saved
+$dispatcher->addListener(Events::METADATA_SAVED, function (Context $ctx) {
+    // $ctx->getUuid()
+});
+
+// Called before and after load
+$dispatcher->addListener(Events::BEFORE_LOAD, function (Context $ctx) {});
+$dispatcher->addListener(Events::AFTER_LOAD, function (Context $ctx) {});
+
+// Cache hit during load
+$dispatcher->addListener(Events::CACHE_HIT, function (Context $ctx) {});
+
+// Object expired during load
+$dispatcher->addListener(Events::OBJECT_EXPIRED, function (Context $ctx) {});
+
+// Lifetime changed via setExpiration/setLifetime
+$dispatcher->addListener(Events::LIFETIME_CHANGED, function (LifetimeContext $ctx) {
+    // $ctx->getUuid(), $ctx->getExpiresAt()
+});
+
+// Stub files created/removed
+$dispatcher->addListener(Events::STUB_CREATED, function (StubContext $ctx) {
+    // $ctx->getUuid(), $ctx->getClassName()
+});
+$dispatcher->addListener(Events::STUB_REMOVED, function (StubContext $ctx) {});
+
+// Classname changed for existing UUID
+$dispatcher->addListener(Events::CLASSNAME_CHANGED, function (ClassnameChangeContext $ctx) {
+    // $ctx->getUuid(), $ctx->getPreviousClassname(), $ctx->getNewClassname()
+});
+
+// After delete
+$dispatcher->addListener(Events::AFTER_DELETE, function (Context $ctx) {});
+
+// Clear cache
+$dispatcher->addListener(Events::CACHE_CLEARED, function () {});
+
+// Use storage as usual
+$uuid = $storage->store((object)['name' => 'Alice']);
+$loaded = $storage->load($uuid);
+$storage->delete($uuid);
+```
 
 ## License
 
