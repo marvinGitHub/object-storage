@@ -373,7 +373,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        $cached = $this->getCache()?->get($uuid);
+        $cached = $this->getCache()?->get($uuid) ?? null;
         if (null !== $cached) {
             $this->getEventDispatcher()?->dispatch(Events::CACHE_HIT, new Context($uuid));
             return $cached;
