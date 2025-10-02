@@ -1121,6 +1121,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         private int                     $maxNestingLevel = 100
     )
     {
+        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
+        $this->createDirectoryIfNotExist($this->storageDir);
+
         if (null === $cache) {
             $cache = new InMemoryCache();
         }
@@ -1144,9 +1147,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $lockAdapter->setEventDispatcher($eventDispatcher);
         }
         $this->setLockAdapter($lockAdapter);
-
-        $this->storageDir = rtrim($storageDir, '/\\');
-        $this->createDirectoryIfNotExist($this->storageDir);
     }
 
     /**
