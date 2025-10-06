@@ -114,9 +114,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
         }
 
-        $className = $this->getClassName($uuid);
-        $filePath = $this->getFilePathData($uuid);
-
         try {
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
@@ -125,6 +122,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (!$this->exists($uuid)) {
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
             }
+
+            $className = $this->getClassName($uuid);
+            $filePath = $this->getFilePathData($uuid);
 
             if (!unlink($filePath)) {
                 throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
