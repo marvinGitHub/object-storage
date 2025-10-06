@@ -623,7 +623,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function store(object $object, ?string $uuid = null, ?int $ttl = null): string
     {
-        $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new Context($uuid));
+        $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new ObjectPersistenceContext($uuid, $object));
 
         if ($this->getStateHandler()->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
