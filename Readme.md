@@ -316,7 +316,7 @@ $loaded = $storage->load($uuid);
 $storage->delete($uuid);
 ```
 ## Command Line Interface
-See [CLI Documentation](object-storage/docs/cli.md)
+See [CLI Documentation](docs/cli.md)
 
 ## License
 
