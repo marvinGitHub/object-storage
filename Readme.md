@@ -264,7 +264,7 @@ $storage = new ObjectStorage(__DIR__ . '/var/object-storage');
 $dispatcher = $storage->getEventDispatcher();
 
 // Called before an object is stored
-$dispatcher->addListener(Events::BEFORE_STORE, function (Context $ctx) {
+$dispatcher->addListener(Events::BEFORE_STORE, function (ObjectPersistenceContext $ctx) {
     // $ctx->getUuid()
 });
 
