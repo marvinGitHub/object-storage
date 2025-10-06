@@ -177,11 +177,6 @@ class Metadata implements JsonSerializable
         $this->reservedReferenceName = $reservedReferenceName;
     }
 
-    public function validate(): void
-    {
-        /* TODO */
-    }
-
     /**
      * Prepares data for JSON serialization.
      *

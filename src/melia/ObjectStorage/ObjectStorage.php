@@ -169,10 +169,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         try {
             $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
             if (is_array($metadata)) {
-                $metadata = Metadata::createFromArray($metadata);
-                $metadata->validate();
-                return $metadata;
+                return Metadata::createFromArray($metadata);
             }
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);

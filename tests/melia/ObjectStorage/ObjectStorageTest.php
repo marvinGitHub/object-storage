@@ -6,6 +6,7 @@ use Error;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
+use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
@@ -453,7 +454,7 @@ class ObjectStorageTest extends TestCase
         $this->assertFalse($this->storage->exists($uuid));
         $this->assertFalse(file_exists($this->storage->getFilePathData($uuid)));
         $this->assertFalse(file_exists($this->storage->getFilePathMetadata($uuid)));
-        $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class,$uuid)));
+        $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class, $uuid)));
     }
 
     public function testStoreWithReservedReferenceName()
@@ -483,5 +484,15 @@ class ObjectStorageTest extends TestCase
         $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class, $uuid)));
         $this->assertEquals(TestObjectWithReference::class, $this->storage->getClassName($uuid));
         $this->assertFileExists($this->storage->getFilePathStub(TestObjectWithReference::class, $uuid));
- }
+    }
+
+    public function testRedundantDeletion()
+    {
+        $uuid = $this->storage->store(new stdClass());
+        $this->storage->delete($uuid);
+        $this->assertFalse($this->storage->exists($uuid));
+
+        $this->expectException(ObjectNotFoundException::class);
+        $this->storage->delete($uuid);
+    }
 }
