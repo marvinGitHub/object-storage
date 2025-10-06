@@ -315,6 +315,8 @@ $uuid = $storage->store((object)['name' => 'Alice']);
 $loaded = $storage->load($uuid);
 $storage->delete($uuid);
 ```
+## Command Line Interface
+See [CLI Documentation](object-storage/docs/cli.md)
 
 ## License
 
