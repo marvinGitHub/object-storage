@@ -5,7 +5,6 @@ namespace melia\ObjectStorage;
 use FilterIterator;
 use GlobIterator;
 use Iterator;
-use melia\ObjectStorage\Cache\CacheInterface;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
@@ -50,11 +49,14 @@ use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
+use Psr\SimpleCache\InvalidArgumentException;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionType;
 use ReflectionUnionType;
+use SplObjectStorage;
+use Psr\SimpleCache\CacheInterface;
 use Throwable;
 use Traversable;
 
@@ -85,12 +87,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private const FILE_SUFFIX_OBJECT = '.obj';
 
-    /**
-     * An array used to maintain a stack of items during processing.
-     */
-    private array $processingStack = [];
+    private SplObjectStorage $processingStack;
 
-    private array $hashToUuid = [];
+    private SplObjectStorage $objectUuidMap;
 
     /** @var array<string>|null */
     private ?array $registeredClassNamesCache = null;
@@ -105,6 +104,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws InvalidUUIDException
      * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
      * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
+     * @throws InvalidArgumentException
      */
     public function delete(string $uuid, bool $force = false): void
     {
@@ -350,7 +350,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function clearCache(): void
     {
         $this->getCache()?->clear();
-        $this->hashToUuid = [];
+        $this->objectUuidMap = new SplObjectStorage();
+        $this->processingStack = new SplObjectStorage();
         $this->registeredClassNamesCache = null;
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
     }
@@ -374,7 +375,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        $cached = $this->getCache()?->get($uuid) ?? null;
+        $cached = $this->getCache()?->get($uuid, null);
         if (null !== $cached) {
             $this->getEventDispatcher()?->dispatch(Events::CACHE_HIT, new Context($uuid));
             return $cached;
@@ -417,18 +418,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Calculates the remaining lifetime in seconds for the given UUID based on its expiration time.
+     * Retrieves the lifetime of the metadata associated with the specified UUID.
      *
-     * @param string $uuid The unique identifier for which to calculate the remaining lifetime.
-     * @return int|null Returns the remaining lifetime in seconds, or null if the expiration time is not set. Negative values represent the lifetime since expiration
+     * @param string $uuid The unique identifier used to load the metadata.
+     * @return int|null The lifetime of the metadata in seconds, or null if no metadata is found.
      */
     public function getLifetime(string $uuid): ?int
     {
-        $expiresAt = $this->getExpiration($uuid);
-        if (null === $expiresAt) {
-            return null;
-        }
-        return $expiresAt - time();
+        return $this->loadMetadata($uuid)?->getLifetime();
     }
 
     /**
@@ -476,7 +473,19 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $metadata = $this->loadMetadata($uuid);
         $object = $this->processLoadedData($data, $metadata);
 
-        $this->getCache()?->set($uuid, $object);
+        $lifetime = $metadata->getLifetime();
+
+        /*
+         * Cache policy:
+         * lifetime === null  => cache without expiration
+         * lifetime > 0       => cache with TTL
+         * lifetime <= 0      => remove from cache (expired)
+         */
+        if (null !== $lifetime && $lifetime <= 0) {
+            $this->getCache()?->delete($uuid);
+        } else {
+            $this->getCache()?->set($uuid, $object, $lifetime);
+        }
 
         Helper::assign($object, $uuid);
 
@@ -640,14 +649,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $objectHash = $this->getObjectHash($object);
-
-            // 1) UUID bevorzugt aus Param, sonst aus AwareInterface, sonst aus hashToUuid-Mapping WIEDERVERWENDEN,
+            // 1) UUID bevorzugt aus Param, sonst aus AwareInterface, sonst aus objectUuidMap-Mapping WIEDERVERWENDEN,
             //    nur wenn nichts vorhanden ist, eine neue UUID erzeugen
-            $uuid ??= Helper::getAssigned($object) ?? $this->hashToUuid[$objectHash] ?? $this->getNextAvailableUuid();
+            $uuid ??= Helper::getAssigned($object) ?? $this->objectUuidMap[$object] ?? $this->getNextAvailableUuid();
 
             // 2) Mapping aktualisieren (wichtig für Referenzen und Folge-Store-Aufrufe)
-            $this->hashToUuid[$objectHash] = $uuid;
+            $this->objectUuidMap[$object] = $uuid;
 
             // 3) Kein Early-Return: serializeAndStore IMMER aufrufen, damit Updates via Checksumme erkannt werden
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
@@ -678,17 +685,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Generates a unique hash for the given object.
-     *
-     * @param object $object The object for which the hash is to be generated.
-     * @return string Returns a unique hash representing the given object.
-     */
-    private function getObjectHash(object $object): string
-    {
-        return spl_object_hash($object);
-    }
-
-    /**
      * @param object $object
      * @param string $uuid
      * @param int|null $ttl
@@ -701,26 +697,25 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      * @throws InvalidUUIDException
+     * @throws InvalidArgumentException
      */
     private function serializeAndStore(object $object, string $uuid, ?int $ttl = null): void
     {
         try {
-            $objectHash = $this->getObjectHash($object);
-
             // Hash→UUID-Mapping sicherstellen
-            if (!isset($this->hashToUuid[$objectHash])) {
-                $this->hashToUuid[$objectHash] = $uuid;
+            if (!isset($this->objectUuidMap[$object])) {
+                $this->objectUuidMap[$object] = $uuid;
             }
 
             // assign the UUID (stable serialization)
             Helper::assign($object, $uuid);
 
             // Rekursionsschutz
-            if (in_array($objectHash, $this->processingStack, true)) {
+            if (isset($this->processingStack[$object])) {
                 return;
             }
 
-            $this->processingStack[] = $objectHash;
+            $this->processingStack[$object] = true;
 
             $metadata = new Metadata();
             $metadata->setTimestampCreation(time());
@@ -765,10 +760,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
-            $this->getCache()?->set($uuid, $object);
+            $this->getCache()?->set($uuid, $object, $ttl);
         } finally {
-            // Rekursionsschutz entfernen
-            array_pop($this->processingStack);
+            if (isset($this->processingStack[$object])) {
+                unset($this->processingStack[$object]);
+            }
         }
     }
 
@@ -839,6 +835,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ResourceSerializationNotSupportedException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidArgumentException
      */
     private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {
@@ -861,12 +858,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $value = $loaded;
             }
 
-            $hash = $this->getObjectHash($value);
-            $refUuid = Helper::getAssigned($value) ?? $this->hashToUuid[$hash] ?? $this->getNextAvailableUuid();
+            $refUuid = Helper::getAssigned($value) ?? $this->objectUuidMap[$value] ?? $this->getNextAvailableUuid();
 
-            $this->hashToUuid[$hash] = $refUuid;
+            $this->objectUuidMap[$value] = $refUuid;
 
-            if (!in_array($hash, $this->processingStack, true)) {
+            if (false === isset($this->processingStack[$value])) {
                 $this->serializeAndStore($value, $refUuid);
             }
 
@@ -1122,6 +1118,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         private int                     $maxNestingLevel = 100
     )
     {
+        $this->objectUuidMap = new SplObjectStorage();
+        $this->processingStack = new SplObjectStorage();
+
         $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
         $this->createDirectoryIfNotExist($this->storageDir);
 

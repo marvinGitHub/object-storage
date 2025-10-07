@@ -111,7 +111,12 @@ class ObjectStorageTest extends TestCase
 
         $this->assertEquals(get_class($object), get_class($loaded));
         $this->assertTrue($loaded->self instanceof LazyLoadReference);
-        $this->assertEquals(spl_object_hash($loaded), spl_object_hash($loaded->self->getObject()));
+        $this->assertEquals($uuid, $loaded->self->getUUID());
+
+
+        $hashB = spl_object_hash($loaded->self->getObject());
+        $hashA = spl_object_hash($loaded);
+        $this->assertEquals($hashA, $hashB);
     }
 
     public function testDelete()
@@ -220,6 +225,13 @@ class ObjectStorageTest extends TestCase
         $this->assertContains($anotherUUID, $list);
 
         $this->tearDownDirectory($someDir);
+    }
+
+    public function testUUIDsNotEqual() {
+        $uuidA = $this->storage->store(new stdClass());
+        $uuidB = $this->storage->store(new stdClass());
+
+        $this->assertNotEquals($uuidA, $uuidB);
     }
 
     public function testAssume()
