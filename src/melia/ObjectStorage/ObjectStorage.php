@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage;
 
+use Closure;
 use FilterIterator;
 use GlobIterator;
 use Iterator;
@@ -18,6 +19,7 @@ use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
+use melia\ObjectStorage\Exception\ClosureSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
@@ -812,7 +814,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             try {
                 $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], 0);
-            } catch (ResourceSerializationNotSupportedException $e) {
+            } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException $e) {
                 $this->getLogger()?->log($e);
             }
         }
@@ -837,6 +839,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      * @throws InvalidArgumentException
+     * @throws ClosureSerializationNotSupportedException
      */
     private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {
@@ -849,6 +852,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         if (is_object($value)) {
+            if ($value instanceof Closure) {
+                throw new ClosureSerializationNotSupportedException('Closures are not supported');
+            }
+
             if ($value instanceof LazyLoadReference) {
                 if (!$value->isLoaded()) {
                     $refUuid = $value->getUUID();
@@ -875,7 +882,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             foreach ($value as $k => $v) {
                 try {
                     $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level + 1);
-                } catch (ResourceSerializationNotSupportedException $e) {
+                } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException $e) {
                     $this->getLogger()?->log($e);
                 }
             }

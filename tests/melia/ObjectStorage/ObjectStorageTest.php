@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use Closure;
 use Error;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
@@ -10,6 +11,7 @@ use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Generator;
@@ -227,7 +229,8 @@ class ObjectStorageTest extends TestCase
         $this->tearDownDirectory($someDir);
     }
 
-    public function testUUIDsNotEqual() {
+    public function testUUIDsNotEqual()
+    {
         $uuidA = $this->storage->store(new stdClass());
         $uuidB = $this->storage->store(new stdClass());
 
@@ -506,5 +509,24 @@ class ObjectStorageTest extends TestCase
 
         $this->expectException(ObjectNotFoundException::class);
         $this->storage->delete($uuid);
+    }
+
+    public function testStoreWithClosure()
+    {
+        $object = new stdClass();
+        $object->foo = function () {
+            return 'bar';
+        };
+
+        $this->assertInstanceOf(Closure::class, $object->foo);
+        $uuid = $this->storage->store($object);
+        $this->assertNotEmpty($uuid);
+
+        $this->storage->clearCache();
+        $loaded = $this->storage->load($uuid);
+
+        /* since closures are not serializable, they are not stored */
+        $reflection = new Reflection($loaded);
+        $this->assertArrayNotHasKey('foo', $reflection->getPropertyNames());
     }
 }
