@@ -5,6 +5,7 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
+use stdClass;
 
 
 class TestObjectWithMultipleReferences implements AwareInterface
@@ -673,5 +674,73 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->assertEquals(0, $child3Calls, 'Unloaded child3 should not be stored');
     }
 
+    public function testDeeplyNestedChildIsPersistedWhenRootIsStored(): void
+    {
+        // Build a random object graph  Root -> A -> B -> C -> D
+        $root = $this->makeNode('root');
+        $a = $this->makeNode('A-' . $this->rand());
+        $b = $this->makeNode('B-' . $this->rand());
+        $c = $this->makeNode('C-' . $this->rand());
+        $d = $this->makeNode('D-' . $this->rand());
 
+        // Wire children in different shapes to simulate a random graph:
+        // - named properties
+        // - arrays of children
+        // - associative arrays
+        $root->child = $a;
+        $a->list = [$b];
+        $b->map = ['deep' => $c];
+        $c->child = $d;
+
+        // Initial store of root
+        $uuidRoot = $this->storage->store($root);
+
+        // Mutate deep child only
+        $newTitle = 'D-mut-' . $this->rand();
+        $d->title = $newTitle;
+        $d->data['k'] = 'v-' . $this->rand();
+
+        $this->storage->clearCache();
+
+        // Store root again (should cascade and persist deep child as referenced object)
+        $this->storage->store($root, $uuidRoot);
+
+        $this->storage->clearCache();
+
+        // Reload root and traverse to deep child
+        $loadedRoot = $this->storage->load($uuidRoot);
+        $this->assertIsObject($loadedRoot);
+
+        $loadedA = $loadedRoot->child ?? null;
+        $this->assertIsObject($loadedA);
+
+        $loadedB = is_array($loadedA->list ?? null) ? ($loadedA->list[0] ?? null) : null;
+        $this->assertIsObject($loadedB);
+
+        $loadedC = is_array($loadedB->map ?? null) ? ($loadedB->map['deep'] ?? null) : null;
+        $this->assertIsObject($loadedC);
+
+        $loadedD = $loadedC->child ?? null;
+        $this->assertIsObject($loadedD);
+
+        // Assert deep child changes are present
+        $this->assertSame($newTitle, $loadedD->title);
+        $this->assertIsArray($loadedD->data);
+        $this->assertArrayHasKey('k', $loadedD->data);
+        $this->assertSame($d->data['k'], $loadedD->data['k']);
+    }
+
+    // ... existing code ...
+    private function makeNode(string $title): stdClass
+    {
+        $o = new stdClass();
+        $o->title = $title;
+        $o->data = ['seed' => $this->rand()];
+        return $o;
+    }
+
+    private function rand(): string
+    {
+        return substr(bin2hex(random_bytes(4)), 0, 8);
+    }
 }
