@@ -315,6 +315,31 @@ $uuid = $storage->store((object)['name' => 'Alice']);
 $loaded = $storage->load($uuid);
 $storage->delete($uuid);
 ```
+
+## Why resources and closures are not serialized
+
+Object graphs can include values that aren’t portable or safely reconstructible outside the current PHP process. Two notable cases:
+
+### Resources
+Examples: file handles, sockets, database connections.
+
+- What they are: Opaque handles to OS/engine state that only make sense within the current process and moment in time.
+- Why not serializable: Their identity/state cannot be meaningfully captured in JSON (or any durable format). Even with metadata (path, mode), you cannot restore the same live handle state (cursor position, locks, permissions).
+- Correct approach: Persist minimal, reconstructible data (e.g., file path, intended open mode) and re-open the resource when needed by application code.
+
+### Closures (anonymous functions)
+- What they are: Executable code bound to a dynamic environment (scope variables, $this, static state).
+- Why not serializable: Built-in serialization cannot safely capture code + bound context portably. Round-tripping across processes, versions, or deployments is brittle and a security risk.
+- Correct approach: Persist a symbolic reference instead (e.g., class + method name, or a handler key), and resolve to a callable at runtime. For workflows/queues, store commands/events (DTOs), not raw callables.
+
+### Library behavior
+- Attempting to serialize such values will be skipped and logged, or will raise:
+    - ResourceSerializationNotSupportedException for resources
+    - ClosureSerializationNotSupportedException for closures
+
+### Design guideline
+Persist data, not live process artifacts. Keep serialization deterministic and reconstructible from plain values.
+
 ## Command Line Interface
 See [CLI Documentation](docs/cli.md)
 
