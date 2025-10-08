@@ -4,6 +4,7 @@ namespace Tests\melia\ObjectStorage;
 
 use Closure;
 use Error;
+use IteratorAggregate;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
@@ -17,6 +18,7 @@ use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Generator;
 use stdClass;
 use Throwable;
+use Generator as PHPInternalGenerator;
 
 class ObjectStorageTest extends TestCase
 {
@@ -528,5 +530,68 @@ class ObjectStorageTest extends TestCase
         /* since closures are not serializable, they are not stored */
         $reflection = new Reflection($loaded);
         $this->assertArrayNotHasKey('foo', $reflection->getPropertyNames());
+    }
+
+    private function makeGenerator(): PHPInternalGenerator
+    {
+        yield 'a' => 1;
+        yield 'b' => 2;
+        yield 'c' => 3;
+    }
+
+    public function testStoreObjectWithGeneratorProperty(): void
+    {
+        $instance = new stdClass();
+        $instance->items = $this->makeGenerator();
+
+        $uuid = $this->storage->store($instance);
+        $this->assertNotEmpty($uuid, 'UUID should be returned after storing');
+
+        $this->storage->clearCache();
+
+        $loaded = $this->storage->load($uuid);
+        $this->assertIsObject($loaded);
+
+        // Verify the generator was materialized as an array-equivalent structure with preserved keys/values
+        $this->assertTrue(isset($loaded->items), 'Property items should exist on loaded object');
+
+        // Materialize iterable to array for assertions
+        $materialized = [];
+        foreach ($loaded->items as $k => $v) {
+            $materialized[$k] = $v;
+        }
+
+        $this->assertSame(['a' => 1, 'b' => 2, 'c' => 3], $materialized);
+    }
+
+    public function testStoreObjectWithIteratorAggregate(): void
+    {
+        // IteratorAggregate that yields key/value pairs
+        $iterableObject = new class implements IteratorAggregate {
+            public function getIterator(): PHPInternalGenerator
+            {
+                yield 10 => 'x';
+                yield 20 => 'y';
+            }
+        };
+
+        $obj = new class($iterableObject) {
+            public iterable $items;
+            public function __construct(iterable $items) { $this->items = $items; }
+        };
+
+        $uuid = $this->storage->store($obj);
+        $this->assertNotEmpty($uuid);
+
+        $this->storage->clearCache();
+
+        $loaded = $this->storage->load($uuid);
+        $this->assertIsObject($loaded);
+
+        $materialized = [];
+        foreach ($loaded->items as $k => $v) {
+            $materialized[$k] = $v;
+        }
+        $this->assertSame([10 => 'x', 20 => 'y'], $materialized);
     }
 }

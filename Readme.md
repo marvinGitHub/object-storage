@@ -340,6 +340,18 @@ Examples: file handles, sockets, database connections.
 ### Design guideline
 Persist data, not live process artifacts. Keep serialization deterministic and reconstructible from plain values.
 
+## Generators and Iterables
+
+- Generators and other iterables (Generator, Iterator, IteratorAggregate, Traversable) are materialized during storage. The library walks the iterator and stores the yielded keys and values as a regular array-like structure. On load, you’ll get a traversable/array structure with the same keys/values, not a live generator.
+
+- Why: generators are stateful, one-shot, and tied to the runtime; persisting them as-is is neither portable nor reproducible. Materialization ensures deterministic storage and retrieval.
+
+- Important warning about infinite or very large generators:
+    - Infinite generators will never finish materializing and will hang or exhaust resources.
+    - Very large generators can consume excessive memory/time when materialized.
+
+- Recommendation: only store finite, bounded generators/iterables. If you need streaming or lazy sequences, persist a bounded snapshot (e.g., a page) or a descriptor (query params, offsets) and reconstruct the stream at runtime.
+
 ## Command Line Interface
 See [CLI Documentation](docs/cli.md)
 

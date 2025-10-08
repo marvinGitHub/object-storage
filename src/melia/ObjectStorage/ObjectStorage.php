@@ -4,6 +4,7 @@ namespace melia\ObjectStorage;
 
 use Closure;
 use FilterIterator;
+use Generator;
 use GlobIterator;
 use Iterator;
 use melia\ObjectStorage\Cache\InMemoryCache;
@@ -35,6 +36,7 @@ use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\StubDeletionFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
+use melia\ObjectStorage\Exception\UnsupportedKeyException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\WriterAwareTrait;
@@ -814,7 +816,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             try {
                 $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], 0);
-            } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException $e) {
+            } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                 $this->getLogger()?->log($e);
             }
         }
@@ -840,6 +842,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SerializationFailureException
      * @throws InvalidArgumentException
      * @throws ClosureSerializationNotSupportedException
+     * @throws UnsupportedKeyException
      */
     private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {
@@ -851,7 +854,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new ResourceSerializationNotSupportedException('Resources are not supported');
         }
 
-        if (is_object($value)) {
+        /* generators should be materialized see the below section with is_iterable */
+        $isGenerator = $value instanceof Generator;
+        if (is_object($value) && false === $isGenerator) {
             if ($value instanceof Closure) {
                 throw new ClosureSerializationNotSupportedException('Closures are not supported');
             }
@@ -877,12 +882,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
         }
 
-        if (is_array($value)) {
+        if (is_iterable($value)) {
             $out = [];
             foreach ($value as $k => $v) {
+                $isSupportedKey = is_string($k) || is_int($k);
+
+                if (false === $isSupportedKey) {
+                    throw new UnsupportedKeyException('Only string and integer keys are supported.');
+                }
+
                 try {
                     $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level + 1);
-                } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException $e) {
+                } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                     $this->getLogger()?->log($e);
                 }
             }
