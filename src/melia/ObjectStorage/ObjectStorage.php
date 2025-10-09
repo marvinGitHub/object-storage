@@ -458,25 +458,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function loadFromStorage(string $uuid): ?object
     {
-        $data = $this->loadFromJsonFile($filename = $this->getFilePathData($uuid));
+        $data = $this->loadFromJsonFile($this->getFilePathData($uuid));
         if (false === is_array($data)) {
             return null;
         }
 
-        $className = $this->getClassName($uuid);
-        if (null === $className) {
-            $this->getStateHandler()->enableSafeMode();
-            throw new InvalidFileFormatException('Unable to determine className for: ' . $uuid);
-        }
-
-        if (false === $data) {
-            $this->getStateHandler()->enableSafeMode();
-            throw new SerializationFailureException('Unable to deserialize data from file: ' . $filename);
-        }
-
+        // Load metadata once and derive class name and lifetime from it
         $metadata = $this->loadMetadata($uuid);
-        $object = $this->processLoadedData($data, $metadata);
+        if (null === $metadata) {
+            $this->getStateHandler()->enableSafeMode();
+            throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
+        }
 
+        // Build object using the single metadata instance
+        $object = $this->processLoadedData($data, $metadata);
         $lifetime = $metadata->getLifetime();
 
         /*
