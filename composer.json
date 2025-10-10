@@ -52,7 +52,7 @@
     ],
     "analyze": [
       "@composer install",
-      "vendor/bin/phpstan analyse src tests"
+      "vendor/bin/phpstan analyse --level 2 src tests"
     ]
   },
   "require": {

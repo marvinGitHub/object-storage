@@ -55,7 +55,7 @@ class Transaction
             throw new TransactionAlreadyActiveException('Transaction is already active');
         }
 
-        if ($this->storage->safeModeEnabled()) {
+        if ($this->storage->getStateHandler()->safeModeEnabled()) {
             throw new TransactionException('Cannot start transaction in safe mode');
         }
 
@@ -197,9 +197,9 @@ class Transaction
         }
 
         try {
-            $this->storage->lock($uuid, false, $this->timeout);
+            $this->storage->getLockAdapter()->acquireExclusiveLock($uuid, $this->timeout);
             $this->lockedObjects[] = $uuid;
-        } catch (LockException $e) {
+        } catch (Throwable $e) {
             throw new TransactionLockException("Could not lock object {$uuid}: " . $e->getMessage(), 0, $e);
         }
     }
@@ -319,10 +319,10 @@ class Transaction
     {
         foreach ($this->lockedObjects as $uuid) {
             try {
-                if ($this->storage->hasActiveLock($uuid)) {
-                    $this->storage->unlock($uuid);
+                if ($this->storage->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                    $this->storage->getLockAdapter()->releaseLock($uuid);
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 $this->storage->getLogger()?->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
             }
         }
@@ -353,8 +353,8 @@ class Transaction
 
             return true;
 
-        } catch (Exception $e) {
-            $this->storage->enableSafeMode();
+        } catch (Throwable $e) {
+            $this->storage->getStateHandler()->enableSafeMode();
             throw new TransactionRollbackException('Transaction rollback failed, enable safe mode. Reason: ' . $e->getMessage(), 0, $e);
         }
     }
