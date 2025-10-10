@@ -59,7 +59,7 @@ use ReflectionException;
 use ReflectionNamedType;
 use ReflectionType;
 use ReflectionUnionType;
-use SplObjectStorage;
+use melia\ObjectStorage\SPL\SplObjectStorage;
 use Psr\SimpleCache\CacheInterface;
 use Throwable;
 use Traversable;
@@ -392,8 +392,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function clearCache(): void
     {
         $this->getCache()?->clear();
-        $this->objectUuidMap = new SplObjectStorage();
-        $this->processingStack = new SplObjectStorage();
+        $this->objectUuidMap?->clear();
+        $this->processingStack?->clear();
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
