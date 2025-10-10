@@ -323,7 +323,7 @@ class Transaction
                     $this->storage->unlock($uuid);
                 }
             } catch (Exception $e) {
-                $this->storage->getLogger()->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
+                $this->storage->getLogger()?->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
             }
         }
         $this->lockedObjects = [];
@@ -391,7 +391,7 @@ class Transaction
                 }
             } catch (Throwable $e) {
                 // Log rollback errors, but continue
-                $this->storage->getLogger()->log(new Exception(message: sprintf("Rollback operation failed for {$operation['uuid']}", previous: $e)));
+                $this->storage->getLogger()?->log(new Exception(message: sprintf("Rollback operation failed for %s", $operation['uuid']), previous: $e));
             }
         }
     }
@@ -417,7 +417,7 @@ class Transaction
             try {
                 $this->rollback();
             } catch (Exception $e) {
-                $this->storage->getLogger()->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
+                $this->storage->getLogger()?->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
             }
         }
     }

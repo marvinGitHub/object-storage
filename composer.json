@@ -46,7 +46,14 @@
     "bin/object-storage"
   ],
   "scripts": {
-    "test": "vendor/bin/phpunit"
+    "test": [
+      "@composer install",
+      "vendor/bin/phpunit"
+    ],
+    "analyze": [
+      "@composer install",
+      "vendor/bin/phpstan analyse src tests"
+    ]
   },
   "require": {
     "php": ">=8.0",

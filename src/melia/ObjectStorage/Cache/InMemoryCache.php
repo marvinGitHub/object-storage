@@ -76,22 +76,34 @@ class InMemoryCache implements CacheInterface
 
     public function getMultiple(iterable $keys, mixed $default = null): iterable
     {
-        // TODO: Implement getMultiple() method.
+        $result = [];
+        foreach ($keys as $key) {
+            $result[$key] = $this->get($key, $default);
+        }
+        return $result;
     }
 
     public function setMultiple(iterable $values, DateInterval|int|null $ttl = null): bool
     {
-        // TODO: Implement setMultiple() method.
+        foreach ($values as $key => $value) {
+            $this->set($key, $value, $ttl);
+        }
+        return true;
     }
 
     public function deleteMultiple(iterable $keys): bool
     {
-        // TODO: Implement deleteMultiple() method.
+        $success = true;
+        foreach ($keys as $key) {
+            if (false === $this->delete($key)) {
+                $success = false;
+            }
+        }
+        return $success;
     }
 
     public function has(string $key): bool
     {
         return isset($this->data[$key]);
-
     }
 }

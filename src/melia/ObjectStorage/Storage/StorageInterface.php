@@ -26,4 +26,5 @@ interface StorageInterface
     public function setLifetime(string $uuid, int $ttl): void;
 
     public function getLifetime(string $uuid): ?int;
+    public function getClassName(string $uuid): ?string;
 }
