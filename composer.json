@@ -42,14 +42,17 @@
       "Tests\\melia\\ObjectStorage\\": "tests/melia/ObjectStorage"
     }
   },
+  "bin": [
+    "bin/object-storage"
+  ],
+  "scripts": {
+    "test": "vendor/bin/phpunit"
+  },
   "require": {
     "php": ">=8.0",
     "symfony/console": "^6.0",
     "psr/simple-cache": "^3.0"
   },
-  "bin": [
-    "bin/object-storage"
-  ],
   "require-dev": {
     "phpunit/phpunit": "^9.6",
     "twig/twig": "^3.19",
