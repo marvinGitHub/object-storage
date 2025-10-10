@@ -30,7 +30,7 @@ final class Container
             public function log(Throwable|string $message): void
             {
                 // No-op logger for CLI; swap with PSR adapter if needed.
-                fwrite(STDERR, (string) $message . PHP_EOL);
+                fwrite(STDERR, (string)$message . PHP_EOL);
                 if ($message instanceof Throwable) {
                     fwrite(STDERR, $message->getTraceAsString() . PHP_EOL);
                 }

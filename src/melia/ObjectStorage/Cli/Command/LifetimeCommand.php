@@ -8,6 +8,7 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Throwable;
 
 final class LifetimeCommand extends BaseCommand
 {
@@ -87,7 +88,7 @@ final class LifetimeCommand extends BaseCommand
 
                 $this->io->writeln(sprintf('<title>TTL</title> <ok>%d seconds</ok> <muted>(expiresAt: %d)</muted>', $ttl ?? 0, $expiresAt));
                 return 0;
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 return $this->failure('TTL operation failed: ' . $e->getMessage(), 2);
             }
         });

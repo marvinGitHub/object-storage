@@ -45,6 +45,8 @@ use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Serialization\LifecycleGuard;
+use melia\ObjectStorage\SPL\SplObjectStorage;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageInterface;
@@ -53,14 +55,13 @@ use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
+use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionType;
 use ReflectionUnionType;
-use melia\ObjectStorage\SPL\SplObjectStorage;
-use Psr\SimpleCache\CacheInterface;
 use Throwable;
 use Traversable;
 
@@ -99,16 +100,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private ?array $registeredClassNamesCache = null;
 
     /**
-     * Retrieves the metadata cache instance if it has been set.
-     *
-     * @return CacheInterface|null The instance of the metadata cache, or null if it is not set.
-     */
-    public function getMetadataCache(): ?CacheInterface
-    {
-        return $this->metadataCache;
-    }
-
-    /**
      * Sets the metadata cache to be used by the system.
      *
      * @param CacheInterface $metadataCache The cache instance responsible for storing metadata.
@@ -117,218 +108,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function setMetadataCache(CacheInterface $metadataCache): void
     {
         $this->metadataCache = $metadataCache;
-    }
-
-    /**
-     * Deletes an object based on its UUID.
-     *
-     * @param string $uuid The unique identifier of the object to be deleted.
-     * @param bool $force Determines whether errors should be ignored if the object does not exist. If true, returns false if the object does not exist.
-     * @return void Returns true if the object was successfully deleted, or false if the object does not exist and $force is true.
-     * @throws MetataDeletionFailureException
-     * @throws InvalidUUIDException
-     * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
-     * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
-     * @throws InvalidArgumentException
-     */
-    public function delete(string $uuid, bool $force = false): void
-    {
-        $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, new Context($uuid));
-
-        if ($this->getStateHandler()->safeModeEnabled()) {
-            throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
-        }
-
-        try {
-            $this->getLockAdapter()->acquireExclusiveLock($uuid);
-
-            $this->getCache()?->delete($uuid);
-            $this->getMetadataCache()?->delete($uuid);
-
-            if (!$this->exists($uuid)) {
-                throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
-            }
-
-            $className = $this->getClassName($uuid);
-            $filePath = $this->getFilePathData($uuid);
-
-            if (!unlink($filePath)) {
-                throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
-            }
-
-            $filePathMetadata = $this->getFilePathMetadata($uuid);
-            if (file_exists($filePathMetadata)) {
-                if (!unlink($filePathMetadata)) {
-                    throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
-                }
-            }
-
-            $this->deleteStub($className, $uuid);
-        } finally {
-            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()->releaseLock($uuid);
-            }
-        }
-
-        $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, new Context($uuid));
-    }
-
-    /**
-     * Get a classname for a certain object
-     *
-     * @param string $uuid
-     * @return string|null
-     */
-    public function getClassName(string $uuid): ?string
-    {
-        return $this->loadMetadata($uuid)?->getClassName() ?? null;
-    }
-
-    /**
-     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
-     * If an error occurs during the process, it is logged, and null is returned.
-     *
-     * @param string $uuid The unique identifier for the metadata to be loaded.
-     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
-     */
-    public function loadMetadata(string $uuid): ?Metadata
-    {
-        try {
-            $cached = $this->getMetadataCache()?->get($uuid);
-            if ($cached instanceof Metadata) {
-                return $cached;
-            }
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-
-        try {
-            $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
-            if (null === $metadata) {
-                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
-            }
-            if (is_array($metadata)) {
-                $metadata = Metadata::createFromArray($metadata);
-                $this->getMetadataCache()?->set($uuid, $metadata);
-                return $metadata;
-            }
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-        return null;
-    }
-
-    /**
-     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
-     *
-     * @param string $filename The path to the file to read and decode data from.
-     * @return array|null Returns the decoded data as an associative array.
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException If the file content cannot be decoded.
-     */
-    private function loadFromJsonFile(string $filename): ?array
-    {
-        try {
-            $data = $this->getReader()->read($filename);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            return null;
-        }
-
-        $data = json_decode($data, true, $this->maxNestingLevel);
-
-        if (null === $data) {
-            $this->getStateHandler()->enableSafeMode();
-            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
-        }
-
-        return $data;
-    }
-
-    /**
-     * Generates the file path for the metadata associated with a specific UUID.
-     *
-     * @param string $uuid The unique identifier used to build the metadata file path.
-     * @return string Returns the file path of the metadata corresponding to the provided UUID.
-     */
-    public function getFilePathMetadata(string $uuid): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
-    }
-
-    /**
-     * Generates the file path for a given UUID.
-     *
-     * @param string $uuid The unique identifier used to generate the file path.
-     * @return string The full file path constructed using the UUID.
-     */
-    public function getFilePathData(string $uuid): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
-    }
-
-    /**
-     * Checks if a file exists for a specific UUID.
-     *
-     * @param string $uuid The UUID to check if the associated file exists.
-     * @return bool True if the file exists, false otherwise.
-     */
-    public function exists(string $uuid): bool
-    {
-        return file_exists($this->getFilePathData($uuid));
-    }
-
-    /**
-     * Deletes a stub file for the specified class name and UUID if it exists.
-     *
-     * @param string $className The name of the class associated with the stub.
-     * @param string $uuid The unique identifier associated with the stub.
-     * @return void
-     * @throws StubDeletionFailureException If the stub file could not be deleted.
-     * @throws InvalidUUIDException
-     */
-    private function deleteStub(string $className, string $uuid): void
-    {
-        $filePathStub = $this->getFilePathStub($className, $uuid);
-        if (file_exists($filePathStub)) {
-            if (!unlink($filePathStub)) {
-                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
-            }
-            $this->getEventDispatcher()->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
-        }
-    }
-
-    /**
-     * Generates the file path for a stub associated with a specific class and UUID.
-     *
-     * @param string $className The name of the class for which the stub is being generated.
-     * @param string $uuid The unique identifier used to differentiate the stub file.
-     * @return string The full file path for the stub.
-     */
-    public function getFilePathStub(string $className, string $uuid): string
-    {
-        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
-    }
-
-    /**
-     * Retrieves the directory path where the class stub for the given class name is stored.
-     *
-     * @param string $className The name of the class for which the stub directory path is being generated.
-     * @return string The full path to the class stub directory.
-     */
-    protected function getClassStubDirectory(string $className): string
-    {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
-    }
-
-    /**
-     * Retrieves the path to the stub directory.
-     *
-     * @return string The full path to the stub directory.
-     */
-    protected function getStubDirectory(): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
     }
 
     /**
@@ -400,78 +179,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Loads an object from persistent storage using its unique identifier.
-     * The method optionally applies locking mechanisms during the loading process.
-     *
-     * @param string $uuid The unique identifier of the object to be loaded.
-     * @param bool $exclusive Determines whether the object should remain locked after loading (true) or not (false).
-     * @return object|null Returns the loaded object if found, or null if the object does not exist.
-     * @throws Throwable If an error occurs during the loading process.
-     */
-    public function load(string $uuid, bool $exclusive = false): ?object
-    {
-        $this->getEventDispatcher()?->dispatch(Events::BEFORE_LOAD, new Context($uuid));
-
-        if ($this->expired($uuid)) {
-            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, new Context($uuid));
-            /* do not delete an expired object since the ttl might be updated later */
-            return null;
-        }
-
-        $cached = $this->getCache()?->get($uuid, null);
-        if (null !== $cached) {
-            $this->getEventDispatcher()?->dispatch(Events::CACHE_HIT, new Context($uuid));
-            return $cached;
-        }
-
-        try {
-            if ($exclusive) {
-                $this->getLockAdapter()->acquireExclusiveLock($uuid);
-            } else {
-                $this->getLockAdapter()->acquireSharedLock($uuid);
-            }
-
-            $object = $this->loadFromStorage($uuid);
-
-            if (!$exclusive) {
-                $this->getLockAdapter()->releaseLock($uuid);
-            }
-
-            $this->getEventDispatcher()?->dispatch(Events::AFTER_LOAD, new Context($uuid));
-
-            return $object;
-        } catch (Throwable $e) {
-            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()->releaseLock($uuid);
-            }
-            throw $e;
-        }
-    }
-
-    /**
-     * Checks if the object associated with the given UUID is expired.
-     *
-     * @param string $uuid The unique identifier of the object.
-     * @return bool Returns true if the object is expired, false otherwise.
-     */
-    public function expired(string $uuid): bool
-    {
-        $lifetime = $this->getLifetime($uuid);
-        return null !== $lifetime && $lifetime <= 0;
-    }
-
-    /**
-     * Retrieves the lifetime of the metadata associated with the specified UUID.
-     *
-     * @param string $uuid The unique identifier used to load the metadata.
-     * @return int|null The lifetime of the metadata in seconds, or null if no metadata is found.
-     */
-    public function getLifetime(string $uuid): ?int
-    {
-        return $this->loadMetadata($uuid)?->getLifetime();
-    }
-
-    /**
      * Retrieves the expiration timestamp for the given UUID from its metadata.
      * Throws an exception if metadata cannot be loaded for the specified UUID.
      *
@@ -481,161 +188,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function getExpiration(string $uuid): ?int
     {
         return $this->loadMetadata($uuid)?->getTimestampExpiresAt();
-    }
-
-    /**
-     * Loads an object based on a UUID from a cache or file.
-     *
-     * @param string $uuid The unique ID of the object to be loaded.
-     * @return object|null The loaded object or null if it doesn't exist.
-     * @throws InvalidFileFormatException
-     * @throws InvalidUUIDException
-     * @throws ReflectionException
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     * @throws TypeConversionFailureException|Throwable
-     */
-    private function loadFromStorage(string $uuid): ?object
-    {
-        $data = $this->loadFromJsonFile($this->getFilePathData($uuid));
-        if (false === is_array($data)) {
-            return null;
-        }
-
-        // Load metadata once and derive class name and lifetime from it
-        $metadata = $this->loadMetadata($uuid);
-        if (null === $metadata) {
-            $this->getStateHandler()->enableSafeMode();
-            throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
-        }
-
-        // Build object using the single metadata instance
-        $object = $this->processLoadedData($data, $metadata);
-        $lifetime = $metadata->getLifetime();
-
-        /*
-         * Cache policy:
-         * lifetime === null  => cache without expiration
-         * lifetime > 0       => cache with TTL
-         * lifetime <= 0      => remove from cache (expired)
-         */
-        if (null !== $lifetime && $lifetime <= 0) {
-            $this->getCache()?->delete($uuid);
-        } else {
-            $this->getCache()?->set($uuid, $object, $lifetime);
-        }
-
-        Helper::assign($object, $uuid);
-
-        return $object;
-    }
-
-    /**
-     * Converts the provided data array into an object of the specified class
-     * by mapping the data to the class's properties.
-     *
-     * @param array $data An associative array containing property names and their corresponding values.
-     * @param Metadata $metadata
-     * @return object An instance of the specified class with its properties populated from the provided data.
-     * @throws ClassAliasCreationFailureException
-     * @throws DanglingReferenceException
-     * @throws InvalidUUIDException
-     * @throws ReflectionException
-     * @throws TypeConversionFailureException
-     */
-    private function processLoadedData(array $data, Metadata $metadata): object
-    {
-        $className = $metadata->getClassName();
-        if (false === class_exists($className)) {
-            if (false === class_alias(get_class(new class {
-                }), $className)) {
-                throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
-            }
-            $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, new ClassAliasCreationContext($className));
-        }
-
-        $object = (new ReflectionClass($className))->newInstanceWithoutConstructor();
-        $reflection = new Reflection($object);
-
-        foreach ($data as $propertyName => $value) {
-            $type = $reflection->getPropertyType($propertyName);
-
-            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $refUUID = $value[$metadata->getReservedReferenceName()];
-                if (false === Validator::validate($refUUID)) {
-                    /* reference UUID is not valid, so we just set the property to the value */
-                    $reflection->set($propertyName, [$metadata->getReservedReferenceName() => $refUUID]);
-                } else {
-                    $reference = new LazyLoadReference($this, $refUUID, $object, [$propertyName]);
-                    /* if LazyLoadReference is not allowed, then we need to convert the reference to the real object */
-                    if ($type instanceof ReflectionNamedType) {
-                        if (LazyLoadReference::class !== $type->getName() &&
-                            false === in_array($type->getName(), ['object', 'mixed'], true)
-                        ) {
-                            $reference = $reference->getObject();
-                        }
-                    } else if ($type instanceof ReflectionUnionType) {
-                        $supportedTypes = array_map(function (ReflectionNamedType $type) {
-                            return $type->getName();
-                        }, array_filter($type->getTypes(), function (ReflectionType $type) {
-                            return $type instanceof ReflectionNamedType;
-                        }));
-                        if (false === in_array(LazyLoadReference::class, $supportedTypes, true) &&
-                            false === in_array('object', $supportedTypes, true)
-                        ) {
-                            $reference = $reference->getObject();
-                        }
-                    }
-                    $reflection->set($propertyName, $reference);
-                }
-            } else if (is_array($value)) {
-                $reflection->set($propertyName, $this->processLoadedArray($metadata, $object, $value, [$propertyName]));
-            } else {
-                /* type conversion of non-union types */
-                if ($type instanceof ReflectionNamedType) {
-                    $expectedType = $type->getName();
-                    $givenType = gettype($value);
-
-                    if ($givenType !== $expectedType && in_array($givenType, ['integer', 'double', 'boolean', 'string'])) {
-                        if (false === settype($value, $expectedType)) {
-                            throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
-                        }
-                    }
-                }
-                $reflection->set($propertyName, $value);
-            }
-        }
-
-        return $object;
-    }
-
-    /**
-     * Processes a loaded array by iterating through its elements and converting specific
-     * nested structures into lazy load references or recursively processing subarrays,
-     * based on the metadata provided.
-     *
-     * @param Metadata $metadata The metadata object used to identify and process reserved references.
-     * @param object $object The object to be used in creating LazyLoadReference instances.
-     * @param array $array The input array to be processed.
-     * @param array $path An array representing the traversal path within the structure for recursion.
-     *
-     * @return array The processed array, with applicable elements converted into lazy load references
-     *               or recursively processed subarrays.
-     * @throws InvalidUUIDException
-     */
-    private function processLoadedArray(Metadata $metadata, object $object, array $array, array $path): array
-    {
-        $processed = [];
-        foreach ($array as $key => $value) {
-            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, [...$path, $key]);
-            } else if (is_array($value)) {
-                $processed[$key] = $this->processLoadedArray($metadata, $object, $value, [...$path, $key]);
-            } else {
-                $processed[$key] = $value;
-            }
-        }
-        return $processed;
     }
 
     /**
@@ -677,7 +229,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
 
-        // LazyLoadReference: ungeladen -> nur UUID zurückgeben
+        // LazyLoadReference: ungeladen → nur UUID zurückgeben
         if ($object instanceof LazyLoadReference) {
             if (false === $object->isLoaded()) {
                 return $object->getUUID();
@@ -687,14 +239,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            // 1) UUID bevorzugt aus Param, sonst aus AwareInterface, sonst aus objectUuidMap-Mapping WIEDERVERWENDEN,
-            //    nur wenn nichts vorhanden ist, eine neue UUID erzeugen
+            // 1) Prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
+            //    only generate a new UUID if none is available
             $uuid ??= Helper::getAssigned($object) ?? $this->objectUuidMap[$object] ?? $this->getNextAvailableUuid();
 
-            // 2) Mapping aktualisieren (wichtig für Referenzen und Folge-Store-Aufrufe)
+            // 2) Update mapping (important for references and later store calls)
             $this->objectUuidMap[$object] = $uuid;
 
-            // 3) Kein Early-Return: serializeAndStore IMMER aufrufen, damit Updates via Checksumme erkannt werden
+            // 3) No early return: ALWAYS call serializeAndStore so that updates are detected via checksum
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
             /* if classname change we should remove the previous stub */
@@ -762,8 +314,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $metadata->setVersion(1);
             $metadata->setTimestampExpiresAt($ttl ? time() + $ttl : null);
 
+            /* ensure that the object is going to sleep before creating the graph;
+               to ensure the object stays untouched, we create a graph from a copy (clone)
+            */
+            $clone = clone $object;
+            LifecycleGuard::sleep($clone);
+
             $jsonGraph = json_encode(
-                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata)),
+                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($clone, $metadata)),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
             );
 
@@ -935,6 +493,458 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         return $value;
+    }
+
+    /**
+     * Loads an object from persistent storage using its unique identifier.
+     * The method optionally applies locking mechanisms during the loading process.
+     *
+     * @param string $uuid The unique identifier of the object to be loaded.
+     * @param bool $exclusive Determines whether the object should remain locked after loading (true) or not (false).
+     * @return object|null Returns the loaded object if found, or null if the object does not exist.
+     * @throws Throwable If an error occurs during the loading process.
+     */
+    public function load(string $uuid, bool $exclusive = false): ?object
+    {
+        $this->getEventDispatcher()?->dispatch(Events::BEFORE_LOAD, new Context($uuid));
+
+        if ($this->expired($uuid)) {
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, new Context($uuid));
+            /* do not delete an expired object since the ttl might be updated later */
+            return null;
+        }
+
+        $cached = $this->getCache()?->get($uuid, null);
+        if (null !== $cached) {
+            $this->getEventDispatcher()?->dispatch(Events::CACHE_HIT, new Context($uuid));
+            return $cached;
+        }
+
+        try {
+            if ($exclusive) {
+                $this->getLockAdapter()->acquireExclusiveLock($uuid);
+            } else {
+                $this->getLockAdapter()->acquireSharedLock($uuid);
+            }
+
+            $object = $this->loadFromStorage($uuid);
+
+            if (!$exclusive) {
+                $this->getLockAdapter()->releaseLock($uuid);
+            }
+
+            $this->getEventDispatcher()?->dispatch(Events::AFTER_LOAD, new Context($uuid));
+
+            return $object;
+        } catch (Throwable $e) {
+            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()->releaseLock($uuid);
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Checks if the object associated with the given UUID is expired.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool Returns true if the object is expired, false otherwise.
+     */
+    public function expired(string $uuid): bool
+    {
+        $lifetime = $this->getLifetime($uuid);
+        return null !== $lifetime && $lifetime <= 0;
+    }
+
+    /**
+     * Retrieves the lifetime of the metadata associated with the specified UUID.
+     *
+     * @param string $uuid The unique identifier used to load the metadata.
+     * @return int|null The lifetime of the metadata in seconds, or null if no metadata is found.
+     */
+    public function getLifetime(string $uuid): ?int
+    {
+        return $this->loadMetadata($uuid)?->getLifetime();
+    }
+
+    /**
+     * Loads an object based on a UUID from a cache or file.
+     *
+     * @param string $uuid The unique ID of the object to be loaded.
+     * @return object|null The loaded object or null if it doesn't exist.
+     * @throws InvalidFileFormatException
+     * @throws InvalidUUIDException
+     * @throws ReflectionException
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException
+     * @throws TypeConversionFailureException|Throwable
+     */
+    private function loadFromStorage(string $uuid): ?object
+    {
+        $data = $this->loadFromJsonFile($this->getFilePathData($uuid));
+        if (false === is_array($data)) {
+            return null;
+        }
+
+        // Load metadata once and derive class name and lifetime from it
+        $metadata = $this->loadMetadata($uuid);
+        if (null === $metadata) {
+            $this->getStateHandler()->enableSafeMode();
+            throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
+        }
+
+        // Build object using the single metadata instance
+        $object = $this->processLoadedData($data, $metadata);
+
+        LifecycleGuard::wakeup($object);
+        Helper::assign($object, $uuid);
+
+        /*
+         * Cache policy:
+         *
+         * lifetime === null (cache without expiration)
+         * lifetime > 0 (cache with TTL)
+         * lifetime <= 0 (remove from cache - expired)
+         */
+        $lifetime = $metadata->getLifetime();
+
+        if (null !== $lifetime && $lifetime <= 0) {
+            $this->getCache()?->delete($uuid);
+        } else {
+            $this->getCache()?->set($uuid, $object, $lifetime);
+        }
+
+        return $object;
+    }
+
+    /**
+     * Converts the provided data array into an object of the specified class
+     * by mapping the data to the class's properties.
+     *
+     * @param array $data An associative array containing property names and their corresponding values.
+     * @param Metadata $metadata
+     * @return object An instance of the specified class with its properties populated from the provided data.
+     * @throws ClassAliasCreationFailureException
+     * @throws DanglingReferenceException
+     * @throws InvalidUUIDException
+     * @throws ReflectionException
+     * @throws TypeConversionFailureException
+     */
+    private function processLoadedData(array $data, Metadata $metadata): object
+    {
+        $className = $metadata->getClassName();
+        if (false === class_exists($className)) {
+            if (false === class_alias(get_class(new class {
+                }), $className)) {
+                throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
+            }
+            $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, new ClassAliasCreationContext($className));
+        }
+
+        $object = (new ReflectionClass($className))->newInstanceWithoutConstructor();
+        $reflection = new Reflection($object);
+
+        foreach ($data as $propertyName => $value) {
+            $type = $reflection->getPropertyType($propertyName);
+
+            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+                $refUUID = $value[$metadata->getReservedReferenceName()];
+                if (false === Validator::validate($refUUID)) {
+                    /* reference UUID is not valid, so we just set the property to the value */
+                    $reflection->set($propertyName, [$metadata->getReservedReferenceName() => $refUUID]);
+                } else {
+                    $reference = new LazyLoadReference($this, $refUUID, $object, [$propertyName]);
+                    /* if LazyLoadReference is not allowed, then we need to convert the reference to the real object */
+                    if ($type instanceof ReflectionNamedType) {
+                        if (LazyLoadReference::class !== $type->getName() &&
+                            false === in_array($type->getName(), ['object', 'mixed'], true)
+                        ) {
+                            $reference = $reference->getObject();
+                        }
+                    } else if ($type instanceof ReflectionUnionType) {
+                        $supportedTypes = array_map(function (ReflectionNamedType $type) {
+                            return $type->getName();
+                        }, array_filter($type->getTypes(), function (ReflectionType $type) {
+                            return $type instanceof ReflectionNamedType;
+                        }));
+                        if (false === in_array(LazyLoadReference::class, $supportedTypes, true) &&
+                            false === in_array('object', $supportedTypes, true)
+                        ) {
+                            $reference = $reference->getObject();
+                        }
+                    }
+                    $reflection->set($propertyName, $reference);
+                }
+            } else if (is_array($value)) {
+                $reflection->set($propertyName, $this->processLoadedArray($metadata, $object, $value, [$propertyName]));
+            } else {
+                /* type conversion of non-union types */
+                if ($type instanceof ReflectionNamedType) {
+                    $expectedType = $type->getName();
+                    $givenType = gettype($value);
+
+                    if ($givenType !== $expectedType && in_array($givenType, ['integer', 'double', 'boolean', 'string'])) {
+                        if (false === settype($value, $expectedType)) {
+                            throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
+                        }
+                    }
+                }
+                $reflection->set($propertyName, $value);
+            }
+        }
+
+        return $object;
+    }
+
+    /**
+     * Processes a loaded array by iterating through its elements and converting specific
+     * nested structures into lazy load references or recursively processing subarrays,
+     * based on the metadata provided.
+     *
+     * @param Metadata $metadata The metadata object used to identify and process reserved references.
+     * @param object $object The object to be used in creating LazyLoadReference instances.
+     * @param array $array The input array to be processed.
+     * @param array $path An array representing the traversal path within the structure for recursion.
+     *
+     * @return array The processed array, with applicable elements converted into lazy load references
+     *               or recursively processed subarrays.
+     * @throws InvalidUUIDException
+     */
+    private function processLoadedArray(Metadata $metadata, object $object, array $array, array $path): array
+    {
+        $processed = [];
+        foreach ($array as $key => $value) {
+            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, [...$path, $key]);
+            } else if (is_array($value)) {
+                $processed[$key] = $this->processLoadedArray($metadata, $object, $value, [...$path, $key]);
+            } else {
+                $processed[$key] = $value;
+            }
+        }
+        return $processed;
+    }
+
+    /**
+     * Deletes an object based on its UUID.
+     *
+     * @param string $uuid The unique identifier of the object to be deleted.
+     * @param bool $force Determines whether errors should be ignored if the object does not exist. If true, returns false if the object does not exist.
+     * @return void Returns true if the object was successfully deleted, or false if the object does not exist and $force is true.
+     * @throws MetataDeletionFailureException
+     * @throws InvalidUUIDException
+     * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
+     * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
+     * @throws InvalidArgumentException
+     */
+    public function delete(string $uuid, bool $force = false): void
+    {
+        $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, new Context($uuid));
+
+        if ($this->getStateHandler()->safeModeEnabled()) {
+            throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
+        }
+
+        try {
+            $this->getLockAdapter()->acquireExclusiveLock($uuid);
+
+            $this->getCache()?->delete($uuid);
+            $this->getMetadataCache()?->delete($uuid);
+
+            if (!$this->exists($uuid)) {
+                throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
+            }
+
+            $className = $this->getClassName($uuid);
+            $filePath = $this->getFilePathData($uuid);
+
+            if (!unlink($filePath)) {
+                throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
+            }
+
+            $filePathMetadata = $this->getFilePathMetadata($uuid);
+            if (file_exists($filePathMetadata)) {
+                if (!unlink($filePathMetadata)) {
+                    throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
+                }
+            }
+
+            $this->deleteStub($className, $uuid);
+        } finally {
+            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()->releaseLock($uuid);
+            }
+        }
+
+        $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, new Context($uuid));
+    }
+
+    /**
+     * Retrieves the metadata cache instance if it has been set.
+     *
+     * @return CacheInterface|null The instance of the metadata cache, or null if it is not set.
+     */
+    public function getMetadataCache(): ?CacheInterface
+    {
+        return $this->metadataCache;
+    }
+
+    /**
+     * Checks if a file exists for a specific UUID.
+     *
+     * @param string $uuid The UUID to check if the associated file exists.
+     * @return bool True if the file exists, false otherwise.
+     */
+    public function exists(string $uuid): bool
+    {
+        return file_exists($this->getFilePathData($uuid));
+    }
+
+    /**
+     * Generates the file path for a given UUID.
+     *
+     * @param string $uuid The unique identifier used to generate the file path.
+     * @return string The full file path constructed using the UUID.
+     */
+    public function getFilePathData(string $uuid): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+    }
+
+    /**
+     * Get a classname for a certain object
+     *
+     * @param string $uuid
+     * @return string|null
+     */
+    public function getClassName(string $uuid): ?string
+    {
+        return $this->loadMetadata($uuid)?->getClassName() ?? null;
+    }
+
+    /**
+     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
+     * If an error occurs during the process, it is logged, and null is returned.
+     *
+     * @param string $uuid The unique identifier for the metadata to be loaded.
+     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
+     */
+    public function loadMetadata(string $uuid): ?Metadata
+    {
+        try {
+            $cached = $this->getMetadataCache()?->get($uuid);
+            if ($cached instanceof Metadata) {
+                return $cached;
+            }
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+
+        try {
+            $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
+            if (is_array($metadata)) {
+                $metadata = Metadata::createFromArray($metadata);
+                $this->getMetadataCache()?->set($uuid, $metadata);
+                return $metadata;
+            }
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+        return null;
+    }
+
+    /**
+     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
+     *
+     * @param string $filename The path to the file to read and decode data from.
+     * @return array|null Returns the decoded data as an associative array.
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException If the file content cannot be decoded.
+     */
+    private function loadFromJsonFile(string $filename): ?array
+    {
+        try {
+            $data = $this->getReader()->read($filename);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return null;
+        }
+
+        $data = json_decode($data, true, $this->maxNestingLevel);
+
+        if (null === $data) {
+            $this->getStateHandler()->enableSafeMode();
+            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
+        }
+
+        return $data;
+    }
+
+    /**
+     * Generates the file path for the metadata associated with a specific UUID.
+     *
+     * @param string $uuid The unique identifier used to build the metadata file path.
+     * @return string Returns the file path of the metadata corresponding to the provided UUID.
+     */
+    public function getFilePathMetadata(string $uuid): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+    }
+
+    /**
+     * Deletes a stub file for the specified class name and UUID if it exists.
+     *
+     * @param string $className The name of the class associated with the stub.
+     * @param string $uuid The unique identifier associated with the stub.
+     * @return void
+     * @throws StubDeletionFailureException If the stub file could not be deleted.
+     * @throws InvalidUUIDException
+     */
+    private function deleteStub(string $className, string $uuid): void
+    {
+        $filePathStub = $this->getFilePathStub($className, $uuid);
+        if (file_exists($filePathStub)) {
+            if (!unlink($filePathStub)) {
+                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
+            }
+            $this->getEventDispatcher()->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
+        }
+    }
+
+    /**
+     * Generates the file path for a stub associated with a specific class and UUID.
+     *
+     * @param string $className The name of the class for which the stub is being generated.
+     * @param string $uuid The unique identifier used to differentiate the stub file.
+     * @return string The full file path for the stub.
+     */
+    public function getFilePathStub(string $className, string $uuid): string
+    {
+        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
+    }
+
+    /**
+     * Retrieves the directory path where the class stub for the given class name is stored.
+     *
+     * @param string $className The name of the class for which the stub directory path is being generated.
+     * @return string The full path to the class stub directory.
+     */
+    protected function getClassStubDirectory(string $className): string
+    {
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
+    }
+
+    /**
+     * Retrieves the path to the stub directory.
+     *
+     * @return string The full path to the stub directory.
+     */
+    protected function getStubDirectory(): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
     }
 
     /**

@@ -2,4 +2,6 @@
 
 namespace melia\ObjectStorage\Exception;
 
-class UnsupportedKeyException extends Exception {}
+class UnsupportedKeyException extends Exception
+{
+}
