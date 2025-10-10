@@ -99,6 +99,27 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private ?array $registeredClassNamesCache = null;
 
     /**
+     * Retrieves the metadata cache instance if it has been set.
+     *
+     * @return CacheInterface|null The instance of the metadata cache, or null if it is not set.
+     */
+    public function getMetadataCache(): ?CacheInterface
+    {
+        return $this->metadataCache;
+    }
+
+    /**
+     * Sets the metadata cache to be used by the system.
+     *
+     * @param CacheInterface $metadataCache The cache instance responsible for storing metadata.
+     * @return void
+     */
+    public function setMetadataCache(CacheInterface $metadataCache): void
+    {
+        $this->metadataCache = $metadataCache;
+    }
+
+    /**
      * Deletes an object based on its UUID.
      *
      * @param string $uuid The unique identifier of the object to be deleted.
@@ -122,6 +143,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
             $this->getCache()?->delete($uuid);
+            $this->getMetadataCache()?->delete($uuid);
 
             if (!$this->exists($uuid)) {
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
@@ -172,12 +194,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function loadMetadata(string $uuid): ?Metadata
     {
         try {
+            if ($this->getMetadataCache()?->has($uuid) ?? false) {
+                return $this->getMetadataCache()?->get($uuid);
+            }
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+
+        try {
             $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
             if (null === $metadata) {
                 throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
             }
             if (is_array($metadata)) {
-                return Metadata::createFromArray($metadata);
+                $metadata = Metadata::createFromArray($metadata);
+                $this->getMetadataCache()?->set($uuid, $metadata);
+                return $metadata;
             }
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
@@ -343,6 +375,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private function saveMetadata(Metadata $metadata): void
     {
         $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
+        try {
+            $this->getMetadataCache()?->set($metadata->getUUID(), $metadata);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
         $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, new Context($metadata->getUUID()));
     }
 
@@ -357,6 +394,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->objectUuidMap = new SplObjectStorage();
         $this->processingStack = new SplObjectStorage();
         $this->registeredClassNamesCache = null;
+        $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
     }
 
@@ -1119,6 +1157,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param StateHandler|null $stateHandler
      * @param DispatcherInterface|null $eventDispatcher
      * @param CacheInterface|null $cache
+     * @param CacheInterface|null $metadataCache
      * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
      */
@@ -1129,6 +1168,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         protected ?StateHandler         $stateHandler = null,
         ?DispatcherInterface            $eventDispatcher = null,
         ?CacheInterface                 $cache = null,
+        protected ?CacheInterface       $metadataCache = null,
         private int                     $maxNestingLevel = 100
     )
     {
