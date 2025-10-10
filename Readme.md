@@ -352,6 +352,20 @@ Persist data, not live process artifacts. Keep serialization deterministic and r
 
 - Recommendation: only store finite, bounded generators/iterables. If you need streaming or lazy sequences, persist a bounded snapshot (e.g., a page) or a descriptor (query params, offsets) and reconstruct the stream at runtime.
 
+## Object Sleep and Wakeup
+
+- On store: a clone is put to sleep via `__sleep()` before serialization; the original instance stays unchanged.
+- On load: after reconstruction, `__wakeup()` restores transient state.
+
+### Implement
+- `__sleep()`: return properties to persist and prepare state.
+- `__wakeup()`: reinitialize resources, caches, or derived fields.
+
+### Notes
+- Hooks are optional; persistence works without them.
+- Don’t serialize raw resources; recreate them in `__wakeup()`.
+- Lazy references may load on demand unless the property type requires a concrete object.
+
 ## Command Line Interface
 See [CLI Documentation](docs/cli.md)
 
