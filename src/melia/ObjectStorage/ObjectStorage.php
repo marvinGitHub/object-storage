@@ -194,8 +194,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function loadMetadata(string $uuid): ?Metadata
     {
         try {
-            if ($this->getMetadataCache()?->has($uuid) ?? false) {
-                return $this->getMetadataCache()?->get($uuid);
+            $cached = $this->getMetadataCache()?->get($uuid);
+            if ($cached instanceof Metadata) {
+                return $cached;
             }
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
@@ -229,7 +230,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         try {
             $data = $this->getReader()->read($filename);
-        } catch (IOException $e) {
+        } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             return null;
         }
@@ -1240,6 +1241,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         $assignedClassname = $this->storage->getClassName($uuid);
                         return $assignedClassname === $this->expectedClassname;
                     } catch (Throwable $e) {
+                        $this->storage->getLogger()?->log($e);
                         return false;
                     }
                 }
