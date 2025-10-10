@@ -829,7 +829,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getFilePathData(string $uuid): string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
     }
 
     /**
@@ -912,7 +912,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getFilePathMetadata(string $uuid): string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
     }
 
     /**
@@ -965,7 +965,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function getStubDirectory(): string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'stubs';
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
     }
 
     /**
@@ -1207,8 +1207,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->objectUuidMap = new SplObjectStorage();
         $this->processingStack = new SplObjectStorage();
 
-        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
-        $this->createDirectoryIfNotExist($this->storageDir);
+        $this->setStorageDir($storageDir);
 
         if (null === $cache) {
             $cache = new InMemoryCache();
@@ -1221,13 +1220,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->setEventDispatcher($eventDispatcher);
 
         if (null === $stateHandler) {
-            $stateHandler = new StateHandler($this->storageDir);
+            $stateHandler = new StateHandler($this->getStorageDir());
             $stateHandler->setEventDispatcher($eventDispatcher);
         }
         $this->setStateHandler($stateHandler);
 
         if (null === $lockAdapter) {
-            $lockAdapter = new FileSystemLockingBackend($this->storageDir);
+            $lockAdapter = new FileSystemLockingBackend($this->getStorageDir());
             $lockAdapter->setStateHandler($stateHandler);
             $lockAdapter->setLogger($this->logger);
             $lockAdapter->setEventDispatcher($eventDispatcher);
@@ -1243,7 +1242,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function createObjectIterator(?string $className): Traversable
     {
-        $pattern = $this->storageDir . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
+        $pattern = $this->getStorageDir() . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
         return new class (new GlobIterator($pattern), $className, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
 
             private ?string $expectedClassname = null;
@@ -1298,6 +1297,17 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getStorageDir(): string
     {
-        return $this->storageDir;
+        return rtrim($this->storageDir, DIRECTORY_SEPARATOR);
+    }
+
+    /**
+     * @param string $storageDir
+     * @return void
+     * @throws IOException
+     */
+    public function setStorageDir(string $storageDir): void
+    {
+        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
+        $this->createDirectoryIfNotExist($this->storageDir);
     }
 }
