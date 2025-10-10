@@ -37,6 +37,7 @@ use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\StubDeletionFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
+use melia\ObjectStorage\Exception\UnsupportedTypeException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\WriterAwareTrait;
@@ -288,6 +289,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SerializationFailureException
      * @throws InvalidUUIDException
      * @throws InvalidArgumentException
+     * @throws UnsupportedTypeException
      */
     private function serializeAndStore(object $object, string $uuid, ?int $ttl = null): void
     {
@@ -318,7 +320,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                to ensure the object stays untouched, we create a graph from a copy (clone)
             */
             $clone = clone $object;
-            LifecycleGuard::sleep($clone);
 
             $jsonGraph = json_encode(
                 $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($clone, $metadata)),
@@ -379,14 +380,29 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      * @throws InvalidArgumentException
+     * @throws UnsupportedTypeException
      */
     private function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
     {
         $result = [];
-        $reflection = new Reflection($context->getTarget());
+        $target = $context->getTarget();
+
+        /* check if the sleep methods return a list of property names to serialize */
+        $propertyNames = null;
+        try {
+            $propertyNames = LifecycleGuard::sleep($target);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+
+        $reflection = new Reflection($target);
+
+        /* if the sleep method returns null, serialize all properties */
+        if (null === $propertyNames) {
+            $propertyNames = $reflection->getPropertyNames();
+        }
 
         // ensure deterministic order of properties
-        $propertyNames = $reflection->getPropertyNames();
         sort($propertyNames, SORT_STRING);
 
         // Pre-scan property names to avoid reserved reference name collision
@@ -400,6 +416,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         foreach ($propertyNames as $propertyName) {
+            if (false === is_string($propertyName)) {
+                throw new UnsupportedTypeException(sprintf('Property name must be a string. %s given.', gettype($propertyName)));
+            }
+
             if (false === $reflection->initialized($propertyName)) {
                 continue;
             }
@@ -435,6 +455,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws InvalidArgumentException
      * @throws ClosureSerializationNotSupportedException
      * @throws UnsupportedKeyException
+     * @throws UnsupportedTypeException
      */
     private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {

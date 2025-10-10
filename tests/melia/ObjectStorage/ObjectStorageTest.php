@@ -594,4 +594,25 @@ class ObjectStorageTest extends TestCase
         }
         $this->assertSame([10 => 'x', 20 => 'y'], $materialized);
     }
+
+    public function testStoreSleepOnlySerializesGivenProperties()
+    {
+        $object = new class () {
+            public function __sleep() {
+                return ['a'];
+            }
+        };
+        $object->a = 'test';
+        $object->nested = [
+            10
+        ];
+
+        $uuid = $this->storage->store($object);
+        $this->assertNotEmpty($uuid);
+        $this->storage->clearCache();
+        $loaded = (array)$this->storage->load($uuid);
+        $this->assertIsArray($loaded);
+        $this->assertArrayHasKey('a', $loaded);
+        $this->assertArrayNotHasKey('nested', $loaded);
+    }
 }

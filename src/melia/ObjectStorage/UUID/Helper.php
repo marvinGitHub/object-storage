@@ -10,12 +10,11 @@ class Helper
     /**
      * Retrieves the assigned UUID from the provided object if it meets specific conditions.
      *
-     * @param object $object The object from which the UUID is to be retrieved.
+     * @param object|null $object $object The object from which the UUID is to be retrieved.
      *                       Must implement AwareInterface and have a `getUUID` method.
      *
      * @return string|null Returns the UUID as a string if the object fulfills the conditions.
      *                     Otherwise, returns null.
-     * @throws ReflectionException
      */
     public static function getAssigned(?object $object): ?string
     {
