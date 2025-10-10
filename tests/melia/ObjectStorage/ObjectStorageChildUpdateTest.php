@@ -327,9 +327,9 @@ class ObjectStorageChildUpdateTest extends TestCase
         $parentUuid = $this->storage->store($parent);
         $childUuid = $child->getUUID();
 
-        $parentDataFile = $this->storageDir . DIRECTORY_SEPARATOR . $parentUuid . '.obj';
-        $parentMetadataFile = $this->storageDir . DIRECTORY_SEPARATOR . $parentUuid . '.metadata';
-        $childDataFile = $this->storageDir . DIRECTORY_SEPARATOR . $childUuid . '.obj';
+        $parentDataFile = $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $parentUuid . '.obj';
+        $parentMetadataFile = $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $parentUuid . '.metadata';
+        $childDataFile = $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $childUuid . '.obj';
 
         // Get initial timestamps
         clearstatcache();

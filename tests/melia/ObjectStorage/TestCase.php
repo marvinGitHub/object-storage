@@ -7,15 +7,17 @@ use melia\ObjectStorage\ObjectStorage;
 
 class TestCase extends \PHPUnit\Framework\TestCase
 {
-
     protected WriterSpy $writerSpy;
 
     protected ObjectStorage $storage;
-    protected string $storageDir;
+
+    protected array $storageDirs = [];
 
     public function tearDown(): void
     {
-        $this->tearDownDirectory($this->storageDir);
+        foreach ($this->storageDirs as $dir) {
+            $this->tearDownDirectory($dir);
+        }
     }
 
     protected function tearDownDirectory(string $path): void
@@ -30,8 +32,7 @@ class TestCase extends \PHPUnit\Framework\TestCase
      */
     protected function setUp(): void
     {
-        $this->storageDir = $this->createTemporaryDirectory();
-        $this->storage = new ObjectStorage($this->storageDir);
+        $this->storage = $this->createStorage();
 
         // Create spy that wraps the real writer
         $this->writerSpy = new WriterSpy($this->storage->getWriter());
@@ -53,5 +54,12 @@ class TestCase extends \PHPUnit\Framework\TestCase
         }
         mkdir($path);
         return $path;
+    }
+
+    protected function createStorage(): ObjectStorage
+    {
+        $dir = $this->createTemporaryDirectory();
+        $this->storageDirs[] = $dir;
+        return new ObjectStorage($dir);
     }
 }
