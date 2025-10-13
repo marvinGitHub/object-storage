@@ -4,12 +4,13 @@ namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\ObjectStorage;
+use PHPUnit\Framework\MockObject\MockObject;
 
 class TestCase extends \PHPUnit\Framework\TestCase
 {
     protected WriterSpy $writerSpy;
 
-    protected ObjectStorage $storage;
+    protected ObjectStorage|MockObject $storage;
 
     protected array $storageDirs = [];
 

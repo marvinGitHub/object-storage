@@ -55,7 +55,7 @@ class Transaction
             throw new TransactionAlreadyActiveException('Transaction is already active');
         }
 
-        if ($this->storage->getStateHandler()->safeModeEnabled()) {
+        if ($this->storage->getStateHandler()?->safeModeEnabled()) {
             throw new TransactionException('Cannot start transaction in safe mode');
         }
 
@@ -84,7 +84,7 @@ class Transaction
 
     private function getTransactionLogPath(): string
     {
-        return $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
+        return $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
     }
 
     /**
@@ -354,7 +354,7 @@ class Transaction
             return true;
 
         } catch (Throwable $e) {
-            $this->storage->getStateHandler()->enableSafeMode();
+            $this->storage->getStateHandler()?->enableSafeMode();
             throw new TransactionRollbackException('Transaction rollback failed, enable safe mode. Reason: ' . $e->getMessage(), 0, $e);
         }
     }
