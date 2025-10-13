@@ -172,8 +172,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function clearCache(): void
     {
         $this->getCache()?->clear();
-        $this->objectUuidMap?->clear();
-        $this->processingStack?->clear();
+        $this->objectUuidMap->clear();
+        $this->processingStack->clear();
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
@@ -866,11 +866,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (null === $metadata) {
                 throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
             }
-            if (is_array($metadata)) {
-                $metadata = Metadata::createFromArray($metadata);
-                $this->getMetadataCache()?->set($uuid, $metadata);
-                return $metadata;
-            }
+
+            $metadata = Metadata::createFromArray($metadata);
+            $this->getMetadataCache()?->set($uuid, $metadata);
+            return $metadata;
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
         }
