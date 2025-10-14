@@ -13,10 +13,10 @@ class Metadata implements JsonSerializable
     use AwareTrait;
 
     private string $className;
-    private int $timestampCreation;
+    private float $timestampCreation;
     private int $version;
     private string $checksum;
-    private ?int $timestampExpiresAt = null;
+    private null|float $timestampExpiresAt = null;
 
     private array $references = [];
     private string $reservedReferenceName = Metadata::RESERVED_REFERENCE_NAME_DEFAULT;
@@ -75,9 +75,9 @@ class Metadata implements JsonSerializable
     /**
      * Retrieves the timestamp of creation.
      *
-     * @return int The creation timestamp.
+     * @return float The creation timestamp.
      */
-    public function getTimestampCreation(): int
+    public function getTimestampCreation(): float
     {
         return $this->timestampCreation;
     }
@@ -85,12 +85,12 @@ class Metadata implements JsonSerializable
     /**
      * Sets the creation timestamp for the instance.
      *
-     * @param int $timestampCreation The timestamp to be set as the creation time.
+     * @param int|float $timestampCreation The timestamp to be set as the creation time.
      * @return void
      */
-    public function setTimestampCreation(int $timestampCreation): void
+    public function setTimestampCreation(int|float $timestampCreation): void
     {
-        $this->timestampCreation = $timestampCreation;
+        $this->timestampCreation = (float)$timestampCreation;
     }
 
     /**
@@ -138,9 +138,9 @@ class Metadata implements JsonSerializable
     /**
      * Retrieves the timestamp indicating when an event or action expires.
      *
-     * @return int|null The expiration timestamp as a Unix timestamp or null if not set.
+     * @return float|null The expiration timestamp as a Unix timestamp or null if not set.
      */
-    public function getTimestampExpiresAt(): ?int
+    public function getTimestampExpiresAt(): ?float
     {
         return $this->timestampExpiresAt;
     }
@@ -148,10 +148,10 @@ class Metadata implements JsonSerializable
     /**
      * Sets the timestamp indicating when an event or action expires.
      *
-     * @param int|null $timestampExpiresAt The expiration timestamp as a Unix timestamp or null to unset it.
+     * @param int|null|float $timestampExpiresAt The expiration timestamp as a Unix timestamp or null to unset it.
      * @return void
      */
-    public function setTimestampExpiresAt(?int $timestampExpiresAt): void
+    public function setTimestampExpiresAt(null|int|float $timestampExpiresAt): void
     {
         $this->timestampExpiresAt = $timestampExpiresAt;
     }
@@ -159,11 +159,11 @@ class Metadata implements JsonSerializable
     /**
      * Calculates the remaining lifetime in seconds.
      *
-     * @return int|null The remaining lifetime in seconds if the expiration timestamp is set, or null if not available.
+     * @return float|null The remaining lifetime in seconds if the expiration timestamp is set, or null if not available.
      */
-    public function getLifetime(): ?int
+    public function getLifetime(): ?float
     {
-        return $this->timestampExpiresAt !== null ? $this->timestampExpiresAt - time() : null;
+        return $this->timestampExpiresAt !== null ? $this->timestampExpiresAt - microtime(true): null;
     }
 
     /**

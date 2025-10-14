@@ -19,12 +19,12 @@ interface StorageInterface
 
     public function expired(string $uuid): bool;
 
-    public function setExpiration(string $uuid, ?int $expiresAt): void;
+    public function setExpiration(string $uuid, null|int|float $expiresAt): void;
 
-    public function getExpiration(string $uuid): ?int;
+    public function getExpiration(string $uuid): ?float;
 
-    public function setLifetime(string $uuid, int $ttl): void;
+    public function setLifetime(string $uuid, int|float $ttl): void;
 
-    public function getLifetime(string $uuid): ?int;
+    public function getLifetime(string $uuid): ?float;
     public function getClassName(string $uuid): ?string;
 }

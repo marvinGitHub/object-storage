@@ -115,22 +115,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws MetadataNotFoundException
      * @throws InvalidUUIDException
      */
-    public function setLifetime(string $uuid, int $ttl): void
+    public function setLifetime(string $uuid, int|float $ttl): void
     {
-        $this->setExpiration($uuid, time() + $ttl);
+        $this->setExpiration($uuid, microtime(true) + $ttl);
     }
 
     /**
      * Updates the expiration timestamp for a given UUID in the metadata storage.
      *
      * @param string $uuid The unique identifier for which the expiration needs to be set.
-     * @param int|null $expiresAt The Unix timestamp specifying the expiration time, or null to unset the expiration.
+     * @param int|float|null $expiresAt The Unix timestamp specifying the expiration time, or null to unset the expiration.
      *
      * @return void
      * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
      * @throws InvalidUUIDException
      */
-    public function setExpiration(string $uuid, ?int $expiresAt): void
+    public function setExpiration(string $uuid, null|int|float $expiresAt): void
     {
         $this->getLockAdapter()->acquireExclusiveLock($uuid);
 
@@ -184,9 +184,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * Throws an exception if metadata cannot be loaded for the specified UUID.
      *
      * @param string $uuid The unique identifier used to retrieve metadata.
-     * @return int|null The expiration timestamp if available, or null if not set.
+     * @return float|null The expiration timestamp if available, or null if not set.
      */
-    public function getExpiration(string $uuid): ?int
+    public function getExpiration(string $uuid): ?float
     {
         return $this->loadMetadata($uuid)?->getTimestampExpiresAt();
     }
@@ -310,7 +310,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->processingStack[$object] = true;
 
             $metadata = new Metadata();
-            $metadata->setTimestampCreation(time());
+            $metadata->setTimestampCreation(microtime(true));
             $metadata->setUuid($uuid);
             $metadata->setClassName($className = get_class($object));
             $metadata->setVersion(1);
@@ -581,9 +581,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * Retrieves the lifetime of the metadata associated with the specified UUID.
      *
      * @param string $uuid The unique identifier used to load the metadata.
-     * @return int|null The lifetime of the metadata in seconds, or null if no metadata is found.
+     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
      */
-    public function getLifetime(string $uuid): ?int
+    public function getLifetime(string $uuid): ?float
     {
         return $this->loadMetadata($uuid)?->getLifetime();
     }

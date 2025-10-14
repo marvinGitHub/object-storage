@@ -399,12 +399,14 @@ class ObjectStorageTest extends TestCase
     {
         $object = new TestObject();
         $uuid = $this->storage->store($object, null, 1);
-        $this->assertEquals(1, $this->storage->getLifetime($uuid));
+        $this->assertLessThanOrEqual(1, $this->storage->getLifetime($uuid));
+        $this->assertGreaterThan(0, $this->storage->getLifetime($uuid));
         $this->assertFalse($this->storage->expired($uuid));
+
         sleep(1);
-        $this->assertEquals(0, $this->storage->getLifetime($uuid));
+        $this->assertLessThanOrEqual(0, $this->storage->getLifetime($uuid));;
         sleep(1);
-        $this->assertEquals(-1, $this->storage->getLifetime($uuid)); // negative means time since expiration
+        $this->assertLessThan(-1, $this->storage->getLifetime($uuid)); // negative means time since expiration
 
         $uuid = $this->storage->store(new stdClass(), null, null);
         $this->assertNull($this->storage->getLifetime($uuid));
@@ -441,7 +443,7 @@ class ObjectStorageTest extends TestCase
         $this->storage->setLifetime($childUuid, 0);
 
         $this->assertTrue($this->storage->exists($childUuid));
-        $this->assertEquals(0, $this->storage->getLifetime($childUuid));
+        $this->assertLessThanOrEqual(0, $this->storage->getLifetime($childUuid));;
 
 
         $this->assertEquals($childUuid, $reloadedParent->child->getUUID());

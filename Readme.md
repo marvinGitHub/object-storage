@@ -119,9 +119,9 @@ Use when you need to gate operations globally (e.g., fail-safe after corruption)
     - Activate safe mode to prevent further mutations.
 
 ### Lifetime (TTL)
-- getLifetime(string $uuid): ?int
+- getLifetime(string $uuid): ?float
     - Remaining seconds (0 at expiry, negative after expiry, null if unlimited).
-- setLifetime(string $uuid, int $ttl): void
+- setLifetime(string $uuid, int|float $ttl): void
     - Sets/updates lifetime in seconds.
 - expired(string $uuid): bool
     - Indicates whether the object is expired (load() returns null for expired objects).
