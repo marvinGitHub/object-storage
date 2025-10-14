@@ -38,6 +38,11 @@ class Transaction
         $this->timeout = $timeout;
     }
 
+    /**
+     * Generates a unique transaction ID.
+     *
+     * @return string A unique transaction ID composed of a prefix, a unique identifier, and the process ID.
+     */
     private function generateTransactionId(): string
     {
         return 'txn_' . uniqid('', true) . '_' . getmypid();
@@ -86,7 +91,7 @@ class Transaction
      *
      * @return string The full path to the transaction log file.
      */
-    private function getTransactionLogPath(): string
+    public function getTransactionLogPath(): string
     {
         return $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . DIRECTORY_SEPARATOR . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
     }
@@ -186,6 +191,8 @@ class Transaction
             'timestamp' => microtime(true)
         ];
 
+        $this->updateTransactionLog();
+
         return $uuid;
     }
 
@@ -255,6 +262,13 @@ class Transaction
         return $this->storage->load($uuid);
     }
 
+    /**
+     * Finds a pending operation based on its type and UUID.
+     *
+     * @param string $type The type of the operation to find.
+     * @param string $uuid The UUID of the operation to find.
+     * @return array|null An array representing the pending operation if found, or null if no matching operation exists.
+     */
     private function findPendingOperation(string $type, string $uuid): ?array
     {
         foreach ($this->operations as $operation) {
@@ -279,15 +293,26 @@ class Transaction
     {
         $this->ensureTransactionActive();
 
-        if (!$this->storage->exists($uuid)) {
-            throw new ObjectNotFoundException("Object with UUID {$uuid} not found");
+        // If there is a pending store for this UUID in the same transaction,
+        // the object should be considered present within the txn context.
+        // We allow scheduling a delete without requiring physical existence.
+        $pendingStore = $this->findPendingOperation('store', $uuid);
+        if (null === $pendingStore) {
+            // No pending store: ensure it exists in storage, otherwise this is truly missing
+            if (!$this->storage->exists($uuid)) {
+                throw new ObjectNotFoundException("Object with UUID {$uuid} not found");
+            }
         }
 
         // Lock object for transaction
         $this->lockObject($uuid);
 
-        // Create backup
-        $backup = $this->createBackup($uuid);
+        // Create backup only if the object actually exists in storage.
+        // If it's only pending in this transaction, there is nothing to back up.
+        $backup = null;
+        if (null === $pendingStore) {
+            $backup = $this->createBackup($uuid);
+        }
 
         // Add operation to a transaction list
         $this->operations[] = [
@@ -296,6 +321,8 @@ class Transaction
             'backup' => $backup,
             'timestamp' => microtime(true)
         ];
+
+        $this->updateTransactionLog();
 
         return true;
     }
@@ -380,10 +407,7 @@ class Transaction
                             $this->restoreBackup($operation['uuid'], $operation['backup']);
                         } else {
                             // Delete an object (was newly created)
-                            if ($this->storage->exists($operation['uuid'])) {
-                                // ensure delete is invoked with the force flag as test expects
-                                $this->storage->delete($operation['uuid'], true);
-                            }
+                            $this->storage->delete($operation['uuid'], true);
                         }
                         break;
 
