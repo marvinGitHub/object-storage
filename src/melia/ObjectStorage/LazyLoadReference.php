@@ -4,7 +4,6 @@ namespace melia\ObjectStorage;
 
 use JsonSerializable;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
-use melia\ObjectStorage\Exception\MetadataNotFoundException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
 use melia\ObjectStorage\Storage\StorageInterface;
@@ -89,12 +88,8 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
             if (false === $this->storage->exists($this->uuid)) {
                 throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" does not exist', $this->uuid ?? ''));
             }
-            try {
-                if ($this->storage->expired($this->uuid)) {
-                    throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" is expired', $this->uuid ?? ''));
-                }
-            } catch (MetadataNotFoundException $e) {
-                // ignore metadata not found exception
+            if ($this->storage->expired($this->uuid)) {
+                throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" is expired', $this->uuid ?? ''));
             }
 
             $this->loadedObject = $this->getStorage()->load($this->uuid);
@@ -183,6 +178,14 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         return null;
     }
 
+    /**
+     * Determines if a property is set on the loaded object.
+     *
+     * @param string $name The name of the property to check.
+     * @return bool True if the property is set, false otherwise.
+     * @throws ReflectionException If there is an error with reflection during execution.
+     * @throws DanglingReferenceException If the loaded object reference is not properly initialized.
+     */
     public function __isset(string $name): bool
     {
         $this->loadIfNeeded();
@@ -227,19 +230,30 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         return $this->loadedObject;
     }
 
+    /**
+     * Retrieves the root object.
+     *
+     * @return object|null The root object if available, or null if not set.
+     */
     public function getRoot(): ?object
     {
         return $this->root;
     }
 
-    public function jsonSerialize(): mixed
+    /**
+     * @throws ReflectionException
+     * @throws DanglingReferenceException
+     */
+    public function jsonSerialize(): ?object
     {
         $this->loadIfNeeded();
         return $this->loadedObject;
     }
 
     /**
-     * @throws ReflectionException
+     * Serializes the object into an array representation.
+     *
+     * @return array An associative array containing the serialized properties of the object.
      */
     public function __serialize()
     {
@@ -250,6 +264,14 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         ];
     }
 
+    /**
+     * Reconstructs the object from the provided serialized data.
+     *
+     * @param array $data The serialized data used to restore the object's state.
+     *                     Includes keys such as 'root', 'uuid', and 'path'.
+     *
+     * @return void
+     */
     public function __unserialize(array $data)
     {
         try {
@@ -257,6 +279,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
                 $this->root = $this->getStorage()->load($data['root']);
             }
         } catch (Throwable $e) {
+            $this->getStorage()->getLogger()?->log($e);
             $this->root = null;
         }
 
