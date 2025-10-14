@@ -294,15 +294,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
     {
         try {
-            // Hash→UUID-Mapping sicherstellen
             if (!isset($this->objectUuidMap[$object])) {
                 $this->objectUuidMap[$object] = $uuid;
             }
 
-            // assign the UUID (stable serialization)
             Helper::assign($object, $uuid);
 
-            // Rekursionsschutz
             if (isset($this->processingStack[$object])) {
                 return;
             }
