@@ -3,6 +3,8 @@
 namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Event\Context\ContextInterface;
+use melia\ObjectStorage\Event\Context\LifetimeContext;
+use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
 
@@ -11,22 +13,13 @@ final class ObjectStorageEventDispatcherTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $dispatcher = new class implements DispatcherInterface {
+        $dispatcher = new class extends Dispatcher {
             public array $events = [];
 
             public function dispatch(string $event, ?ContextInterface $context = null): void
             {
                 $this->events[] = $event;
-            }
-
-            public function addListener(string $event, callable $listener): void
-            {
-                // TODO: Implement addListener() method.
-            }
-
-            public function removeListener(string $event, callable $listener): void
-            {
-                // TODO: Implement removeListener() method.
+                parent::dispatch($event, $context);
             }
         };
         $this->storage->setEventDispatcher($dispatcher);
@@ -162,5 +155,23 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         $this->storage->store($obj2, $uuid);
 
         $this->assertContains(Events::CLASSNAME_CHANGED, $this->storage->getEventDispatcher()->events);
+    }
+
+    public function testLifetimeChangedFiresEvent(): void
+    {
+        $obj = new class {
+            public string $v = '1';
+        };
+
+
+        $calls = 0;
+        $this->storage->getEventDispatcher()->addListener(Events::LIFETIME_CHANGED, function(LifetimeContext $context) use (&$calls)  {
+            $calls++;
+        });
+
+        $uuid = $this->storage->store($obj);
+        $this->assertEquals(0, $calls);
+        $this->storage->setLifetime($uuid, 10);
+        $this->assertEquals(1, $calls);
     }
 }

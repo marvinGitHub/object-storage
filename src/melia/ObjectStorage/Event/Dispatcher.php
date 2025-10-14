@@ -3,17 +3,27 @@
 namespace melia\ObjectStorage\Event;
 
 use melia\ObjectStorage\Event\Context\ContextInterface;
+use melia\ObjectStorage\Logger\LoggerAwareTrait;
 use Throwable;
 
 class Dispatcher implements DispatcherInterface
 {
+    use LoggerAwareTrait;
+
     /** @var array<string, array<int, callable>> */
     private array $listeners = [];
 
+    /**
+     * Adds a listener for a specific event. If the listener is already registered for the event, it will not be added again.
+     *
+     * @param string $event The name of the event to attach the listener to.
+     * @param callable $listener The callable function or method to execute when the event is triggered.
+     * @return void
+     */
     public function addListener(string $event, callable $listener): void
     {
         $this->listeners[$event] ??= [];
-        // prevent duplicates
+
         foreach ($this->listeners[$event] as $l) {
             if ($l === $listener) {
                 return;
@@ -22,6 +32,13 @@ class Dispatcher implements DispatcherInterface
         $this->listeners[$event][] = $listener;
     }
 
+    /**
+     * Removes a specific listener for a given event. If the listener is not registered for the event, no action is taken.
+     *
+     * @param string $event The name of the event from which the listener will be removed.
+     * @param callable $listener The callable function or method to be removed from the event's listener list.
+     * @return void
+     */
     public function removeListener(string $event, callable $listener): void
     {
         if (!isset($this->listeners[$event])) return;
@@ -32,17 +49,21 @@ class Dispatcher implements DispatcherInterface
         if (!$this->listeners[$event]) unset($this->listeners[$event]);
     }
 
+    /**
+     * Dispatches an event by invoking all registered listeners for that event.
+     * If a listener throws an exception, it is logged without interrupting the dispatch process.
+     *
+     * @param string $event The name of the event to be dispatched.
+     * @param ContextInterface|null $context Optional context information passed to the listeners.
+     * @return void
+     */
     public function dispatch(string $event, ?ContextInterface $context = null): void
     {
-        if (empty($this->listeners[$event])) return;
-        foreach ($this->listeners[$event] as $listener) {
+        foreach ($this->listeners[$event] ?? [] as $listener) {
             try {
-                $listener($event, $context);
+                $listener($context);
             } catch (Throwable $e) {
-//                // Swallow to avoid breaking storage flow; optionally log
-//                if (isset($context['logger']) && $context['logger'] instanceof \Psr\Log\LoggerInterface) {
-//                    $context['logger']->error('Event listener error', ['event' => $event, 'exception' => $e]);
-//                }
+                $this->getLogger()?->log($e);
             }
         }
     }

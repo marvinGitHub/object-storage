@@ -141,7 +141,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         $metadata->setTimestampExpiresAt($expiresAt);
         $this->saveMetadata($metadata);
-        $this->getEventDispatcher()->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
+        $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
 
         $this->getLockAdapter()->releaseLock($uuid);
     }
@@ -947,7 +947,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (!unlink($filePathStub)) {
                 throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
             }
-            $this->getEventDispatcher()->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
+            $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
         }
     }
 
