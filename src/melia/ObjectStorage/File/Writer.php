@@ -9,8 +9,13 @@ class Writer implements WriterInterface
     /**
      * @throws IOException
      */
-    public function atomicWrite(string $filename, ?string $data = null): void
+    public function atomicWrite(string $filename, ?string $data = null, bool $createDirectoryIfNotExist = false): void
     {
+        if ($createDirectoryIfNotExist) {
+            $directory = new Directory(Directory::getDirectoryName($filename));
+            $directory->createIfNotExists();
+        }
+
         /* do not use file_put_contents() here, because it does not support atomic writes */
         $file = fopen($filename, 'w+');
 

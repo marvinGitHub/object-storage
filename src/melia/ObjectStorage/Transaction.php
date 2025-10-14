@@ -5,7 +5,6 @@ namespace melia\ObjectStorage;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidOperationException;
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\TransactionAlreadyActiveException;
@@ -79,12 +78,17 @@ class Transaction
         ];
 
         $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData));
+        (new Writer())->atomicWrite($logFile, serialize($logData), true);
     }
 
+    /**
+     * Retrieves the file path for the transaction log.
+     *
+     * @return string The full path to the transaction log file.
+     */
     private function getTransactionLogPath(): string
     {
-        return $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
+        return $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . DIRECTORY_SEPARATOR . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
     }
 
     /**
@@ -377,6 +381,7 @@ class Transaction
                         } else {
                             // Delete an object (was newly created)
                             if ($this->storage->exists($operation['uuid'])) {
+                                // ensure delete is invoked with the force flag as test expects
                                 $this->storage->delete($operation['uuid'], true);
                             }
                         }
@@ -470,6 +475,6 @@ class Transaction
         ];
 
         $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData));
+        (new Writer())->atomicWrite($logFile, serialize($logData), true);
     }
 }
