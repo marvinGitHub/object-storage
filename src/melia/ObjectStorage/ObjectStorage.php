@@ -132,7 +132,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function setExpiration(string $uuid, null|int|float $expiresAt): void
     {
-        $this->getLockAdapter()->acquireExclusiveLock($uuid);
+        $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
         $metadata = $this->loadMetadata($uuid);
         if (null === $metadata) {
@@ -143,7 +143,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->saveMetadata($metadata);
         $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
 
-        $this->getLockAdapter()->releaseLock($uuid);
+        $this->getLockAdapter()?->releaseLock($uuid);
     }
 
     /**
@@ -198,7 +198,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function __destruct()
     {
-        $this->getLockAdapter()->releaseActiveLocks();
+        $this->getLockAdapter()?->releaseActiveLocks();
     }
 
     /**
@@ -226,7 +226,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new ObjectPersistenceContext($uuid, $object));
 
-        if ($this->getStateHandler()->safeModeEnabled()) {
+        if ($this->getStateHandler()?->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
 
@@ -248,7 +248,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->objectUuidMap[$object] = $uuid;
 
             // 3) No early return: ALWAYS call serializeAndStore so that updates are detected via checksum
-            $this->getLockAdapter()->acquireExclusiveLock($uuid);
+            $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
             /* if classname change we should remove the previous stub */
             $previousClassname = $this->getClassName($uuid);
@@ -260,16 +260,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->serializeAndStore($object, $uuid, $ttl);
 
-            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()->releaseLock($uuid);
+            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()?->releaseLock($uuid);
             }
 
             $this->getEventDispatcher()?->dispatch(Events::AFTER_STORE, new Context($uuid));
 
             return $uuid;
         } catch (Throwable $e) {
-            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()->releaseLock($uuid);
+            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()?->releaseLock($uuid);
             }
             throw $e;
         }
@@ -543,23 +543,23 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         try {
             if ($exclusive) {
-                $this->getLockAdapter()->acquireExclusiveLock($uuid);
+                $this->getLockAdapter()?->acquireExclusiveLock($uuid);
             } else {
-                $this->getLockAdapter()->acquireSharedLock($uuid);
+                $this->getLockAdapter()?->acquireSharedLock($uuid);
             }
 
             $object = $this->loadFromStorage($uuid);
 
             if (!$exclusive) {
-                $this->getLockAdapter()->releaseLock($uuid);
+                $this->getLockAdapter()?->releaseLock($uuid);
             }
 
             $this->getEventDispatcher()?->dispatch(Events::AFTER_LOAD, new Context($uuid));
 
             return $object;
         } catch (Throwable $e) {
-            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()->releaseLock($uuid);
+            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()?->releaseLock($uuid);
             }
             throw $e;
         }
@@ -610,7 +610,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         // Load metadata once and derive class name and lifetime from it
         $metadata = $this->loadMetadata($uuid);
         if (null === $metadata) {
-            $this->getStateHandler()->enableSafeMode();
+            $this->getStateHandler()?->enableSafeMode();
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
         }
 
@@ -779,12 +779,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, new Context($uuid));
 
-        if ($this->getStateHandler()->safeModeEnabled()) {
+        if ($this->getStateHandler()?->safeModeEnabled()) {
             throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
         }
 
         try {
-            $this->getLockAdapter()->acquireExclusiveLock($uuid);
+            $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
             $this->getCache()?->delete($uuid);
             $this->getMetadataCache()?->delete($uuid);
@@ -809,8 +809,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->deleteStub($className, $uuid);
         } finally {
-            if ($this->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()->releaseLock($uuid);
+            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
+                $this->getLockAdapter()?->releaseLock($uuid);
             }
         }
 
@@ -913,7 +913,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $data = json_decode($data, true, $this->maxNestingLevel);
 
         if (null === $data) {
-            $this->getStateHandler()->enableSafeMode();
+            $this->getStateHandler()?->enableSafeMode();
             throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
         }
 
