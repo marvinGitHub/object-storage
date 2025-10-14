@@ -642,13 +642,19 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
     {
+        $cache = $this->getCache();
+
+        if (null === $cache) {
+            return;
+        }
+
         if (null !== $ttl && $ttl <= 0) {
-            $this->getCache()?->delete($uuid);
+            $cache->delete($uuid);
         } else {
             if (null !== $ttl) {
                 $ttl = (int)$ttl;
             }
-            $this->getCache()?->set($uuid, $object, $ttl);
+            $cache->set($uuid, $object, $ttl);
         }
     }
 
