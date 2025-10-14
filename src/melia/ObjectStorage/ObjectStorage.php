@@ -278,20 +278,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @param object $object
      * @param string $uuid
-     * @param int|null $ttl
+     * @param float|int|null $ttl
      *
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
+     * @throws InvalidArgumentException
+     * @throws InvalidUUIDException
      * @throws MaxNestingLevelExceededException
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws InvalidUUIDException
-     * @throws InvalidArgumentException
      * @throws UnsupportedTypeException
      */
-    private function serializeAndStore(object $object, string $uuid, ?int $ttl = null): void
+    private function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
     {
         try {
             // Hash→UUID-Mapping sicherstellen
@@ -310,11 +310,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->processingStack[$object] = true;
 
             $metadata = new Metadata();
-            $metadata->setTimestampCreation(microtime(true));
+            $metadata->setTimestampCreation($timestampCreation = microtime(true));
             $metadata->setUuid($uuid);
             $metadata->setClassName($className = get_class($object));
             $metadata->setVersion(1);
-            $metadata->setTimestampExpiresAt($ttl ? time() + $ttl : null);
+            $metadata->setTimestampExpiresAt($ttl ? $timestampCreation + $ttl : null);
 
             /* ensure that the object is going to sleep before creating the graph;
                to ensure the object stays untouched, we create a graph from a copy (clone)
@@ -357,7 +357,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
-            $this->getCache()?->set($uuid, $object, $ttl);
+            $this->addToCache($uuid, $object, $ttl);
         } finally {
             if (isset($this->processingStack[$object])) {
                 unset($this->processingStack[$object]);
@@ -620,22 +620,39 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         LifecycleGuard::wakeup($object);
         Helper::assign($object, $uuid);
 
-        /*
-         * Cache policy:
-         *
-         * lifetime === null (cache without expiration)
-         * lifetime > 0 (cache with TTL)
-         * lifetime <= 0 (remove from cache - expired)
-         */
-        $lifetime = $metadata->getLifetime();
-
-        if (null !== $lifetime && $lifetime <= 0) {
-            $this->getCache()?->delete($uuid);
-        } else {
-            $this->getCache()?->set($uuid, $object, $lifetime);
-        }
+        $this->addToCache($uuid, $object, $metadata->getLifetime());
 
         return $object;
+    }
+
+    /**
+     * Adds an object to the cache with the specified TTL (Time-To-Live) or removes it
+     * from the cache if the TTL is less than or equal to zero.
+     *
+     *  Cache policy:
+     *  $ttl === null (cache without expiration)
+     *  $ttl > 0 (cache with TTL)
+     *  $ttl <= 0 (remove from cache - expired)
+     *
+     * @param string $uuid The unique identifier for the cached object.
+     * @param object $object The object to be cached.
+     * @param int|float|null $ttl The time-to-live for the cache entry in seconds.
+     *                            If null, the object is cached indefinitely. If less
+     *                            than or equal to 0, the object is removed from the cache.
+     *
+     * @return void
+     * @throws InvalidArgumentException
+     */
+    private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
+    {
+        if (null !== $ttl && $ttl <= 0) {
+            $this->getCache()?->delete($uuid);
+        } else {
+            if (null !== $ttl) {
+                $ttl = (int)$ttl;
+            }
+            $this->getCache()?->set($uuid, $object, $ttl);
+        }
     }
 
     /**

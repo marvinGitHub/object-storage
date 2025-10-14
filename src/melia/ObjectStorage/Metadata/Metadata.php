@@ -153,6 +153,9 @@ class Metadata implements JsonSerializable
      */
     public function setTimestampExpiresAt(null|int|float $timestampExpiresAt): void
     {
+        if (null !== $timestampExpiresAt) {
+            $timestampExpiresAt = (float)$timestampExpiresAt;
+        }
         $this->timestampExpiresAt = $timestampExpiresAt;
     }
 

@@ -72,7 +72,7 @@ When a lazy reference loads, it:
 ## API Highlights
 
 ### General
-- store(object $obj, ?string $uuid = null, ?int $ttl = null): string
+- store(object $obj, ?string $uuid = null, null|int|float $ttl = null): string
     - Persists object and its referenced children; returns UUID. Optional lifetime in seconds.
 - load(string $uuid, bool $exclusive = false): ?object
     - Loads object with locking (shared when $exclusive=false). Returns null if expired.
