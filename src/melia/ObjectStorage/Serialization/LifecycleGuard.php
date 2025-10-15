@@ -3,7 +3,6 @@
 namespace melia\ObjectStorage\Serialization;
 
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
-use melia\ObjectStorage\Reflection\Reflection;
 
 class LifecycleGuard
 {

@@ -2,7 +2,6 @@
 
 namespace melia\ObjectStorage\Reflection;
 
-use Closure;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionObject;

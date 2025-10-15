@@ -46,6 +46,7 @@ use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Logger\LoggerInterface;
+use melia\ObjectStorage\Metadata\Cache\AwareTrait as MetadataCacheAwareTrait;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
@@ -56,8 +57,8 @@ use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
-use melia\ObjectStorage\UUID\Generator\GeneratorInterface;
 use melia\ObjectStorage\UUID\Generator\Generator as UUIDGenerator;
+use melia\ObjectStorage\UUID\Generator\GeneratorInterface;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
 use Psr\SimpleCache\CacheInterface;
@@ -81,6 +82,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use ReaderAwareTrait;
     use AwareTrait;
     use Cache\AwareTrait;
+    use MetadataCacheAwareTrait;
 
     /**
      * The suffix used for metadata files.
@@ -103,17 +105,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /** @var array<string>|null */
     private ?array $registeredClassNamesCache = null;
-
-    /**
-     * Sets the metadata cache to be used by the system.
-     *
-     * @param CacheInterface $metadataCache The cache instance responsible for storing metadata.
-     * @return void
-     */
-    public function setMetadataCache(CacheInterface $metadataCache): void
-    {
-        $this->metadataCache = $metadataCache;
-    }
 
     /**
      * @throws MetadataNotFoundException
@@ -148,6 +139,87 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
 
         $this->getLockAdapter()?->releaseLock($uuid);
+    }
+
+    /**
+     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
+     * If an error occurs during the process, it is logged, and null is returned.
+     *
+     * @param string $uuid The unique identifier for the metadata to be loaded.
+     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
+     */
+    public function loadMetadata(string $uuid): ?Metadata
+    {
+        try {
+            $cached = $this->getMetadataCache()?->get($uuid);
+            if ($cached instanceof Metadata) {
+                return $cached;
+            }
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+
+        try {
+            $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
+
+            $metadata = Metadata::createFromArray($metadata);
+            $this->getMetadataCache()?->set($uuid, $metadata);
+            return $metadata;
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+        return null;
+    }
+
+    /**
+     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
+     *
+     * @param string $filename The path to the file to read and decode data from.
+     * @return array|null Returns the decoded data as an associative array.
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException If the file content cannot be decoded.
+     */
+    private function loadFromJsonFile(string $filename): ?array
+    {
+        try {
+            $data = $this->getReader()->read($filename);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return null;
+        }
+
+        $data = json_decode($data, true, $this->maxNestingLevel);
+
+        if (null === $data) {
+            $this->getStateHandler()?->enableSafeMode();
+            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
+        }
+
+        return $data;
+    }
+
+    /**
+     * Generates the file path for the metadata associated with a specific UUID.
+     *
+     * @param string $uuid The unique identifier used to build the metadata file path.
+     * @return string Returns the file path of the metadata corresponding to the provided UUID.
+     */
+    public function getFilePathMetadata(string $uuid): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+    }
+
+    /**
+     * Retrieves the directory path where storage operations are performed.
+     *
+     * @return string The storage directory path as a string.
+     */
+    public function getStorageDir(): string
+    {
+        return rtrim($this->storageDir, DIRECTORY_SEPARATOR);
     }
 
     /**
@@ -277,6 +349,70 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
             throw $e;
         }
+    }
+
+    /**
+     * Get a classname for a certain object
+     *
+     * @param string $uuid
+     * @return string|null
+     */
+    public function getClassName(string $uuid): ?string
+    {
+        return $this->loadMetadata($uuid)?->getClassName() ?? null;
+    }
+
+    /**
+     * Deletes a stub file for the specified class name and UUID if it exists.
+     *
+     * @param string $className The name of the class associated with the stub.
+     * @param string $uuid The unique identifier associated with the stub.
+     * @return void
+     * @throws StubDeletionFailureException If the stub file could not be deleted.
+     * @throws InvalidUUIDException
+     */
+    private function deleteStub(string $className, string $uuid): void
+    {
+        $filePathStub = $this->getFilePathStub($className, $uuid);
+        if (file_exists($filePathStub)) {
+            if (!unlink($filePathStub)) {
+                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
+            }
+            $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
+        }
+    }
+
+    /**
+     * Generates the file path for a stub associated with a specific class and UUID.
+     *
+     * @param string $className The name of the class for which the stub is being generated.
+     * @param string $uuid The unique identifier used to differentiate the stub file.
+     * @return string The full file path for the stub.
+     */
+    public function getFilePathStub(string $className, string $uuid): string
+    {
+        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
+    }
+
+    /**
+     * Retrieves the directory path where the class stub for the given class name is stored.
+     *
+     * @param string $className The name of the class for which the stub directory path is being generated.
+     * @return string The full path to the class stub directory.
+     */
+    protected function getClassStubDirectory(string $className): string
+    {
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
+    }
+
+    /**
+     * Retrieves the path to the stub directory.
+     *
+     * @return string The full path to the stub directory.
+     */
+    protected function getStubDirectory(): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
     }
 
     /**
@@ -518,6 +654,28 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Checks if a file exists for a specific UUID.
+     *
+     * @param string $uuid The UUID to check if the associated file exists.
+     * @return bool True if the file exists, false otherwise.
+     */
+    public function exists(string $uuid): bool
+    {
+        return file_exists($this->getFilePathData($uuid));
+    }
+
+    /**
+     * Generates the file path for a given UUID.
+     *
+     * @param string $uuid The unique identifier used to generate the file path.
+     * @return string The full file path constructed using the UUID.
+     */
+    public function getFilePathData(string $uuid): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+    }
+
+    /**
      * Loads an object from persistent storage using its unique identifier.
      * The method optionally applies locking mechanisms during the loading process.
      *
@@ -624,54 +782,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->addToCache($uuid, $object, $metadata->getLifetime());
 
         return $object;
-    }
-
-    /**
-     * Adds an object to the cache with the specified TTL (Time-To-Live) or removes it
-     * from the cache if the TTL is less than or equal to zero.
-     *
-     *  Cache policy:
-     *  $ttl === null (cache without expiration)
-     *  $ttl > 0 (cache with TTL)
-     *  $ttl <= 0 (remove from cache - expired)
-     *
-     * @param string $uuid The unique identifier for the cached object.
-     * @param object $object The object to be cached.
-     * @param int|float|null $ttl The time-to-live for the cache entry in seconds.
-     *                            If null, the object is cached indefinitely. If less
-     *                            than or equal to 0, the object is removed from the cache.
-     *
-     * @return void
-     * @throws InvalidArgumentException
-     * @throws InvalidUUIDException
-     */
-    private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
-    {
-        $cache = $this->getCache();
-
-        if (null === $cache) {
-            return;
-        }
-
-        if (null !== $ttl && $ttl <= 0) {
-            $this->removeFromCache($uuid);
-        } else {
-            if (null !== $ttl) {
-                $ttl = (int)$ttl;
-            }
-            $cache->set($uuid, $object, $ttl);
-            $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, new Context($uuid));
-        }
-    }
-
-    /**
-     * @throws InvalidUUIDException
-     * @throws InvalidArgumentException
-     */
-    private function removeFromCache(string $uuid): void
-    {
-        $this->getCache()?->delete($uuid);
-        $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, new Context($uuid));
     }
 
     /**
@@ -788,6 +898,54 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Adds an object to the cache with the specified TTL (Time-To-Live) or removes it
+     * from the cache if the TTL is less than or equal to zero.
+     *
+     *  Cache policy:
+     *  $ttl === null (cache without expiration)
+     *  $ttl > 0 (cache with TTL)
+     *  $ttl <= 0 (remove from cache - expired)
+     *
+     * @param string $uuid The unique identifier for the cached object.
+     * @param object $object The object to be cached.
+     * @param int|float|null $ttl The time-to-live for the cache entry in seconds.
+     *                            If null, the object is cached indefinitely. If less
+     *                            than or equal to 0, the object is removed from the cache.
+     *
+     * @return void
+     * @throws InvalidArgumentException
+     * @throws InvalidUUIDException
+     */
+    private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
+    {
+        $cache = $this->getCache();
+
+        if (null === $cache) {
+            return;
+        }
+
+        if (null !== $ttl && $ttl <= 0) {
+            $this->removeFromCache($uuid);
+        } else {
+            if (null !== $ttl) {
+                $ttl = (int)$ttl;
+            }
+            $cache->set($uuid, $object, $ttl);
+            $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, new Context($uuid));
+        }
+    }
+
+    /**
+     * @throws InvalidUUIDException
+     * @throws InvalidArgumentException
+     */
+    private function removeFromCache(string $uuid): void
+    {
+        $this->getCache()?->delete($uuid);
+        $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, new Context($uuid));
+    }
+
+    /**
      * Deletes an object based on its UUID.
      *
      * @param string $uuid The unique identifier of the object to be deleted.
@@ -840,173 +998,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, new Context($uuid));
-    }
-
-    /**
-     * Retrieves the metadata cache instance if it has been set.
-     *
-     * @return CacheInterface|null The instance of the metadata cache, or null if it is not set.
-     */
-    public function getMetadataCache(): ?CacheInterface
-    {
-        return $this->metadataCache;
-    }
-
-    /**
-     * Checks if a file exists for a specific UUID.
-     *
-     * @param string $uuid The UUID to check if the associated file exists.
-     * @return bool True if the file exists, false otherwise.
-     */
-    public function exists(string $uuid): bool
-    {
-        return file_exists($this->getFilePathData($uuid));
-    }
-
-    /**
-     * Generates the file path for a given UUID.
-     *
-     * @param string $uuid The unique identifier used to generate the file path.
-     * @return string The full file path constructed using the UUID.
-     */
-    public function getFilePathData(string $uuid): string
-    {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
-    }
-
-    /**
-     * Get a classname for a certain object
-     *
-     * @param string $uuid
-     * @return string|null
-     */
-    public function getClassName(string $uuid): ?string
-    {
-        return $this->loadMetadata($uuid)?->getClassName() ?? null;
-    }
-
-    /**
-     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
-     * If an error occurs during the process, it is logged, and null is returned.
-     *
-     * @param string $uuid The unique identifier for the metadata to be loaded.
-     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
-     */
-    public function loadMetadata(string $uuid): ?Metadata
-    {
-        try {
-            $cached = $this->getMetadataCache()?->get($uuid);
-            if ($cached instanceof Metadata) {
-                return $cached;
-            }
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-
-        try {
-            $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
-            if (null === $metadata) {
-                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
-            }
-
-            $metadata = Metadata::createFromArray($metadata);
-            $this->getMetadataCache()?->set($uuid, $metadata);
-            return $metadata;
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-        return null;
-    }
-
-    /**
-     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
-     *
-     * @param string $filename The path to the file to read and decode data from.
-     * @return array|null Returns the decoded data as an associative array.
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException If the file content cannot be decoded.
-     */
-    private function loadFromJsonFile(string $filename): ?array
-    {
-        try {
-            $data = $this->getReader()->read($filename);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            return null;
-        }
-
-        $data = json_decode($data, true, $this->maxNestingLevel);
-
-        if (null === $data) {
-            $this->getStateHandler()?->enableSafeMode();
-            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
-        }
-
-        return $data;
-    }
-
-    /**
-     * Generates the file path for the metadata associated with a specific UUID.
-     *
-     * @param string $uuid The unique identifier used to build the metadata file path.
-     * @return string Returns the file path of the metadata corresponding to the provided UUID.
-     */
-    public function getFilePathMetadata(string $uuid): string
-    {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
-    }
-
-    /**
-     * Deletes a stub file for the specified class name and UUID if it exists.
-     *
-     * @param string $className The name of the class associated with the stub.
-     * @param string $uuid The unique identifier associated with the stub.
-     * @return void
-     * @throws StubDeletionFailureException If the stub file could not be deleted.
-     * @throws InvalidUUIDException
-     */
-    private function deleteStub(string $className, string $uuid): void
-    {
-        $filePathStub = $this->getFilePathStub($className, $uuid);
-        if (file_exists($filePathStub)) {
-            if (!unlink($filePathStub)) {
-                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
-            }
-            $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, new StubContext($uuid, $className));
-        }
-    }
-
-    /**
-     * Generates the file path for a stub associated with a specific class and UUID.
-     *
-     * @param string $className The name of the class for which the stub is being generated.
-     * @param string $uuid The unique identifier used to differentiate the stub file.
-     * @return string The full file path for the stub.
-     */
-    public function getFilePathStub(string $className, string $uuid): string
-    {
-        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
-    }
-
-    /**
-     * Retrieves the directory path where the class stub for the given class name is stored.
-     *
-     * @param string $className The name of the class for which the stub directory path is being generated.
-     * @return string The full path to the class stub directory.
-     */
-    protected function getClassStubDirectory(string $className): string
-    {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
-    }
-
-    /**
-     * Retrieves the path to the stub directory.
-     *
-     * @return string The full path to the stub directory.
-     */
-    protected function getStubDirectory(): string
-    {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
     }
 
     /**
@@ -1288,6 +1279,17 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * @param string $storageDir
+     * @return void
+     * @throws IOException
+     */
+    public function setStorageDir(string $storageDir): void
+    {
+        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
+        $this->createDirectoryIfNotExist($this->storageDir);
+    }
+
+    /**
      * Creates an iterator that filters objects based on the provided classname and retrieves them from storage.
      *
      * @param string|null $className The classname to filter objects by. If null, no filtering is applied.
@@ -1341,26 +1343,5 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 return $this->current();
             }
         };
-    }
-
-    /**
-     * Retrieves the directory path where storage operations are performed.
-     *
-     * @return string The storage directory path as a string.
-     */
-    public function getStorageDir(): string
-    {
-        return rtrim($this->storageDir, DIRECTORY_SEPARATOR);
-    }
-
-    /**
-     * @param string $storageDir
-     * @return void
-     * @throws IOException
-     */
-    public function setStorageDir(string $storageDir): void
-    {
-        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
-        $this->createDirectoryIfNotExist($this->storageDir);
     }
 }

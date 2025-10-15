@@ -12,6 +12,17 @@ class Directory
     }
 
     /**
+     * Retrieves the directory name from a given file path.
+     *
+     * @param string $path The file path from which to extract the directory name.
+     * @return string Returns the directory portion of the path.
+     */
+    public static function getDirectoryName(string $path): string
+    {
+        return pathinfo($path, PATHINFO_DIRNAME);
+    }
+
+    /**
      * Performs cleanup by removing the specified directory and its contents if it exists.
      *
      * @return void
@@ -35,16 +46,5 @@ class Directory
             return mkdir($this->path, 0777, true);
         }
         return true;
-    }
-
-    /**
-     * Retrieves the directory name from a given file path.
-     *
-     * @param string $path The file path from which to extract the directory name.
-     * @return string Returns the directory portion of the path.
-     */
-    public static function getDirectoryName(string $path): string
-    {
-        return pathinfo($path, PATHINFO_DIRNAME);
     }
 }

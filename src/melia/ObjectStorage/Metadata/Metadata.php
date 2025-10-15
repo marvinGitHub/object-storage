@@ -166,7 +166,7 @@ class Metadata implements JsonSerializable
      */
     public function getLifetime(): ?float
     {
-        return $this->timestampExpiresAt !== null ? $this->timestampExpiresAt - microtime(true): null;
+        return $this->timestampExpiresAt !== null ? $this->timestampExpiresAt - microtime(true) : null;
     }
 
     /**

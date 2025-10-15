@@ -34,6 +34,7 @@ use Throwable;
 class Transaction
 {
     use AwareTrait;
+
     private const TRANSACTION_FILE_SUFFIX = '.txn';
 
     private ObjectStorage $storage;
@@ -295,6 +296,29 @@ class Transaction
     }
 
     /**
+     * Updates the transaction log
+     * @throws IOException
+     */
+    private function updateTransactionLog(): void
+    {
+        $logData = [
+            'transaction_id' => $this->transactionId,
+            'start_time' => microtime(true),
+            'status' => $this->isCommitted ? 'committed' : ($this->isRolledBack ? 'rolled_back' : 'active'),
+            'operations' => array_map(function ($operation) {
+                return [
+                    'type' => $operation['type'],
+                    'uuid' => $operation['uuid'],
+                    'timestamp' => $operation['timestamp']
+                ];
+            }, $this->operations)
+        ];
+
+        $logFile = $this->getTransactionLogPath();
+        (new Writer())->atomicWrite($logFile, serialize($logData), true);
+    }
+
+    /**
      * Deletes an object within the transaction
      *
      * @param string $uuid
@@ -492,28 +516,5 @@ class Transaction
     public function getOperationCount(): int
     {
         return count($this->operations);
-    }
-
-    /**
-     * Updates the transaction log
-     * @throws IOException
-     */
-    private function updateTransactionLog(): void
-    {
-        $logData = [
-            'transaction_id' => $this->transactionId,
-            'start_time' => microtime(true),
-            'status' => $this->isCommitted ? 'committed' : ($this->isRolledBack ? 'rolled_back' : 'active'),
-            'operations' => array_map(function ($operation) {
-                return [
-                    'type' => $operation['type'],
-                    'uuid' => $operation['uuid'],
-                    'timestamp' => $operation['timestamp']
-                ];
-            }, $this->operations)
-        ];
-
-        $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData), true);
     }
 }
