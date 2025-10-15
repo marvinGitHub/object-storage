@@ -353,6 +353,17 @@ $loaded = $storage->load($uuid);
 $storage->delete($uuid);
 ```
 
+## Why use melia\ObjectStorage\UUID\AwareInterface
+
+Implementing melia\ObjectStorage\UUID\AwareInterface (getUUID/setUUID) makes object identity explicit and stable. This enables:
+
+- Reliable persistence: Objects keep the same UUID across store/load cycles.
+- Correct graph handling: Related objects are referenced by UUID (no duplication, supports cycles).
+- Better performance: Caching and locking are keyed by UUID.
+- Lifecycle control: TTL/expiration and metadata are tracked per UUID.
+- Lazy loading: Properties can hold UUID-based references and load on demand.
+- Interop and portability: UUIDs work across processes and systems.
+
 ## Why resources and closures are not serialized
 
 Object graphs can include values that aren’t portable or safely reconstructible outside the current PHP process. Two notable cases:
