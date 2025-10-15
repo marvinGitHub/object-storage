@@ -3,9 +3,10 @@
 
 namespace melia\ObjectStorage\Storage;
 
+use melia\ObjectStorage\Logger\LoggerAwareInterface;
 use Traversable;
 
-interface StorageInterface
+interface StorageInterface extends LoggerAwareInterface
 {
     public function exists(string $uuid): bool;
 

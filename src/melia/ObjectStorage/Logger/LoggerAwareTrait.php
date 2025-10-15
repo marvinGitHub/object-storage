@@ -4,7 +4,6 @@ namespace melia\ObjectStorage\Logger;
 
 trait LoggerAwareTrait
 {
-
     protected ?LoggerInterface $logger = null;
 
     /**
