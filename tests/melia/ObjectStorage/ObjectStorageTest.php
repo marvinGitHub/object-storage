@@ -4,6 +4,7 @@ namespace Tests\melia\ObjectStorage;
 
 use Closure;
 use Error;
+use Generator as PHPInternalGenerator;
 use IteratorAggregate;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
@@ -15,10 +16,9 @@ use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
-use melia\ObjectStorage\UUID\Generator;
+use melia\ObjectStorage\UUID\Generator\Generator;
 use stdClass;
 use Throwable;
-use Generator as PHPInternalGenerator;
 
 class ObjectStorageTest extends TestCase
 {
@@ -133,7 +133,7 @@ class ObjectStorageTest extends TestCase
 
     public function testExists()
     {
-        $this->assertFalse($this->storage->exists(Generator::generate()));
+        $this->assertFalse($this->storage->exists((new Generator())->generate()));
         $this->assertFalse($this->storage->exists('foo'));
     }
 

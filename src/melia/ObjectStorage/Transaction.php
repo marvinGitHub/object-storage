@@ -8,184 +8,22 @@
 
 namespace melia\ObjectStorage;
 
-use /**
- *
- */
-    melia\ObjectStorage\Exception\Exception;
-use /**
- * Exception thrown to indicate that an invalid operation has been attempted.
- *
- * This exception is typically used when an operation is performed
- * that is not allowed or is not valid given the current state or context.
- *
- * It extends from the base Exception class and provides additional
- * context for invalid operations within the ObjectStorage module.
- *
- * Usage of this exception should indicate a clear and specific
- * violation of operational rules or restrictions.
- */
-    melia\ObjectStorage\Exception\InvalidOperationException;
-use /**
- * Class IOException
- *
- * Represents an exception that is thrown when an I/O operation fails.
- * This can include errors related to file operations, stream handling,
- * or any other input/output operations within the ObjectStorage functionality.
- *
- * This exception is typically used to indicate runtime failures that are
- * related to input/output handling in the context of the ObjectStorage system.
- *
- * It should be extended or used to provide more specific details about
- * what caused the I/O operation to fail.
- */
-    melia\ObjectStorage\Exception\IOException;
-use /**
- * Exception thrown when an object is not found in the storage.
- *
- * This exception should be used to signal that a requested object could not
- * be found in the object storage system. It is generally used to handle
- * cases where the identifier provided does not match any existing object in
- * the system or the object has been removed.
- *
- * Use this exception to differentiate between a missed object retrieval and
- * other types of storage-related errors.
- */
-    melia\ObjectStorage\Exception\ObjectNotFoundException;
-use /**
- * Exception thrown when the activation of safe mode fails in the Object Storage system.
- *
- * This exception is specifically used to indicate that an attempt
- * to activate safe mode has been unsuccessful, which may occur due to
- * misconfiguration, insufficient permissions, or other runtime issues.
- *
- * It provides a way to handle errors related to safe mode activation
- * and allows for differentiation from other exceptions in the system.
- */
-    melia\ObjectStorage\Exception\SafeModeActivationFailedException;
-use /**
- * Exception thrown when attempting to start a new transaction while another transaction
- * is already active within the object storage system. This typically indicates a logic
- * error in the application where nested or concurrent transactions are not allowed
- * or properly handled.
- *
- * This exception should be caught and addressed to ensure proper transaction management
- * and to maintain the integrity of operations performed in the storage layer.
- *
- * Class TransactionAlreadyActiveException
- * @package melia\ObjectStorage\Exception
- */
-    melia\ObjectStorage\Exception\TransactionAlreadyActiveException;
-use /**
- * Exception thrown when a transaction commit operation fails.
- *
- * This exception indicates a failure during the commit phase of a transaction
- * within the ObjectStorage component. The failure could be due to various reasons
- * such as network issues, data inconsistency, or unexpected errors while attempting
- * to persist changes.
- *
- * By catching this exception, developers can handle and respond to transaction
- * commit failures, such as retrying the operation or rolling back changes where
- * necessary to maintain application stability and data integrity.
- */
-    melia\ObjectStorage\Exception\TransactionCommitException;
-use /**
- * Represents an exception that occurs during a transaction in the ObjectStorage component.
- *
- * This exception is used to indicate errors or issues specifically related to
- * transactional operations within the ObjectStorage system. It extends the base
- * Exception class to provide additional context or functionality when handling
- * such errors.
- *
- * Instances of this exception can be thrown when a transactional operation fails
- * or encounters unexpected behavior, allowing for better error handling and debugging.
- */
-    melia\ObjectStorage\Exception\TransactionException;
-use /**
- * Exception thrown when an operation is attempted on an object storage
- * transaction that has been locked, indicating that the transaction cannot
- * proceed because it is already in an invalid or conflicting state.
- *
- * This exception is typically used to signal issues related to concurrency
- * or transactional integrity within the object storage system.
- *
- * It is recommended to handle this exception by implementing appropriate
- * retry mechanisms or user notifications, depending on the specific application logic.
- */
-    melia\ObjectStorage\Exception\TransactionLockException;
-use /**
- * Exception thrown when an operation is attempted on a transaction that is not active.
- *
- * This exception is typically used in scenarios where a transaction-based
- * context is required but the transaction has not been started or is already
- * completed. It serves as an indicator to the calling code that the operation
- * cannot proceed due to the inactive state of the transaction.
- *
- * Common use cases include:
- * - Verifying the state of a transaction before performing operations.
- * - Handling errors gracefully when attempting actions on an inactive transaction.
- *
- * It is recommended to catch this exception and provide appropriate error
- * handling or retry logic where applicable.
- */
-    melia\ObjectStorage\Exception\TransactionNotActiveException;
-use /**
- * Class representing an exception that is thrown when a transaction rollback occurs
- * within the Object Storage system.
- *
- * This exception is typically triggered when an operation within a transactional
- * workflow fails and the system has attempted to revert changes to maintain data
- * integrity. The rollback indicates that the entire transaction has been
- * invalidated and must be handled appropriately by the caller.
- *
- * It extends a base exception class and provides additional context for error
- * handling specifically related to transaction rollbacks.
- */
-    melia\ObjectStorage\Exception\TransactionRollbackException;
-use /**
- * The Writer class is responsible for handling the writing of files
- * to the object storage within the `melia\ObjectStorage\File` namespace.
- *
- * This class typically provides functionality for creating, overwriting,
- * and appending data to files stored in the corresponding object storage.
- * Additionally, it ensures proper handling of file streams and storage consistency.
- *
- * Responsibilities of this class may include:
- * - Writing data to a given file path or storage identifier.
- * - Managing write permissions and access control for object storage files.
- * - Handling exceptions related to file writing or storage issues.
- */
-    melia\ObjectStorage\File\Writer;
-use /**
- * This interface defines the contract for classes that require awareness of a UUID (Universal Unique Identifier).
- * Implementing classes are expected to provide mechanisms to set and retrieve a UUID.
- */
-    melia\ObjectStorage\UUID\AwareInterface;
-use /**
- * The Generator interface for creating Universally Unique Identifiers (UUIDs).
- *
- * Provides a contract for generating UUIDs to be used in object storage and
- * related contexts requiring unique identification.
- */
-    melia\ObjectStorage\UUID\Generator;
-use /**
- * Represents errors and exceptions that can be thrown in the PHP code.
- *
- * The Throwable interface is the base interface for any object that can be thrown via a `throw` statement.
- * This includes both Error and Exception objects, providing a unified way to catch or handle such instances.
- *
- * Classes implementing Throwable must implement certain methods that provide details about the thrown object,
- * such as its message, code, file, and line where it was thrown, as well as its stack trace.
- *
- * Methods:
- * - `getMessage()`: Retrieves the error or exception message.
- * - `getCode()`: Retrieves the error or exception code.
- * - `getFile()`: Retrieves the filename in which the throwable was created.
- * - `getLine()`: Retrieves the line number where the throwable was created.
- * - `getTrace()`: Retrieves an array of the backtrace information.
- * - `getTraceAsString()`: Retrieves the backtrace as a string.
- * - `__toString()`: Converts the throwable to a string representation, typically including message, file, code, and trace details.
- */
-    Throwable;
+use melia\ObjectStorage\Exception\Exception;
+use melia\ObjectStorage\Exception\InvalidOperationException;
+use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\Exception\ObjectNotFoundException;
+use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
+use melia\ObjectStorage\Exception\TransactionAlreadyActiveException;
+use melia\ObjectStorage\Exception\TransactionCommitException;
+use melia\ObjectStorage\Exception\TransactionException;
+use melia\ObjectStorage\Exception\TransactionLockException;
+use melia\ObjectStorage\Exception\TransactionNotActiveException;
+use melia\ObjectStorage\Exception\TransactionRollbackException;
+use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\UUID\AwareInterface;
+use melia\ObjectStorage\UUID\Generator\AwareTrait;
+use melia\ObjectStorage\UUID\Generator\Generator;
+use Throwable;
 
 /**
  * Class Transaction
@@ -195,6 +33,7 @@ use /**
  */
 class Transaction
 {
+    use AwareTrait;
     private const TRANSACTION_FILE_SUFFIX = '.txn';
 
     private ObjectStorage $storage;
@@ -208,6 +47,7 @@ class Transaction
 
     public function __construct(ObjectStorage $storage, float $timeout = 30.0)
     {
+        $this->setGenerator(new Generator());
         $this->storage = $storage;
         $this->transactionId = $this->generateTransactionId();
         $this->timeout = $timeout;
@@ -346,7 +186,7 @@ class Transaction
     {
         $this->ensureTransactionActive();
 
-        $uuid = $uuid ?? ($object instanceof AwareInterface ? $object->getUUID() ?? Generator::generate() : Generator::generate());
+        $uuid = $uuid ?? ($object instanceof AwareInterface ? $object->getUUID() ?? $this->getGenerator()->generate() : $this->getGenerator()->generate());
 
         // Lock object for transaction
         $this->lockObject($uuid);

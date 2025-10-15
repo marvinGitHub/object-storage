@@ -1,11 +1,11 @@
 <?php
 
-namespace melia\ObjectStorage\UUID;
+namespace melia\ObjectStorage\UUID\Generator;
 
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use Throwable;
 
-class Generator
+class Generator implements GeneratorInterface
 {
     /**
      * Generates a Universally Unique Identifier (UUID) according to the RFC 4122 version 4 specification.
@@ -13,7 +13,7 @@ class Generator
      * @return string A string representation of the generated UUID.
      * @throws GenerationFailureException If the UUID generation fails.
      */
-    public static function generate(): string
+    public function generate(): string
     {
         static $generated;
 

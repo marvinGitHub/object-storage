@@ -56,6 +56,8 @@ use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
+use melia\ObjectStorage\UUID\Generator\GeneratorInterface;
+use melia\ObjectStorage\UUID\Generator\Generator as UUIDGenerator;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
 use Psr\SimpleCache\CacheInterface;
@@ -1228,6 +1230,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param StateHandler|null $stateHandler
      * @param DispatcherInterface|null $eventDispatcher
      * @param CacheInterface|null $cache
+     * @param GeneratorInterface|null $generator
      * @param CacheInterface|null $metadataCache
      * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
@@ -1239,7 +1242,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         protected ?StateHandler         $stateHandler = null,
         ?DispatcherInterface            $eventDispatcher = null,
         ?CacheInterface                 $cache = null,
-        protected ?CacheInterface       $metadataCache = null,
+        ?GeneratorInterface             $generator = null,
+        ?CacheInterface                 $metadataCache = null,
         private int                     $maxNestingLevel = 100
     )
     {
@@ -1252,6 +1256,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $cache = new InMemoryCache();
         }
         $this->setCache($cache);
+
+        if (null === $metadataCache) {
+            $metadataCache = new InMemoryCache();
+        }
+        $this->setMetadataCache($metadataCache);
+
+        if (null === $generator) {
+            $generator = new UUIDGenerator();
+        }
+        $this->setGenerator($generator);
 
         if (null === $eventDispatcher) {
             $eventDispatcher = new Dispatcher();
