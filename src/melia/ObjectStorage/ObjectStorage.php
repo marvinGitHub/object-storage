@@ -692,7 +692,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_LOAD, new Context($uuid));
 
         if ($this->expired($uuid)) {
-            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, new Context($uuid));
             /* do not delete an expired object since the ttl might be updated later */
             return null;
         }
@@ -732,11 +731,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier of the object.
      * @return bool Returns true if the object is expired, false otherwise.
+     * @throws InvalidUUIDException
      */
     public function expired(string $uuid): bool
     {
         $lifetime = $this->getLifetime($uuid);
-        return null !== $lifetime && $lifetime <= 0;
+        $expired = (null !== $lifetime && $lifetime <= 0);
+
+        if ($expired) {
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, new Context($uuid));
+        }
+
+        return $expired;
     }
 
     /**

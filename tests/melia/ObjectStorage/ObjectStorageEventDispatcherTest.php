@@ -165,13 +165,31 @@ final class ObjectStorageEventDispatcherTest extends TestCase
 
 
         $calls = 0;
-        $this->storage->getEventDispatcher()->addListener(Events::LIFETIME_CHANGED, function(LifetimeContext $context) use (&$calls)  {
+        $this->storage->getEventDispatcher()->addListener(Events::LIFETIME_CHANGED, function (LifetimeContext $context) use (&$calls) {
             $calls++;
         });
 
         $uuid = $this->storage->store($obj);
         $this->assertEquals(0, $calls);
         $this->storage->setLifetime($uuid, 10);
+        $this->assertEquals(1, $calls);
+    }
+
+    public function testCallingExpiredOnNonExpiredObjectDoesFireEvent(): void
+    {
+        $obj = new class {
+            public string $v = '1';
+        };
+
+        $calls = 0;
+        $this->storage->getEventDispatcher()->addListener(Events::OBJECT_EXPIRED, function (ContextInterface $context) use (&$calls) {
+            $calls++;
+        });
+
+        $uuid = $this->storage->store($obj);
+
+        $this->storage->setLifetime($uuid, 0);
+        $this->storage->expired($uuid);
         $this->assertEquals(1, $calls);
     }
 }
