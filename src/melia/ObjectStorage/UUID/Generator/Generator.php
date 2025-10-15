@@ -15,11 +15,7 @@ class Generator implements GeneratorInterface
      */
     public function generate(): string
     {
-        static $generated;
-
-        if (null === $generated) {
-            $generated = [];
-        }
+        static $generated = [];
 
         try {
             do {
@@ -27,9 +23,9 @@ class Generator implements GeneratorInterface
                 $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
                 $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
                 $uuid = vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
-            } while (in_array($uuid, $generated));
+            } while (isset($generated[$uuid]));
 
-            $generated[] = $uuid;
+            $generated[$uuid] = true;
             return $uuid;
         } catch (Throwable $e) {
             throw new GenerationFailureException('Unable to generate UUID: ' . $e->getMessage(), 0, $e);

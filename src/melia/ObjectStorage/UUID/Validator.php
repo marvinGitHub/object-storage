@@ -8,6 +8,19 @@ class Validator
 
     public static function validate(string $uuid): bool
     {
-        return 1 === preg_match(Validator::REGEX_UUID_VALIDATION, $uuid);
+        if (strlen($uuid) !== 36) {
+            return false;
+        }
+
+        static $validated = [];
+
+        if (isset($validated[$uuid])) {
+            return $validated[$uuid];
+        }
+
+        $valid = 1 === preg_match(Validator::REGEX_UUID_VALIDATION, $uuid);
+        $validated[$uuid] = $valid;
+
+        return $valid;
     }
 }
