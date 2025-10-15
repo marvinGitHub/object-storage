@@ -603,10 +603,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new ResourceSerializationNotSupportedException('Resources are not supported');
         }
 
+        /* we could theoretically check the return value of a closure, but this would require to call the closure which could have unknown side effects */
+        $isClosure = $value instanceof Closure;
+
         /* generators should be materialized see the below section with is_iterable */
         $isGenerator = $value instanceof Generator;
+
         if (is_object($value) && false === $isGenerator) {
-            if ($value instanceof Closure) {
+            if ($isClosure) {
                 throw new ClosureSerializationNotSupportedException('Closures are not supported');
             }
 
