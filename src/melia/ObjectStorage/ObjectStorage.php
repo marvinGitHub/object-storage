@@ -13,9 +13,11 @@ use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
 use melia\ObjectStorage\Event\Context\StubContext;
+use melia\ObjectStorage\Event\Context\TypeConversionContext;
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
@@ -700,6 +702,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         if (LazyLoadReference::class !== $type->getName() &&
                             false === in_array($type->getName(), ['object', 'mixed'], true)
                         ) {
+                            $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, new LazyTypeNotSupportedContext($className, $propertyName));
                             $reference = $reference->getObject();
                         }
                     } else if ($type instanceof ReflectionUnionType) {
@@ -711,6 +714,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         if (false === in_array(LazyLoadReference::class, $supportedTypes, true) &&
                             false === in_array('object', $supportedTypes, true)
                         ) {
+                            $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, new LazyTypeNotSupportedContext($className, $propertyName));
                             $reference = $reference->getObject();
                         }
                     }
@@ -725,6 +729,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $givenType = gettype($value);
 
                     if ($givenType !== $expectedType && in_array($givenType, ['integer', 'double', 'boolean', 'string'])) {
+                        $this->getEventDispatcher()?->dispatch(Events::BEFORE_TYPE_CONVERSION,
+                            new TypeConversionContext($object, $propertyName, $value, $givenType, $expectedType));
+
                         if (false === settype($value, $expectedType)) {
                             throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
                         }

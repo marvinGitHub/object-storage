@@ -255,6 +255,8 @@ use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\StubContext;
+use melia\ObjectStorage\Event\Context\TypeConversionContext;
+use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 
 // Initialize storage (using defaults)
 $storage = new ObjectStorage(__DIR__ . '/var/object-storage');
@@ -309,6 +311,31 @@ $dispatcher->addListener(Events::AFTER_DELETE, function (Context $ctx) {});
 
 // Clear cache
 $dispatcher->addListener(Events::CACHE_CLEARED, function () {});
+
+// Shared lock acquired
+$dispatcher->addListener(Events::SHARED_LOCK_ACQUIRED, function (Context $ctx) {});
+
+// Exclusive lock acquired
+$dispatcher->addListener(Events::EXCLUSIVE_LOCK_ACQUIRED, function (Context $ctx) {});
+
+// Lock released
+$dispatcher->addListener(Events::LOCK_RELEASED, function (Context $ctx) {});
+
+// Safe mode enabled
+$dispatcher->addListener(Events::SAFE_MODE_ENABLED, function () {});
+
+// Safe mode disabled
+$dispatcher->addListener(Events::SAFE_MODE_DISABLED, function () {});
+
+// Type conversion
+$dispatcher->addListener(Events::BEFORE_TYPE_CONVERSION, function (TypeConversionContext $ctx) {
+    // $ctx->getObject(), $ctx->getPropertyName(), $ctx->getGivenType(), $ctx->getExpectedType()
+});
+
+// Lazy type isn't supported
+$dispatcher->addListener(Events::LAZY_TYPE_NOT_SUPPORTED, function (LazyTypeNotSupportedContext $ctx) {
+    // $ctx->getClassName(), $ctx->getPropertyName()
+}
 
 // Use storage as usual
 $uuid = $storage->store((object)['name' => 'Alice']);

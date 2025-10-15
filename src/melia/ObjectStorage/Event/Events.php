@@ -25,4 +25,6 @@ interface Events
     public const CLASS_ALIAS_CREATED = 'object-storage.class_alias_created';
     public const CLASSNAME_CHANGED = 'object-storage.classname_changed';
     public const CACHE_HIT = 'object-storage.cache_hit';
+    public const BEFORE_TYPE_CONVERSION = 'object-storage.before_type_conversion';
+    public const LAZY_TYPE_NOT_SUPPORTED = 'object-storage.lazy_type_not_supported';
 }
