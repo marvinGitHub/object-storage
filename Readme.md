@@ -1,3 +1,5 @@
+![Object Storage](assets/logo.svg)
+
 # ObjectStorage
 
 A lightweight, file-based object store for PHP that persists object graphs by UUID, supports lazy loading, parent auto-updates, and handles deeply nested structures. Includes a simple viewer UI for exploring stored objects.
