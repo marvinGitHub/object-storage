@@ -790,7 +790,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
             $this->getCache()?->delete($uuid);
-            $this->getMetadataCache()?->delete($uuid);
 
             if (!$this->exists($uuid)) {
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
@@ -809,6 +808,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
                 }
             }
+
+            $this->getMetadataCache()?->delete($uuid);
 
             $this->deleteStub($className, $uuid);
         } finally {
