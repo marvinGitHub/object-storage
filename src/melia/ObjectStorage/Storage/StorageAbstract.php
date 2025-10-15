@@ -11,6 +11,7 @@ use melia\ObjectStorage\State\StateHandlerAwareTrait;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
 use Throwable;
+use Traversable;
 
 /**
  * An abstract implementation providing foundational functionality for storage operations.
@@ -58,7 +59,7 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
      */
     public function count(?string $className = null): int
     {
-        return count($this->match(function (object $object) {
+        return iterator_count($this->match(function (object $object) {
             return true;
         }, $className));
     }
@@ -69,28 +70,21 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
      *
      * @param callable $matcher A callable function to evaluate each object. The callable should return true for a match.
      * @param string|null $className An optional class name to filter objects by their type. Defaults to null, meaning no class filtering is applied.
-     * @param int $limit The maximum number of matches to return. Defaults to 0, meaning no limit.
-     * @param array|null $subSet An optional array either of UUIDs to search within or result of previous match() call. Defaults to null, meaning search all objects.
-     * @return array An associative array where the keys are UUIDs of the matching objects and the values are the objects themselves.
+     * @param int|null $limit The maximum number of matches to return. Defaults to 0, meaning no limit.
+     * @param array|null $subSet An optional array either of UUIDs to search within or result of the previous match () call. Defaults to null, meaning search all objects.
+     * @return Traversable A traversable where the keys are UUIDs of the matching objects and the values are the objects themselves.
      */
-    public function match(callable $matcher, ?string $className = null, int $limit = 0, ?array $subSet = null): array
+    public function match(callable $matcher, ?string $className = null, ?int $limit = null, ?array $subSet = null): Traversable
     {
-        $results = [];
+        $count = 0;
 
         foreach ($this->getSelection($subSet) as $uuid) {
-            if ($limit > 0 && count($results) >= $limit) {
+            if (null !== $limit && $limit > 0 && $count >= $limit) {
                 break;
             }
 
             try {
-                /* dont use get_class() on $object since this would return the anonymous class name if the object is an anonymous class */
                 if ($className !== null && $this->getClassName($uuid) !== $className) {
-                    continue;
-                }
-
-                $object = $this->load($uuid);
-
-                if ($object === null) {
                     continue;
                 }
             } catch (Throwable $e) {
@@ -99,16 +93,20 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
             }
 
             try {
+                $object = $this->load($uuid);
+                if ($object === null) {
+                    continue;
+                }
+
                 if ($matcher($object)) {
-                    $results[$uuid] = $object;
+                    $count++;
+                    yield $uuid => $object;
                 }
             } catch (Throwable $e) {
                 $this->getLogger()?->log(new ObjectMatchingFailureException(sprintf('Error while matching object %s', $uuid), Exception::CODE_FAILURE_OBJECT_MATCH, $e));
                 continue;
             }
         }
-
-        return $results;
     }
 
     /**

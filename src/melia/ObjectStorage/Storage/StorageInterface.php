@@ -28,4 +28,6 @@ interface StorageInterface
     public function getLifetime(string $uuid): ?float;
 
     public function getClassName(string $uuid): ?string;
+
+    public function match(callable $matcher, ?string $className = null, ?int $limit = null, ?array $subSet = null): Traversable;
 }

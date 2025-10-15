@@ -20,11 +20,14 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($a);
         $this->storage->store($b);
 
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->name) && $object->name === 'alpha';
-        }, stdClass::class);
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        }, stdClass::class) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals('alpha', $only->name);
     }
 
@@ -45,12 +48,15 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($parent1);
         $this->storage->store($parent2);
 
-
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->child->name) && $object->child->name === 'Alice';
-        }, stdClass::class);
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        }, stdClass::class) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
+
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals('Alice', $only->child->name);
     }
 
@@ -74,11 +80,14 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o2);
 
         // Bracket-Notation (Index)
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->items[0]->sku) && $object->items[0]->sku === 'A1';
-        }, stdClass::class);
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        }, stdClass::class) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals('A1', $only->items[0]->sku);
     }
 
@@ -104,12 +113,15 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o2);
 
         // Wildcard über Array-Elemente: irgendein Preis > 50
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->items[1]->price) && $object->items[1]->price > 50;
-        });
+        }, stdClass::class) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals(75.00, $only->items[1]->price);
     }
 
@@ -133,12 +145,15 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o2);
 
         // Wildcard über flags
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->container->meta->flags) && in_array('featured', $object->container->meta->flags);
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertContains('featured', $only->container->meta->flags);
     }
 
@@ -161,15 +176,15 @@ class ObjectStorageSearchTest extends TestCase
         // Cache leeren, um LazyLoadReferences beim Laden zu erhalten
         $this->storage->clearCache();
 
-//        $results = $this->storage->search([
-//            'child.name' => 'Lazy-B'
-//        ], stdClass::class);
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->child->name) && $object->child->name === 'Lazy-B';
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         // Zugriff sollte referenziertes Objekt liefern
         $this->assertEquals('Lazy-B', $only->child->name);
     }
@@ -187,12 +202,15 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o1);
         $this->storage->store($o2);
 
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->profile->email) && strpos($object->profile->email, '@example.com') !== false;
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals('john.doe@example.com', $only->profile->email);
     }
 
@@ -224,16 +242,19 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o1);
         $this->storage->store($o2);
 
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->customer->name) && $object->customer->name === 'Jane' &&
                 isset($object->lines) && is_array($object->lines) && in_array('B', array_map(function ($line) {
                     return $line->sku;
                 }, $object->lines)) &&
                 isset($object->type) && $object->type === 'order';
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals('Jane', $only->customer->name);
     }
 
@@ -249,13 +270,16 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o);
 
         // gemischte Schreibweise: meta.tags[1].name
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->meta->tags) && is_array($object->meta->tags) && in_array('beta', array_map(function ($tag) {
                     return $tag['name'];
                 }, $object->meta->tags));
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
+        $this->assertCount(1, $result);
     }
 
     public function testSearchRegexOperatorOnNested(): void
@@ -271,12 +295,15 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o1);
         $this->storage->store($o2);
 
-        $results = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return isset($object->user->username) && preg_match('/^dev_/', $object->user->username);
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $results);
-        $only = array_values($results)[0];
+        $this->assertCount(1, $result);
+        $only = array_values($result)[0];
         $this->assertEquals('dev_jack', $only->user->username);
     }
 
@@ -295,22 +322,31 @@ class ObjectStorageSearchTest extends TestCase
         $this->storage->store($o1);
         $this->storage->store($o2);
 
-        $result = $this->storage->match(function (stdClass $object) {
+        $result = [];
+        foreach ($this->storage->match(function (stdClass $object) {
             return true;
-        });
+        }) as $uuid => $object) {
+            $result[$uuid] = $object;
+        }
 
         $this->assertCount(4, $result);
 
-        $result = $this->storage->match(matcher: function (stdClass $object) {
+        $result2 = [];
+        foreach ($this->storage->match(matcher: function (stdClass $object) {
             return isset($object->roles) && is_array($object->roles) && in_array('admin', $object->roles);
-        }, subSet: $result);
+        }, subSet: $result) as $uuid => $object) {
+            $result2[$uuid] = $object;
+        }
 
-        $this->assertCount(2, $result);
+        $this->assertCount(2, $result2);
 
-        $result = $this->storage->match(matcher: function (stdClass $object) {
+        $result3 = [];
+        foreach ($this->storage->match(matcher: function (stdClass $object) {
             return isset($object->username) && 'dev_jack' === $object->username;
-        }, subSet: array_keys($result));
+        }, subSet: array_keys($result2)) as $uuid => $object) {
+            $result3[$uuid] = $object;
+        }
 
-        $this->assertCount(1, $result);
+        $this->assertCount(1, $result3);
     }
 }
