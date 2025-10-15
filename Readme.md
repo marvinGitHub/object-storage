@@ -170,6 +170,10 @@ The object storage emits lifecycle events around critical operations. You can su
 - CLASS_ALIAS_CREATED — dispatched when an alias is created for an unknown class.
 - CLASSNAME_CHANGED — dispatched when the class name of an object is changed.
 - CACHE_HIT — dispatched when an object is loaded from cache.
+- CACHE_ENTRY_ADDED — dispatched when an object is added to the cache.
+- CACHE_ENTRY_REMOVED — dispatched when an object is removed from the cache.
+- BEFORE_TYPE_CONVERSION — dispatched before type conversion.
+- LAZY_TYPE_NOT_SUPPORTED — dispatched when a lazy type is not supported.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 
