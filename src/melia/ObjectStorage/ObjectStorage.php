@@ -591,7 +591,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SerializationFailureException
      * @throws InvalidArgumentException
      * @throws ClosureSerializationNotSupportedException
-     * @throws UnsupportedKeyException
      * @throws UnsupportedTypeException
      */
     private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
@@ -635,13 +634,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         if (is_iterable($value)) {
             $out = [];
             foreach ($value as $k => $v) {
-                $isSupportedKey = is_string($k) || is_int($k);
-
-                if (false === $isSupportedKey) {
-                    throw new UnsupportedKeyException('Only string and integer keys are supported.');
-                }
-
                 try {
+                    $isSupportedKey = is_string($k) || is_int($k);
+
+                    if (false === $isSupportedKey) {
+                        throw new UnsupportedKeyException('Only string and integer keys are supported.');
+                    }
+
                     $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level + 1);
                 } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                     $this->getLogger()?->log($e);
