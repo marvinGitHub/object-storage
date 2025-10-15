@@ -641,6 +641,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return void
      * @throws InvalidArgumentException
+     * @throws InvalidUUIDException
      */
     private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
     {
@@ -651,13 +652,24 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         if (null !== $ttl && $ttl <= 0) {
-            $cache->delete($uuid);
+            $this->removeFromCache($uuid);
         } else {
             if (null !== $ttl) {
                 $ttl = (int)$ttl;
             }
             $cache->set($uuid, $object, $ttl);
+            $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, new Context($uuid));
         }
+    }
+
+    /**
+     * @throws InvalidUUIDException
+     * @throws InvalidArgumentException
+     */
+    private function removeFromCache(string $uuid): void
+    {
+        $this->getCache()?->delete($uuid);
+        $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, new Context($uuid));
     }
 
     /**
@@ -796,7 +808,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         try {
             $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
-            $this->getCache()?->delete($uuid);
+            $this->removeFromCache($uuid);
 
             if (!$this->exists($uuid)) {
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));

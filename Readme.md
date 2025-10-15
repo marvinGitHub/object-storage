@@ -337,6 +337,12 @@ $dispatcher->addListener(Events::LAZY_TYPE_NOT_SUPPORTED, function (LazyTypeNotS
     // $ctx->getClassName(), $ctx->getPropertyName()
 }
 
+// Cache entry added
+$dispatcher->addListener(Events::CACHE_ENTRY_ADDED, function (Context $ctx) {});
+
+// Cache entry removed
+$dispatcher->addListener(Events::CACHE_ENTRY_REMOVED, function (Context $ctx) {});
+
 // Use storage as usual
 $uuid = $storage->store((object)['name' => 'Alice']);
 $loaded = $storage->load($uuid);

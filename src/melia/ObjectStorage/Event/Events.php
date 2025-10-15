@@ -27,4 +27,7 @@ interface Events
     public const CACHE_HIT = 'object-storage.cache_hit';
     public const BEFORE_TYPE_CONVERSION = 'object-storage.before_type_conversion';
     public const LAZY_TYPE_NOT_SUPPORTED = 'object-storage.lazy_type_not_supported';
+
+    public const CACHE_ENTRY_ADDED = 'object-storage.cache_entry_added';
+    public const CACHE_ENTRY_REMOVED = 'object-storage.cache_entry_removed';
 }
