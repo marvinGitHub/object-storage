@@ -53,6 +53,10 @@
     "analyze": [
       "@composer install",
       "vendor/bin/phpstan analyse --level 3 src tests"
+    ],
+    "profile": [
+      "@composer install",
+      "php profiling/operations.php"
     ]
   },
   "require": {
@@ -64,6 +68,7 @@
     "phpunit/phpunit": "^9.6",
     "twig/twig": "^3.19",
     "fakerphp/faker": "^1.24",
-    "phpstan/phpstan": "^2.1"
+    "phpstan/phpstan": "^2.1",
+    "perftools/php-profiler": "^1.2"
   }
 }

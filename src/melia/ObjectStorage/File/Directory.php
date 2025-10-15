@@ -4,11 +4,27 @@ namespace melia\ObjectStorage\File;
 
 class Directory
 {
-    private string $path;
+    private ?string $path;
 
-    public function __construct(string $path)
+    /**
+     * Constructor to initialize the object with an optional path.
+     *
+     * @param string|null $path Optional file path to initialize.
+     * @return void
+     */
+    public function __construct(?string $path = null)
     {
         $this->path = $path;
+    }
+
+    /**
+     * Retrieves the current file path.
+     *
+     * @return string|null The current file path, or null if not set.
+     */
+    public function getPath(): ?string
+    {
+        return $this->path;
     }
 
     /**
@@ -29,9 +45,14 @@ class Directory
      */
     public function tearDown(): void
     {
+        if (null === $this->path) {
+            return;
+        }
+
         if (false === is_dir($this->path)) {
             return;
         }
+
         exec(sprintf('rm -rf %s', escapeshellarg($this->path)));
     }
 
@@ -42,9 +63,31 @@ class Directory
      */
     public function createIfNotExists(): bool
     {
+        if (null === $this->path) {
+            return false;
+        }
+
         if (false === is_dir($this->path)) {
             return mkdir($this->path, 0777, true);
         }
+
         return true;
+    }
+
+    /**
+     * Reserves a temporary directory with a random name in the system's temporary directory.
+     *
+     * @return bool Returns true if the temporary directory was successfully created or reserved, false otherwise.
+     */
+    public function reserveRandomTemporaryDirectory(): bool
+    {
+        $path = tempnam(sys_get_temp_dir(), static::class);
+
+        if (file_exists($path)) {
+            unlink($path);
+        }
+
+        $this->path = $path;
+        return $this->createIfNotExists();
     }
 }
