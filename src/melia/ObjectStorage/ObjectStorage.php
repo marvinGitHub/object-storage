@@ -145,11 +145,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
      * If an error occurs during the process, it is logged, and null is returned.
      *
-     * @param string $uuid The unique identifier for the metadata to be loaded.
+     * @param null|string $uuid The unique identifier for the metadata to be loaded.
      * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
      */
-    public function loadMetadata(string $uuid): ?Metadata
+    public function loadMetadata(?string $uuid): ?Metadata
     {
+        if (null === $uuid) {
+            return null;
+        }
+
         try {
             $cached = $this->getMetadataCache()?->get($uuid);
             if ($cached instanceof Metadata) {
@@ -302,6 +306,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new ObjectPersistenceContext($uuid, $object));
 
+        $metadata = $this->loadMetadata($uuid);
+        $exists = null !== $metadata;
+
+        if ($exists) {
+            $this->getEventDispatcher()?->dispatch(Events::BEFORE_UPDATE, new ObjectPersistenceContext($uuid, $object));
+        }
+
         if ($this->getStateHandler()?->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
@@ -338,6 +349,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()?->releaseLock($uuid);
+            }
+
+            if ($exists) {
+                $this->getEventDispatcher()?->dispatch(Events::AFTER_UPDATE, new ObjectPersistenceContext($uuid, $object));
             }
 
             $this->getEventDispatcher()?->dispatch(Events::AFTER_STORE, new Context($uuid));
@@ -453,6 +468,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $metadata->setVersion(1);
             $metadata->setTimestampExpiresAt($ttl ? $timestampCreation + $ttl : null);
 
+            $loadedMetadata = $this->loadMetadata($uuid);
+            $exists = null !== $loadedMetadata;
+
+            if (false === $exists) {
+                $this->getEventDispatcher()?->dispatch(Events::BEFORE_INITIAL_STORE, new ObjectPersistenceContext($uuid, $object));
+            }
+
             /* ensure that the object is going to sleep before creating the graph;
                to ensure the object stays untouched, we create a graph from a copy (clone)
             */
@@ -469,7 +491,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $metadata->setChecksum(md5($jsonGraph));
 
-            $loadedMetadata = $this->loadMetadata($uuid);
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
 
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);

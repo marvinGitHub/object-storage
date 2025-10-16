@@ -4,8 +4,11 @@ namespace melia\ObjectStorage\Event;
 
 interface Events
 {
+    public const BEFORE_INITIAL_STORE = 'object-storage.before_initial_store';
     public const BEFORE_STORE = 'object-storage.before_store';
     public const AFTER_STORE = 'object-storage.after_store';
+    public const BEFORE_UPDATE = 'object-storage.before_update';
+    public const AFTER_UPDATE = 'object-storage.after_update';
     public const BEFORE_LOAD = 'object-storage.before_load';
     public const AFTER_LOAD = 'object-storage.after_load';
     public const BEFORE_DELETE = 'object-storage.before_delete';
