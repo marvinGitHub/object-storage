@@ -25,7 +25,7 @@ class LazyLoadReferenceSerializationTest extends TestCase
         $this->assertInstanceOf(LazyLoadReference::class, $parent->child);
 
         $uuidChild = $parent->child->getUUID();
-        $serialized = 'O:37:"melia\ObjectStorage\LazyLoadReference":3:{s:4:"uuid";s:36:":uuidChild";s:4:"root";s:36:":uuidRoot";s:4:"path";a:1:{i:0;s:5:"child";}}';
+        $serialized = 'O:37:"melia\ObjectStorage\LazyLoadReference":3:{s:4:"uuid";s:36:":uuidChild";s:4:"root";N;s:4:"path";a:1:{i:0;s:5:"child";}}';
         $serialized = str_replace(':uuidChild', $uuidChild, $serialized);
         $serialized = str_replace(':uuidRoot', $uuid, $serialized);
         $this->assertEquals($serialized, serialize($parent->child));

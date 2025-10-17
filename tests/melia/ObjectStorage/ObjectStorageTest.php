@@ -620,7 +620,18 @@ class ObjectStorageTest extends TestCase
 
     public function testUUIDRemainsAfterSubsequentStore()
     {
-        $object = new stdClass();
+        $object = new class() implements AwareInterface {
+            public ?string $uuid = null;
+
+            public function getUUID(): ?string
+            {
+                return $this->uuid;
+            }
+            public function setUUID(string|null $uuid): void
+            {
+                $this->uuid = $uuid;
+            }
+        };
         $uuid = $this->storage->store($object);
         $this->assertNotEmpty($uuid);
         $this->storage->clearCache();
