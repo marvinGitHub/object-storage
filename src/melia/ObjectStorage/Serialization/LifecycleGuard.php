@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Serialization;
 
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
+use Traversable;
 
 class LifecycleGuard
 {
@@ -11,16 +12,20 @@ class LifecycleGuard
      * This method is typically used to prepare an object for serialization.
      *
      * @param object $object The object to be processed. It must implement a callable __sleep method if serialization preparation is needed.
-     * @return iterable|null
+     * @return array|null
      * @throws UnsupportedTypeException
      */
-    public static function sleep(object $object): ?iterable
+    public static function sleep(object $object): ?array
     {
         if (method_exists($object, '__sleep')) {
             $propertyNames = $object->__sleep();
 
             if ((null !== $propertyNames) && (false === is_iterable($propertyNames))) {
                 throw new UnsupportedTypeException('__sleep() must return an iterable or null, ' . gettype($propertyNames) . ' given');
+            }
+
+            if ($propertyNames instanceof Traversable) {
+                $propertyNames = iterator_to_array($propertyNames);
             }
 
             return $propertyNames;

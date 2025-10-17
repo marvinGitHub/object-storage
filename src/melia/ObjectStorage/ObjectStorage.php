@@ -13,6 +13,7 @@ use melia\ObjectStorage\Event\AwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\IOContext;
 use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
@@ -27,12 +28,12 @@ use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
 use melia\ObjectStorage\Exception\MetadataNotFoundException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
+use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
 use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
@@ -152,6 +153,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param null|string $uuid The unique identifier for the metadata to be loaded.
      * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
+     * @throws InvalidUUIDException
      */
     public function loadMetadata(?string $uuid): ?Metadata
     {
@@ -178,6 +180,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getMetadataCache()?->set($uuid, $metadata);
             return $metadata;
         } catch (Throwable $e) {
+            $this->getEventDispatcher()?->dispatch(Events::METADATA_LOADING_FAILURE, new Context($uuid));
             $this->getLogger()?->log($e);
         }
         return null;
@@ -197,12 +200,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $data = $this->getReader()->read($filename);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, new IOContext($filename));
             return null;
         }
 
         $data = json_decode($data, true, $this->maxNestingLevel);
 
         if (null === $data) {
+            $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, new IOContext($filename));
             $this->getStateHandler()?->enableSafeMode();
             throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
         }
@@ -278,6 +283,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier used to retrieve metadata.
      * @return float|null The expiration timestamp if available, or null if not set.
+     * @throws InvalidUUIDException
      */
     public function getExpiration(string $uuid): ?float
     {
@@ -381,7 +387,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()?->releaseLock($uuid);
             }
-            throw $e;
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVING_FAILURE, new Context($uuid));
+            throw new ObjectSavingFailureException(message: sprintf('Unable to store object with uuid: %s', $uuid), previous: $e);
         }
     }
 
@@ -390,6 +397,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid
      * @return string|null
+     * @throws InvalidUUIDException
      */
     public function getClassName(string $uuid): ?string
     {
@@ -509,6 +517,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             );
 
             if (false === $jsonGraph) {
+                $this->getEventDispatcher()?->dispatch(Events::JSON_ENCODING_FAILURE, new Context($uuid));
                 throw new SerializationFailureException('Unable export object graph to JSON');
             }
 
@@ -533,7 +542,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 } catch (Throwable $e) {
                     $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, new ObjectPersistenceContext($uuid, $object, $previousObject));
                     throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
-
                 }
 
                 $this->saveMetadata($metadata);
@@ -596,10 +604,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         // pre-scan property names to avoid reserved reference name collision
         $reserved = $context->getMetadata()->getReservedReferenceName();
         while (in_array($reserved, $propertyNames, true)) {
-            // pick a unique name that does not collide with any property on this object
             $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
-            $context->getMetadata()->setReservedReferenceName($reserved);
         }
+        $context->getMetadata()->setReservedReferenceName($reserved);
 
         foreach ($propertyNames as $propertyName) {
             if (false === is_string($propertyName)) {
@@ -772,7 +779,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()?->releaseLock($uuid);
             }
-            throw $e;
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_LOADING_FAILURE, new Context($uuid));
+            throw new ObjectLoadingFailureException(message: sprintf('Unable to load object with uuid: %s', $uuid), previous: $e);
         }
     }
 
@@ -800,6 +808,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier used to load the metadata.
      * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
+     * @throws InvalidUUIDException
      */
     public function getLifetime(string $uuid): ?float
     {

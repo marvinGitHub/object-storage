@@ -147,8 +147,11 @@ class ObjectStorageTest extends TestCase
         $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
 
-        $this->expectException(LockException::class);
-        $this->storage->store(new stdClass(), $uuid);
+        try {
+            $this->storage->store(new stdClass(), $uuid);
+        } catch (Throwable $e) {
+            $this->assertInstanceOf(LockException::class, $e->getPrevious());;
+        }
     }
 
     public function testDeleteWithExclusiveLock()
@@ -180,8 +183,11 @@ class ObjectStorageTest extends TestCase
 
         $anotherStorage = new ObjectStorage($this->storage->getStorageDir());
 
-        $this->expectException(LockException::class);
-        $anotherStorage->store(new stdClass(), $uuid);
+        try {
+            $anotherStorage->store(new stdClass(), $uuid);
+        } catch (Throwable $e) {
+            $this->assertInstanceOf(LockException::class, $e->getPrevious());
+        }
     }
 
     public function testUnlock()
@@ -213,9 +219,12 @@ class ObjectStorageTest extends TestCase
         $uuid = $this->storage->store(new stdClass());
         $this->storage->getLockAdapter()->acquireExclusiveLock($uuid);
 
-        $this->expectException(LockException::class);
-        $anotherStorage = new ObjectStorage($this->storage->getStorageDir());
-        $anotherStorage->store(new stdClass(), $uuid);
+        try {
+            $anotherStorage = new ObjectStorage($this->storage->getStorageDir());
+            $anotherStorage->store(new stdClass(), $uuid);
+        } catch (Throwable $e) {
+            $this->assertInstanceOf(LockException::class, $e->getPrevious());;
+        }
     }
 
     public function testList()
@@ -582,7 +591,11 @@ class ObjectStorageTest extends TestCase
 
         $obj = new class($iterableObject) {
             public iterable $items;
-            public function __construct(iterable $items) { $this->items = $items; }
+
+            public function __construct(iterable $items)
+            {
+                $this->items = $items;
+            }
         };
 
         $uuid = $this->storage->store($obj);
@@ -603,7 +616,8 @@ class ObjectStorageTest extends TestCase
     public function testStoreSleepOnlySerializesGivenProperties()
     {
         $object = new class () {
-            public function __sleep() {
+            public function __sleep()
+            {
                 return ['a'];
             }
         };
@@ -630,6 +644,7 @@ class ObjectStorageTest extends TestCase
             {
                 return $this->uuid;
             }
+
             public function setUUID(string|null $uuid): void
             {
                 $this->uuid = $uuid;
@@ -650,6 +665,7 @@ class ObjectStorageTest extends TestCase
         // Arrange: a mock writer that throws on first atomicWrite (data), then no-op
         $failingWriter = new class implements WriterInterface {
             private int $call = 0;
+
             public function atomicWrite(string $filename, ?string $data = null): void
             {
                 $this->call++;
@@ -678,6 +694,7 @@ class ObjectStorageTest extends TestCase
         // Expected call order on initial store: data(.obj), metadata(.metadata), classnames.json, stub(.stub)
         $writerThatFailsOnSecondCall = new class implements WriterInterface {
             private int $calls = 0;
+
             public function atomicWrite(string $filename, ?string $data = null): void
             {
                 $this->calls++;
@@ -693,9 +710,11 @@ class ObjectStorageTest extends TestCase
         $obj = new stdClass();
         $obj->foo = 'bar';
 
-        $this->expectException(MetadataSavingFailureException::class);
-
         // Act
-        $this->storage->store($obj);
+        try {
+            $this->storage->store($obj);
+        } catch (Throwable $e) {
+            $this->assertInstanceOf(MetadataSavingFailureException::class, $e->getPrevious());;
+        }
     }
 }

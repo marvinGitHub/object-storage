@@ -183,6 +183,12 @@ The object storage emits lifecycle events around critical operations. You can su
 - OBJECT_WRITE_FAILED — dispatched when object write failed.
 - CACHE_WRITE_FAILED — dispatched when cache write failed.
 - STUB_WRITE_FAILED — dispatched when stub write failed.
+- IO_READ_FAILURE — dispatched when IO read operation fails.
+- JSON_DECODING_FAILURE — dispatched when JSON decoding fails during IO read operation.
+- JSON_ENCODING_FAILURE — dispatched when JSON encoding fails during IO write operation.
+- METADATA_LOADING_FAILURE — dispatched when metadata loading fails.
+- OBJECT_LOADING_FAILURE — dispatched when object loading fails.
+- OBJECT_SAVING_FAILURE — dispatched when object saving fails.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 
