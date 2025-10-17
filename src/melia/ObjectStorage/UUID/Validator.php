@@ -8,10 +8,6 @@ class Validator
 
     public static function validate(string $uuid): bool
     {
-        if (strlen($uuid) !== 36) {
-            return false;
-        }
-
         static $validated = [];
 
         if (isset($validated[$uuid])) {
