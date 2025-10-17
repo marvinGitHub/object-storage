@@ -195,7 +195,7 @@ Listeners receive a context object implementing melia\ObjectStorage\Event\Contex
 - StubContext(uuid, className) — carries UUID and class name during stub lifecycle.
 - LifetimeContext(uuid, previous, current) — carries lifetime changes (e.g., TTL).
 
-Tip: Some events (like CACHE_CLEARED or SAFE_MODE_* and lock events) may have no contextual UUID.
+**Note**: Some events (like CACHE_CLEARED or SAFE_MODE_* and lock events) may have no contextual UUID.
 
 ### Subscribing to events
 
@@ -217,8 +217,6 @@ echo $p->child->name;              // triggers load and parent replacement
 $p->child->name = 'child-X2';
 $storage->store($p);               // persists changes
 ```
-
-Here’s a concise README section you can add:
 
 ## UUID Assignment After Store
 
