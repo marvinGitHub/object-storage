@@ -57,6 +57,10 @@
     "profile": [
       "@composer install",
       "php profiling/operations.php"
+    ],
+    "coverage": [
+      "@composer install",
+      "XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-text --whitelist src"
     ]
   },
   "require": {
