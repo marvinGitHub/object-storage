@@ -617,4 +617,17 @@ class ObjectStorageTest extends TestCase
         $this->assertArrayHasKey('a', $loaded);
         $this->assertArrayNotHasKey('nested', $loaded);
     }
+
+    public function testUUIDRemainsAfterSubsequentStore()
+    {
+        $object = new stdClass();
+        $uuid = $this->storage->store($object);
+        $this->assertNotEmpty($uuid);
+        $this->storage->clearCache();
+        $loaded = $this->storage->load($uuid);
+        $this->assertEquals($uuid, $loaded->uuid);
+        $this->storage->clearCache();
+        $this->storage->store($loaded);
+        $this->assertEquals($uuid, $loaded->uuid);
+    }
 }
