@@ -304,17 +304,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function store(object $object, ?string $uuid = null, ?int $ttl = null): string
     {
+        if ($this->getStateHandler()?->safeModeEnabled()) {
+            throw new Exception('Safe mode is enabled. Object cannot be stored.');
+        }
+        
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new ObjectPersistenceContext($uuid, $object));
 
+        /* use metadata to check for existence, since this will already warm up the metadata cache */
         $metadata = $this->loadMetadata($uuid);
         $exists = null !== $metadata;
 
         if ($exists) {
             $this->getEventDispatcher()?->dispatch(Events::BEFORE_UPDATE, new ObjectPersistenceContext($uuid, $object));
-        }
-
-        if ($this->getStateHandler()?->safeModeEnabled()) {
-            throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
 
         // LazyLoadReference: ungeladen → nur UUID zurückgeben
