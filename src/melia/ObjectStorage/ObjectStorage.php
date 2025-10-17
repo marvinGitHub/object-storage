@@ -576,13 +576,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         // ensure deterministic order of properties
         sort($propertyNames, SORT_STRING);
 
-        // Pre-scan property names to avoid reserved reference name collision
+        // pre-scan property names to avoid reserved reference name collision
         $reserved = $context->getMetadata()->getReservedReferenceName();
-        if (in_array($reserved, $propertyNames, true)) {
-            // Pick a unique name that does not collide with any property on this object
-            do {
-                $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
-            } while (in_array($reserved, $propertyNames, true));
+        while (in_array($reserved, $propertyNames, true)) {
+            // pick a unique name that does not collide with any property on this object
+            $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
             $context->getMetadata()->setReservedReferenceName($reserved);
         }
 
