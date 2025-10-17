@@ -221,13 +221,12 @@ $storage->store($p);               // persists changes
 ## UUID Assignment After Store
 
 - Every time you call store($object), the object is persisted under a stable UUID.
-- If the object already has a UUID, it’s preserved; otherwise, a new UUID is generated and assigned during the store process.
-- The assigned UUID is returned by store(...) and can also be retrieved later from the object (if it exposes a UUID field or accessor).
+- If the object already has a UUID, it’s preserved; otherwise, a new UUID is generated for persistence.
+- The assigned UUID is returned by store(...). It is only written back to the object if the object implements melia\ObjectStorage\UUID\AwareInterface (i.e., exposes getUUID/setUUID). Objects that do not implement the interface are not mutated.
 - All references between objects are recorded by UUID, ensuring consistent identity across loads, updates, and lazy loading.
 - Use the returned UUID to load, update, lock, or delete the object in later operations.
 
-**Recommendation**: implement melia\ObjectStorage\UUID\AwareInterface on your objects to ensure UUID assignment.
-
+Recommendation: implement melia\ObjectStorage\UUID\AwareInterface on your objects if you want the UUID to be assigned back onto the instance (via setUUID) and retrievable later (via getUUID).
 ## Example Locking
 
 ```php

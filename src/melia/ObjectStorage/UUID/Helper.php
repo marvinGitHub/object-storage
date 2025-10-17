@@ -41,35 +41,24 @@ class Helper
     }
 
     /**
-     * Assigns the provided UUID to the given object if it meets specific conditions.
+     * Assigns a valid UUID to the provided object if it implements the AwareInterface.
      *
-     * @param object $object The object to which the UUID will be assigned.
-     *                       Must implement AwareInterface and have a `setUUID` method
-     *                       to directly set the UUID. If these conditions are not met,
-     *                       an attempt will be made to assign the UUID via reflection.
-     * @param string $uuid The UUID string to be assigned to the object.
+     * @param object $object The object to which the UUID will be assigned. The object must implement AwareInterface.
+     * @param string $uuid The UUID to assign to the object. The value must be validated as a valid UUID.
      *
      * @return void
-     * @throws InvalidUUIDException
+     *
+     * @throws InvalidUUIDException If the provided UUID is not valid.
      */
     public static function assign(object $object, string $uuid): void
     {
-        if (Validator::validate($uuid) === false) {
-            throw new InvalidUUIDException(sprintf('Invalid UUID: %s', $uuid));
-        }
-
         $instanceOfAwareInterface = $object instanceof AwareInterface;
-        $hasMethod = method_exists($object, 'setUUID');
-        if ($instanceOfAwareInterface || $hasMethod) {
-            $object->setUUID($uuid);
-            return;
-        }
 
-        $reflection = new Reflection($object);
-        try {
-           $reflection->set('uuid', $uuid);
-        } catch (ReflectionException $e) {
-            // ignore
+        if ($instanceOfAwareInterface) {
+            if (Validator::validate($uuid) === false) {
+                throw new InvalidUUIDException(sprintf('Invalid UUID: %s', $uuid));
+            }
+            $object->setUUID($uuid);
         }
     }
 }
