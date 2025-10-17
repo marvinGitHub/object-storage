@@ -279,7 +279,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
                 $this->root = $this->getStorage()->load($data['root']);
             }
         } catch (Throwable $e) {
-            $this->getStorage()->getLogger()?->log($e);
+            $this->getStorage()?->getLogger()?->log($e);
             $this->root = null;
         }
 

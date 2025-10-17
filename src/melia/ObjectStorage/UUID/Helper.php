@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\UUID;
 
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use ReflectionException;
 
 class Helper
@@ -39,12 +40,36 @@ class Helper
         return null;
     }
 
+    /**
+     * Assigns the provided UUID to the given object if it meets specific conditions.
+     *
+     * @param object $object The object to which the UUID will be assigned.
+     *                       Must implement AwareInterface and have a `setUUID` method
+     *                       to directly set the UUID. If these conditions are not met,
+     *                       an attempt will be made to assign the UUID via reflection.
+     * @param string $uuid The UUID string to be assigned to the object.
+     *
+     * @return void
+     * @throws InvalidUUIDException
+     */
     public static function assign(object $object, string $uuid): void
     {
+        if (Validator::validate($uuid) === false) {
+            throw new InvalidUUIDException(sprintf('Invalid UUID: %s', $uuid));
+        }
+
         $instanceOfAwareInterface = $object instanceof AwareInterface;
         $hasMethod = method_exists($object, 'setUUID');
-        if ($instanceOfAwareInterface && $hasMethod) {
+        if ($instanceOfAwareInterface || $hasMethod) {
             $object->setUUID($uuid);
+            return;
+        }
+
+        $reflection = new Reflection($object);
+        try {
+           $reflection->set('uuid', $uuid);
+        } catch (ReflectionException $e) {
+            // ignore
         }
     }
 }

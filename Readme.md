@@ -218,6 +218,16 @@ $p->child->name = 'child-X2';
 $storage->store($p);               // persists changes
 ```
 
+Here’s a concise README section you can add:
+
+## UUID Assignment After Store
+
+- Every time you call store($object), the object is persisted under a stable UUID.
+- If the object already has a UUID, it’s preserved; otherwise, a new UUID is generated and assigned during the store process.
+- The assigned UUID is returned by store(...) and can also be retrieved later from the object (if it exposes a UUID field or accessor).
+- All references between objects are recorded by UUID, ensuring consistent identity across loads, updates, and lazy loading.
+- Use the returned UUID to load, update, lock, or delete the object in later operations.
+
 ## Example Locking
 
 ```php
