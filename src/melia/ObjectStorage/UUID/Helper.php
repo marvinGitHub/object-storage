@@ -52,6 +52,7 @@ class Helper
      */
     public static function assign(object $object, string $uuid): void
     {
+        /* important: only assign if the object implements AwareInterface to not break existing code or introduce unexpected behavior */
         $instanceOfAwareInterface = $object instanceof AwareInterface;
 
         if ($instanceOfAwareInterface) {
