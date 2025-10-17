@@ -169,6 +169,9 @@ try {
                         $success = $dataWritten && $metadataWritten;
                     } catch (Throwable $e) {
                         $success = false;
+                        if ($storage->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
+                            $storage->getLockAdapter()->releaseLock($uuid);
+                        }
                     }
                 }
             }
