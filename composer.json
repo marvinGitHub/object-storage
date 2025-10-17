@@ -69,6 +69,7 @@
     "psr/simple-cache": "^3.0"
   },
   "require-dev": {
+    "ext-xdebug": "*",
     "phpunit/phpunit": "^9.6",
     "twig/twig": "^3.19",
     "fakerphp/faker": "^1.24",
