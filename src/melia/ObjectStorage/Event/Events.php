@@ -33,4 +33,8 @@ interface Events
 
     public const CACHE_ENTRY_ADDED = 'object-storage.cache_entry_added';
     public const CACHE_ENTRY_REMOVED = 'object-storage.cache_entry_removed';
+    public const METADATA_WRITE_FAILED = 'object-storage.metadata_write_failed';
+    public const OBJECT_WRITE_FAILED = 'object-storage.object_write_failed';
+    public const STUB_WRITE_FAILED = 'object-storage.stub_write_failed';
+    public const CACHE_WRITE_FAILED = 'object-storage.cache_write_failed';
 }

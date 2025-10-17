@@ -235,13 +235,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private function saveMetadata(Metadata $metadata): void
     {
-        $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
+        try {
+            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
+            $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, new Context($metadata->getUUID()));
+        } catch (Throwable $e) {
+            $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, new Context($metadata->getUUID()));
+            $this->getLogger()?->log($e);
+        }
         try {
             $this->getMetadataCache()?->set($metadata->getUUID(), $metadata);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
         }
-        $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, new Context($metadata->getUUID()));
     }
 
     /**
@@ -307,7 +312,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         if ($this->getStateHandler()?->safeModeEnabled()) {
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
-        
+
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, new ObjectPersistenceContext($uuid, $object));
 
         /* use metadata to check for existence, since this will already warm up the metadata cache */
@@ -446,6 +451,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      * @throws UnsupportedTypeException
+     * @throws Throwable
      */
     private function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
     {
@@ -505,8 +511,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $previousObject = null;
                 }
 
-                $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
-                $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new ObjectPersistenceContext($uuid, $object, $previousObject));
+                try {
+                    $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
+                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new ObjectPersistenceContext($uuid, $object, $previousObject));
+                } catch (Throwable $e) {
+                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, new ObjectPersistenceContext($uuid, $object, $previousObject));
+                    throw $e;
+                }
 
                 $this->saveMetadata($metadata);
                 $this->createStub($className, $uuid);
@@ -540,6 +551,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SerializationFailureException
      * @throws InvalidArgumentException
      * @throws UnsupportedTypeException
+     * @throws Throwable
      */
     private function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
     {
@@ -614,6 +626,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws InvalidArgumentException
      * @throws ClosureSerializationNotSupportedException
      * @throws UnsupportedTypeException
+     * @throws Throwable
      */
     private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {
@@ -944,25 +957,29 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *                            than or equal to 0, the object is removed from the cache.
      *
      * @return void
-     * @throws InvalidArgumentException
      * @throws InvalidUUIDException
      */
     private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
     {
-        $cache = $this->getCache();
+        try {
+            $cache = $this->getCache();
 
-        if (null === $cache) {
-            return;
-        }
-
-        if (null !== $ttl && $ttl <= 0) {
-            $this->removeFromCache($uuid);
-        } else {
-            if (null !== $ttl) {
-                $ttl = (int)$ttl;
+            if (null === $cache) {
+                return;
             }
-            $cache->set($uuid, $object, $ttl);
-            $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, new Context($uuid));
+
+            if (null !== $ttl && $ttl <= 0) {
+                $this->removeFromCache($uuid);
+            } else {
+                if (null !== $ttl) {
+                    $ttl = (int)$ttl;
+                }
+                $cache->set($uuid, $object, $ttl);
+                $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, new Context($uuid));
+            }
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::CACHE_WRITE_FAILED, new Context($uuid));
         }
     }
 
@@ -1034,18 +1051,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @param string $className
      * @param string $uuid
-     * @throws IOException
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
      * @throws InvalidUUIDException
      */
     public function createStub(string $className, string $uuid): void
     {
-        $this->registerClassname($className);
-        $pathname = $this->getFilePathStub($className, $uuid);
-        $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-        $this->createEmptyFile($pathname);
-        $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, new StubContext($uuid, $className));
+        try {
+            $this->registerClassname($className);
+            $pathname = $this->getFilePathStub($className, $uuid);
+            $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
+            $this->createEmptyFile($pathname);
+            $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, new StubContext($uuid, $className));
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::STUB_WRITE_FAILED, new StubContext($uuid, $className));
+        }
     }
 
     /**
@@ -1166,9 +1185,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * and recreating them for each listed UUID.
      *
      * @return void
-     * @throws IOException
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
      * @throws InvalidUUIDException
      */
     public function rebuildStubs(): void
