@@ -9,7 +9,10 @@ use IteratorAggregate;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
+use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
+use melia\ObjectStorage\Exception\ObjectSavingFailureException;
+use melia\ObjectStorage\File\WriterInterface;
 use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
@@ -640,5 +643,59 @@ class ObjectStorageTest extends TestCase
         $this->storage->clearCache();
         $this->storage->store($loaded);
         $this->assertEquals($uuid, $loaded->uuid);
+    }
+
+    public function testStoreThrowsWhenWriterMockFailsOnDataWrite(): void
+    {
+        // Arrange: a mock writer that throws on first atomicWrite (data), then no-op
+        $failingWriter = new class implements WriterInterface {
+            private int $call = 0;
+            public function atomicWrite(string $filename, ?string $data = null): void
+            {
+                $this->call++;
+                if ($this->call === 1) {
+                    throw new \RuntimeException('Simulated write failure');
+                }
+                // subsequent calls are ignored
+            }
+        };
+
+        $this->storage->setWriter($failingWriter);
+
+        $obj = new stdClass();
+        $obj->foo = 'bar';
+
+        // Assert
+        $this->expectException(ObjectSavingFailureException::class);
+
+        // Act
+        $this->storage->store($obj);
+    }
+
+    public function testStoreThrowsWhenWriterMockFailsOnMetadataWrite(): void
+    {
+        // Arrange: mock writer throws on 2nd atomicWrite (metadata), other calls no-op
+        // Expected call order on initial store: data(.obj), metadata(.metadata), classnames.json, stub(.stub)
+        $writerThatFailsOnSecondCall = new class implements WriterInterface {
+            private int $calls = 0;
+            public function atomicWrite(string $filename, ?string $data = null): void
+            {
+                $this->calls++;
+                if ($this->calls === 2) {
+                    throw new \RuntimeException('Simulated metadata write failure');
+                }
+                // all other calls succeed (no-op here)
+            }
+        };
+
+        $this->storage->setWriter($writerThatFailsOnSecondCall);
+
+        $obj = new stdClass();
+        $obj->foo = 'bar';
+
+        $this->expectException(MetadataSavingFailureException::class);
+
+        // Act
+        $this->storage->store($obj);
     }
 }

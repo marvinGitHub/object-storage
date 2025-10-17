@@ -30,13 +30,16 @@ use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
 use melia\ObjectStorage\Exception\MetadataNotFoundException;
+use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
+use melia\ObjectStorage\Exception\ObjectSavingFailureException;
 use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\StubDeletionFailureException;
+use melia\ObjectStorage\Exception\StubSavingFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
@@ -109,6 +112,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @throws MetadataNotFoundException
      * @throws InvalidUUIDException
+     * @throws Throwable
      */
     public function setLifetime(string $uuid, int|float $ttl): void
     {
@@ -124,6 +128,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @return void
      * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
      * @throws InvalidUUIDException
+     * @throws Throwable
      */
     public function setExpiration(string $uuid, null|int|float $expiresAt): void
     {
@@ -231,6 +236,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param Metadata $metadata The metadata to be serialized and saved.
      * @return void
+     * @throws MetadataSavingFailureException
      * @throws InvalidUUIDException
      */
     private function saveMetadata(Metadata $metadata): void
@@ -241,7 +247,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, new Context($metadata->getUUID()));
             $this->getLogger()?->log($e);
+            throw new MetadataSavingFailureException(message: 'Unable to save metadata for uuid: ' . $metadata->getUUID(), previous: $e);
         }
+
         try {
             $this->getMetadataCache()?->set($metadata->getUUID(), $metadata);
         } catch (Throwable $e) {
@@ -300,11 +308,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws Exception
      * @throws GenerationFailureException
      * @throws IOException
-     * @throws LockException
+     * @throws InvalidArgumentException
+     * @throws InvalidUUIDException
      * @throws MaxNestingLevelExceededException
+     * @throws MetadataSavingFailureException
+     * @throws ObjectSavingFailureException
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws StubSavingFailureException
+     * @throws UnsupportedTypeException
      * @throws Throwable
      */
     public function store(object $object, ?string $uuid = null, ?int $ttl = null): string
@@ -333,14 +346,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            // 1) Prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
+            // 1) prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
             //    only generate a new UUID if none is available
             $uuid ??= Helper::getAssigned($object) ?? $this->objectUuidMap[$object] ?? $this->getNextAvailableUuid();
 
-            // 2) Update mapping (important for references and later store calls)
+            // 2) update mapping (important for references and later store calls)
             $this->objectUuidMap[$object] = $uuid;
 
-            // 3) No early return: ALWAYS call serializeAndStore so that updates are detected via checksum
+            // 3) no early return: ALWAYS call serializeAndStore so that updates are detected via checksum
             $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
             /* if classname change we should remove the previous stub */
@@ -447,11 +460,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws InvalidArgumentException
      * @throws InvalidUUIDException
      * @throws MaxNestingLevelExceededException
+     * @throws MetadataSavingFailureException
+     * @throws ObjectSavingFailureException
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws UnsupportedTypeException
+     * @throws StubSavingFailureException
      * @throws Throwable
+     * @throws UnsupportedTypeException
      */
     private function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
     {
@@ -516,7 +532,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, new ObjectPersistenceContext($uuid, $object, $previousObject));
                 } catch (Throwable $e) {
                     $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, new ObjectPersistenceContext($uuid, $object, $previousObject));
-                    throw $e;
+                    throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
+
                 }
 
                 $this->saveMetadata($metadata);
@@ -1050,6 +1067,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $className
      * @param string $uuid
      * @throws InvalidUUIDException
+     * @throws StubSavingFailureException
      */
     public function createStub(string $className, string $uuid): void
     {
@@ -1062,6 +1080,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             $this->getEventDispatcher()?->dispatch(Events::STUB_WRITE_FAILED, new StubContext($uuid, $className));
+            throw new StubSavingFailureException(message: sprintf('Stub creation failed for uuid: %s and class: %s', $uuid, $className), previous: $e);
         }
     }
 

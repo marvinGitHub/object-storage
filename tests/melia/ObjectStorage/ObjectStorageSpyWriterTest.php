@@ -4,8 +4,6 @@ namespace Tests\melia\ObjectStorage;
 
 class ObjectStorageSpyWriterTest extends TestCase
 {
-
-
     public function testStorageOfUnchangedObjectDoesNotCallAtomicWrite(): void
     {
         // Arrange
