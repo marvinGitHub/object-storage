@@ -176,9 +176,13 @@ The object storage emits lifecycle events around critical operations. You can su
 - CACHE_ENTRY_REMOVED — dispatched when an object is removed from the cache.
 - BEFORE_TYPE_CONVERSION — dispatched before type conversion.
 - LAZY_TYPE_NOT_SUPPORTED — dispatched when a lazy type is not supported.
-- BEFORE_INITIAL_STORE — dispatched before initial store.
-- BEFORE_UPDATE  — dispatched before update.
-- AFTER_UPDATE  — dispatched after update.
+- BEFORE_INITIAL_STORE — dispatched before the initial store.
+- BEFORE_UPDATE — dispatched before update.
+- AFTER_UPDATE — dispatched after update.
+- METADATA_WRITE_FAILED — dispatched when metadata write failed.
+- OBJECT_WRITE_FAILED — dispatched when object write failed.
+- CACHE_WRITE_FAILED — dispatched when cache write failed.
+- STUB_WRITE_FAILED — dispatched when stub write failed.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 
