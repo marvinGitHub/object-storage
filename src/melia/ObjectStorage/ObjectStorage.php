@@ -1169,6 +1169,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @return array
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws InvalidUUIDException
      */
     public function getClassNames(?array $subSet = null): array
     {
@@ -1211,6 +1212,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return void
      * @throws InvalidUUIDException
+     * @throws StubSavingFailureException
      */
     public function rebuildStubs(): void
     {

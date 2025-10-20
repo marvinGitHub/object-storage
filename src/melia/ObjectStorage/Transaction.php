@@ -446,7 +446,7 @@ class Transaction
                             $this->restoreBackup($operation['uuid'], $operation['backup']);
                         } else {
                             // Delete an object (was newly created)
-                            $this->storage->delete($operation['uuid'], true);
+                            $this->storage->delete($operation['uuid']);
                         }
                         break;
 
