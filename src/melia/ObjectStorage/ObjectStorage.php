@@ -3,10 +3,13 @@
 namespace melia\ObjectStorage;
 
 use Closure;
+use DateTimeImmutable;
+use DateTimeInterface;
 use FilterIterator;
 use Generator;
 use GlobIterator;
 use Iterator;
+use Exception as PHPDefaultException;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\AwareTrait;
@@ -111,27 +114,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private ?array $registeredClassNamesCache = null;
 
     /**
-     * @throws MetadataNotFoundException
-     * @throws InvalidUUIDException
-     * @throws Throwable
-     */
-    public function setLifetime(string $uuid, int|float $ttl): void
-    {
-        $this->setExpiration($uuid, microtime(true) + $ttl);
-    }
-
-    /**
-     * Updates the expiration timestamp for a given UUID in the metadata storage.
+     * Sets the lifetime (time-to-live) for the given UUID, updating its expiration timestamp
+     * in the metadata and dispatching an event to notify listeners of the change.
      *
-     * @param string $uuid The unique identifier for which the expiration needs to be set.
-     * @param int|float|null $expiresAt The Unix timestamp specifying the expiration time, or null to unset the expiration.
+     * @param string $uuid The unique identifier whose lifetime is to be set.
+     * @param int|float|null $ttl The time-to-live (in seconds) to set for the UUID.
      *
      * @return void
-     * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
      * @throws InvalidUUIDException
-     * @throws Throwable
+     * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
+     * @throws MetadataSavingFailureException
      */
-    public function setExpiration(string $uuid, null|int|float $expiresAt): void
+    public function setLifetime(string $uuid, null|int|float $ttl): void
     {
         $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
@@ -140,11 +134,34 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
         }
 
-        $metadata->setTimestampExpiresAt($expiresAt);
+        if (null === $ttl) {
+            $timestampExpiresAt = null;
+        } else {
+            $timestampExpiresAt = microtime(true) + $ttl;
+            $timestampExpiresAt = (float)$timestampExpiresAt;
+        }
+
+        $metadata->setTimestampExpiresAt($timestampExpiresAt);
         $this->saveMetadata($metadata);
-        $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $expiresAt));
+        $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, new LifetimeContext($uuid, $timestampExpiresAt));
 
         $this->getLockAdapter()?->releaseLock($uuid);
+    }
+
+    /**
+     * Sets the expiration date and time for the specified UUID. If no expiration is provided,
+     * the lifetime will be unset or considered indefinite.
+     *
+     * @param string $uuid The unique identifier for which the expiration is being set.
+     * @param DateTimeInterface|null $expiresAt The date and time at which the UUID should expire, or null for no expiration.
+     * @return void
+     * @throws InvalidUUIDException
+     * @throws MetadataNotFoundException
+     * @throws MetadataSavingFailureException
+     */
+    public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
+    {
+        $this->setLifetime($uuid, $expiresAt ? $expiresAt->getTimestamp() - microtime(true) : null);
     }
 
     /**
@@ -278,16 +295,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Retrieves the expiration timestamp for the given UUID from its metadata.
-     * Throws an exception if metadata cannot be loaded for the specified UUID.
+     * Retrieves the expiration date and time for the provided UUID.
      *
-     * @param string $uuid The unique identifier used to retrieve metadata.
-     * @return float|null The expiration timestamp if available, or null if not set.
-     * @throws InvalidUUIDException
+     * @param string $uuid The unique identifier for which to retrieve the expiration timestamp.
+     * @return DateTimeInterface|null The expiration date and time as a DateTimeInterface object, or null if no expiration is set.
+     * @throws InvalidUUIDException If the provided UUID is not valid.
+     * @throws PHPDefaultException
      */
-    public function getExpiration(string $uuid): ?float
+    public function getExpiration(string $uuid): ?DateTimeInterface
     {
-        return $this->loadMetadata($uuid)?->getTimestampExpiresAt();
+        $expiresAt = $this->loadMetadata($uuid)?->getTimestampExpiresAt();
+        if (null === $expiresAt) {
+            return null;
+        }
+        return new DateTimeImmutable('@' . $expiresAt);
     }
 
     /**

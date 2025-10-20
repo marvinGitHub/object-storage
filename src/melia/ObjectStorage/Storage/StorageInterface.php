@@ -3,6 +3,7 @@
 
 namespace melia\ObjectStorage\Storage;
 
+use DateTimeInterface;
 use melia\ObjectStorage\Logger\LoggerAwareInterface;
 use Traversable;
 
@@ -20,11 +21,11 @@ interface StorageInterface extends LoggerAwareInterface
 
     public function expired(string $uuid): bool;
 
-    public function setExpiration(string $uuid, null|int|float $expiresAt): void;
+    public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void;
 
-    public function getExpiration(string $uuid): ?float;
+    public function getExpiration(string $uuid): ?DateTimeInterface;
 
-    public function setLifetime(string $uuid, int|float $ttl): void;
+    public function setLifetime(string $uuid, null|int|float $ttl): void;
 
     public function getLifetime(string $uuid): ?float;
 

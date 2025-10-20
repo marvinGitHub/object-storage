@@ -3,6 +3,9 @@
 namespace Tests\melia\ObjectStorage;
 
 use Closure;
+use DateInterval;
+use DateTimeImmutable;
+use DateTimeInterface;
 use Error;
 use Generator as PHPInternalGenerator;
 use IteratorAggregate;
@@ -722,5 +725,49 @@ class ObjectStorageTest extends TestCase
         } catch (Throwable $e) {
             $this->assertInstanceOf(MetadataSavingFailureException::class, $e->getPrevious());;
         }
+    }
+
+    public function testSetAndGetExpirationWithConcreteDateTime(): void
+    {
+        $uuid = $this->storage->store(new stdClass());
+
+        // choose a future time ~5 seconds from "now" to avoid flakiness
+        $target = (new DateTimeImmutable())->add(new DateInterval('PT5S'));
+        $this->storage->setExpiration($uuid, $target);
+
+        $expiresAt = $this->storage->getExpiration($uuid);
+        $this->assertInstanceOf(DateTimeInterface::class, $expiresAt);
+
+        // The returned DateTime should be close to the target (second precision in metadata)
+        $this->assertEquals($target->getTimestamp(), $expiresAt->getTimestamp());
+        $this->assertFalse($this->storage->expired($uuid));
+    }
+
+    public function testSetExpirationToNullRemovesExpiration(): void
+    {
+        $uuid = $this->storage->store(new stdClass(), null, 1);
+
+        // ensure it currently has an expiration
+        $this->assertNotNull($this->storage->getExpiration($uuid));
+
+        // remove expiration
+        $this->storage->setExpiration($uuid, null);
+
+        $this->assertNull($this->storage->getExpiration($uuid));
+        $this->assertFalse($this->storage->expired($uuid));
+        $this->assertNull($this->storage->getLifetime($uuid));
+    }
+
+    public function testGetExpirationReflectsUpdatedExpiration(): void
+    {
+        $uuid = $this->storage->store(new stdClass());
+
+        $first = (new DateTimeImmutable())->add(new DateInterval('PT2S'));
+        $this->storage->setExpiration($uuid, $first);
+        $this->assertEquals($first->getTimestamp(), $this->storage->getExpiration($uuid)?->getTimestamp());
+
+        $second = (new DateTimeImmutable())->add(new DateInterval('PT10S'));
+        $this->storage->setExpiration($uuid, $second);
+        $this->assertEquals($second->getTimestamp(), $this->storage->getExpiration($uuid)?->getTimestamp());
     }
 }

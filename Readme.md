@@ -123,10 +123,14 @@ Use when you need to gate operations globally (e.g., fail-safe after corruption)
 ### Lifetime (TTL)
 - getLifetime(string $uuid): ?float
     - Remaining seconds (0 at expiry, negative after expiry, null if unlimited).
-- setLifetime(string $uuid, int|float $ttl): void
+- setLifetime(string $uuid, null|int|float $ttl): void
     - Sets/updates lifetime in seconds.
 - expired(string $uuid): bool
     - Indicates whether the object is expired (load() returns null for expired objects).
+- getExpiration(string $uuid): ?DateTimeInterface
+    - Returns expiration date/time or null if unlimited.
+- setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
+    - Sets/updates expiration date/time.
 
 ## Locking, Caching, Safe Mode
 
