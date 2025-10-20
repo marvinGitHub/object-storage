@@ -1021,15 +1021,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * Deletes an object based on its UUID.
      *
      * @param string $uuid The unique identifier of the object to be deleted.
-     * @param bool $force Determines whether errors should be ignored if the object does not exist. If true, returns false if the object does not exist.
-     * @return void Returns true if the object was successfully deleted, or false if the object does not exist and $force is true.
-     * @throws MetataDeletionFailureException
+     * @return void
      * @throws InvalidUUIDException
      * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
-     * @throws ObjectNotFoundException Thrown when the object is not found and $force is false.
-     * @throws InvalidArgumentException
      */
-    public function delete(string $uuid, bool $force = false): void
+    public function delete(string $uuid): void
     {
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, new Context($uuid));
 
@@ -1063,13 +1059,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getMetadataCache()?->delete($uuid);
 
             $this->deleteStub($className, $uuid);
+
+            $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, new Context($uuid));
+        } catch (Throwable $e) {
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_DELETION_FAILURE, new Context($uuid));
+            throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
         } finally {
             if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
                 $this->getLockAdapter()?->releaseLock($uuid);
             }
         }
-
-        $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, new Context($uuid));
     }
 
     /**

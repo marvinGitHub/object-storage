@@ -76,7 +76,8 @@ try {
 
             try {
                 $storage = new ObjectStorage($storageDir);
-                $success = $storage->delete($uuid);
+                $storage->delete($uuid);
+                $success = false === $storage->exists($uuid);
             } catch (Throwable $e) {
                 $success = false;
             }

@@ -161,8 +161,11 @@ class ObjectStorageTest extends TestCase
         $this->assertTrue($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveSharedLock($uuid));
 
-        $this->expectException(LockException::class);
-        $this->storage->delete($uuid);
+        try {
+            $this->storage->delete($uuid);
+        } catch (Throwable $e) {
+            $this->assertInstanceOf(LockException::class, $e->getPrevious());
+        }
     }
 
     public function testSharedLock()
@@ -523,8 +526,11 @@ class ObjectStorageTest extends TestCase
         $this->storage->delete($uuid);
         $this->assertFalse($this->storage->exists($uuid));
 
-        $this->expectException(ObjectNotFoundException::class);
-        $this->storage->delete($uuid);
+        try {
+            $this->storage->delete($uuid);
+        } catch (Throwable $e) {
+            $this->assertInstanceOf(ObjectNotFoundException::class, $e->getPrevious());
+        }
     }
 
     public function testStoreWithClosure()

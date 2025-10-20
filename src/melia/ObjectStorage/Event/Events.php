@@ -43,4 +43,5 @@ interface Events
     public const METADATA_LOADING_FAILURE = 'object-storage.metadata_loading_failure';
     public const OBJECT_SAVING_FAILURE = 'object-storage.object_saving_failure';
     public const OBJECT_LOADING_FAILURE = 'object-storage.object_loading_failure';
+    public const OBJECT_DELETION_FAILURE = 'object-storage.object_deletion_failure';
 }
