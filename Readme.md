@@ -431,6 +431,35 @@ Persist data, not live process artifacts. Keep serialization deterministic and r
 - Don’t serialize raw resources; recreate them in `__wakeup()`.
 - Lazy references may load on demand unless the property type requires a concrete object.
 
+### Class Rename Map
+
+Map old class names to new ones so stored objects keep loading after refactors.
+
+- On load, if metadata says Old\Class and a mapping Old\Class -> New\Class exists, the object is created as New\Class.
+- If no mapping and the class doesn’t exist, a temporary alias is created to keep loading working.
+
+**Usage**
+
+```php
+<?php
+use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Runtime\ClassRenameMap;
+
+$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
+
+$map = new ClassRenameMap();
+$map->createAlias(\Legacy\OldUser::class, \App\Domain\User::class);
+$storage->setClassRenameMap($map);
+
+$loaded = $storage->load($uuid); // Instance of \App\Domain\User
+```
+
+**Tips**
+
+- Configure mappings at startup.
+- Use fully qualified class names.
+- Keep mappings until all old data is migrated.
+
 ## Command Line Interface
 See [CLI Documentation](docs/cli.md)
 

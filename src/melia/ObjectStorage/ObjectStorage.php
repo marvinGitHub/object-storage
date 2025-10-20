@@ -56,6 +56,8 @@ use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\Metadata\Cache\AwareTrait as MetadataCacheAwareTrait;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Runtime\ClassRenameMap;
+use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\SPL\SplObjectStorage;
 use melia\ObjectStorage\State\StateHandler;
@@ -90,6 +92,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use AwareTrait;
     use Cache\AwareTrait;
     use MetadataCacheAwareTrait;
+    use ClassRenameMapAwareTrait;
 
     /**
      * The suffix used for metadata files.
@@ -889,6 +892,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private function processLoadedData(array $data, Metadata $metadata): object
     {
         $className = $metadata->getClassName();
+
+        $classNameOverride = $this->getClassRenameMap()?->getAlias($className);
+        if ($classNameOverride) {
+            $className = $classNameOverride;
+        }
+
         if (false === class_exists($className)) {
             if (false === class_alias(get_class(new class {
                 }), $className)) {
@@ -1337,6 +1346,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->processingStack = new SplObjectStorage();
 
         $this->setStorageDir($storageDir);
+        $this->setClassRenameMap(new ClassRenameMap());
 
         if (null === $cache) {
             $cache = new InMemoryCache();

@@ -20,6 +20,7 @@ use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Runtime\ClassRenameMap;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Generator\Generator;
@@ -769,5 +770,20 @@ class ObjectStorageTest extends TestCase
         $second = (new DateTimeImmutable())->add(new DateInterval('PT10S'));
         $this->storage->setExpiration($uuid, $second);
         $this->assertEquals($second->getTimestamp(), $this->storage->getExpiration($uuid)?->getTimestamp());
+    }
+
+    public function testClassRenameMapIsAppliedOnLoad(): void
+    {
+        $old = new TestObject();
+        $uuid = $this->storage->store($old);
+
+        $this->storage->clearCache();
+        $old = $this->storage->load($uuid);
+        $this->assertInstanceOf(TestObject::class, $old);
+
+        $this->storage->clearCache();
+        $this->storage->getClassRenameMap()->createAlias(TestObject::class, stdClass::class);
+        $new = $this->storage->load($uuid);
+        $this->assertInstanceOf(stdClass::class, $new);
     }
 }
