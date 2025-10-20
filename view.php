@@ -3,9 +3,6 @@
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
 use Twig\Environment;
-use Twig\Error\LoaderError;
-use Twig\Error\RuntimeError;
-use Twig\Error\SyntaxError;
 use Twig\Loader\FilesystemLoader;
 
 require_once __DIR__ . '/vendor/autoload.php';
@@ -158,19 +155,20 @@ try {
                 if (false === is_object($object)) {
                     $success = false;
                 } else {
+                    $storage = null;
                     try {
                         $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
                         $storage->getLockAdapter()->acquireExclusiveLock($uuid);
                         $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
                         $metadata = $storage->loadMetadata($uuid);
-                        $metadata['checksum'] = md5($json);
+                        $metadata->setChecksum($md5 = md5($json));
                         $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), json_encode($metadata));
                         $storage->getLockAdapter()->releaseLock($uuid);
                         $success = $dataWritten && $metadataWritten;
                     } catch (Throwable $e) {
                         $success = false;
-                        if ($storage->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
-                            $storage->getLockAdapter()->releaseLock($uuid);
+                        if ($storage?->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
+                            $storage?->getLockAdapter()->releaseLock($uuid);
                         }
                     }
                 }
