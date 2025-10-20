@@ -50,7 +50,7 @@ class FileSystem extends LockAdapterAbstract
      * @throws LockException
      * @throws InvalidUUIDException
      */
-    public function acquireSharedLock(string $uuid, int $timeout = 10): void
+    public function acquireSharedLock(string $uuid, int|float $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_SHARED, $timeout);
         $this->getEventDispatcher()?->dispatch(Events::SHARED_LOCK_ACQUIRED, new Context($uuid));
@@ -62,13 +62,13 @@ class FileSystem extends LockAdapterAbstract
      *
      * @param string $uuid A unique identifier for the resource to lock.
      * @param int $type
-     * @param float $timeout The maximum duration (in seconds) to wait for acquiring the lock. Defaults to the class constant LOCK_TIMEOUT.
+     * @param int|float $timeout The maximum duration (in seconds) to wait for acquiring the lock. Defaults to the class constant LOCK_TIMEOUT.
      * @return void
      * @throws LockException If the lock file cannot be opened, or if the timeout is reached while waiting for the lock.
      */
-    private function lock(string $uuid, int $type, float $timeout = self::LOCK_TIMEOUT_DEFAULT): void
+    private function lock(string $uuid, int $type, int|float $timeout = self::LOCK_TIMEOUT_DEFAULT): void
     {
-        if ($this->getStateHandler()->safeModeEnabled()) {
+        if ($this->getStateHandler()?->safeModeEnabled()) {
             throw new LockException('Safe mode is enabled. Object cannot be locked.');
         }
 
@@ -144,7 +144,7 @@ class FileSystem extends LockAdapterAbstract
     }
 
     /**
-     * Checks if a lock associated with the given unique identifier (UUID) is held by the current process.
+     * Checks if the current process holds a lock associated with the given unique identifier (UUID).
      *
      * @param string|null $uuid The unique identifier for the lock to be checked. Can be null.
      * @return bool Returns true if the lock exists for the given UUID and is associated with this process, false otherwise.
@@ -173,7 +173,7 @@ class FileSystem extends LockAdapterAbstract
      * @throws LockException
      * @throws InvalidUUIDException
      */
-    public function acquireExclusiveLock(string $uuid, int $timeout = 10): void
+    public function acquireExclusiveLock(string $uuid, int|float $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_EXCLUSIVE, $timeout);
         $this->getEventDispatcher()?->dispatch(Events::EXCLUSIVE_LOCK_ACQUIRED, new Context($uuid));

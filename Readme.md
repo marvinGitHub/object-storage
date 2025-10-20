@@ -74,14 +74,14 @@ When a lazy reference loads, it:
 ## API Highlights
 
 ### General
-- store(object $obj, ?string $uuid = null, null|int|float $ttl = null): string
+- store(object $object, ?string $uuid = null, null|int|float $ttl = null): string
     - Persists object and its referenced children; returns UUID. Optional lifetime in seconds.
 - load(string $uuid, bool $exclusive = false): ?object
     - Loads object with locking (shared when $exclusive=false). Returns null if expired.
 - exists(string $uuid): bool
     - Checks if object data file exists.
-- delete(string $uuid, bool $force = false): bool
-    - Deletes object and its metadata; returns true on success. With $force=true, returns false if not found.
+- delete(string $uuid): void
+    - Deletes object, metadata, and the related stub.
 - list(?string $class = null): Traversable
     - Iterates UUIDs; optionally filtered by class (via stubs).
 - loadMetadata(string $uuid): ?array
@@ -96,9 +96,9 @@ When a lazy reference loads, it:
 ### Locking (use LockAdapter)
 Use when you need explicit control over concurrent access (e.g., long-running writes, cross-process coordination). ObjectStorage uses the lock adapter internally in store/load/delete; call these for advanced scenarios.
 
-- acquireSharedLock(string $uuid, int $timeout): void
+- acquireSharedLock(string $uuid, int|float $timeout): void
     - Obtain a read/shared lock (multiple readers allowed).
-- acquireExclusiveLock(string $uuid, int $timeout): void
+- acquireExclusiveLock(string $uuid, int|float $timeout): void
     - Obtain a write/exclusive lock (mutually exclusive).
 - releaseLock(string $uuid): void
     - Release a held lock (shared or exclusive).

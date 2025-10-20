@@ -210,7 +210,7 @@ class TransactionTest extends TestCase
         });
 
         // Expect delete of the new object during rollback
-        $this->storage->expects($this->once())->method('delete')->with($uuidNew, true);
+        $this->storage->expects($this->once())->method('delete')->with($uuidNew);
 
         // Expect restoring backup of existing object
         $this->storage->expects($this->once())->method('store')->with(
