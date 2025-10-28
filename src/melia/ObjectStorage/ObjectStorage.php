@@ -1176,7 +1176,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function createDirectoryIfNotExist(string $directory): void
     {
-        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
+        if (false === (new Directory($directory))->createIfNotExists()) {
             throw new IOException('Unable to create directory: ' . $directory);
         }
     }
