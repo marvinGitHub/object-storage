@@ -1222,18 +1222,23 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /**
      * @throws IOException
+     * @throws InvalidUUIDException
      */
     public function getMemoryConsumption(string $uuid): int
     {
-        if (false === $fileSizeData = @filesize($this->getFilePathData($uuid))) {
-            throw new IOException('Unable to determine file size for file ' . $this->getFilePathData($uuid));
+        if (false === $fileSizeData = @filesize($path = $this->getFilePathData($uuid))) {
+            throw new IOException('Unable to determine file size for file ' . $path);
         }
 
-        if (false === $fileSizeMetadata = @filesize($this->getFilePathMetadata($uuid))) {
-            throw new IOException('Unable to determine file size for file ' . $this->getFilePathMetadata($uuid));
+        if (false === $fileSizeMetadata = @filesize($path = $this->getFilePathMetadata($uuid))) {
+            throw new IOException('Unable to determine file size for file ' . $path);
         }
 
-        return $fileSizeData + $fileSizeMetadata;
+        if (false === $fileSizeStub = @filesize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
+            throw new IOException('Unable to determine file size for file ' . $path);
+        }
+
+        return $fileSizeData + $fileSizeMetadata + $fileSizeStub;
     }
 
     /**
