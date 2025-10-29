@@ -84,6 +84,8 @@ When a lazy reference loads, it:
     - Deletes object, metadata, and the related stub.
 - list(?string $class = null): Traversable
     - Iterates UUIDs; optionally filtered by class (via stubs).
+- match(callable $matcher, ?string $className = null, ?int $limit = null, ?array $subSet = null): Traversable
+    - Iterates UUIDs/objects matching a predicate; optionally filtered by class (via stubs).
 - loadMetadata(string $uuid): ?array
     - Returns metadata (className, checksum, timestamp, etc.) or null.
 - getClassName(string $uuid): ?string

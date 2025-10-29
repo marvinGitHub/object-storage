@@ -68,7 +68,7 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
      * Searches for objects that match a given condition defined by the matcher function.
      * Optionally filters results by class name and limits the number of matches.
      *
-     * @param callable $matcher A callable function to evaluate each object. The callable should return true for a match.
+     * @param callable $matcher A callable function to evaluate each object. The callable should return true for a match. The first argument is the object to be evaluated.
      * @param string|null $className An optional class name to filter objects by their type. Defaults to null, meaning no class filtering is applied.
      * @param int|null $limit The maximum number of matches to return. Defaults to 0, meaning no limit.
      * @param array|null $subSet An optional array either of UUIDs to search within or result of the previous match () call. Defaults to null, meaning search all objects.
