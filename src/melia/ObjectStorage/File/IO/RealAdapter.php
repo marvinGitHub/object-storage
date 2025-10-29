@@ -53,4 +53,14 @@ class RealAdapter implements AdapterInterface
     {
         return mkdir($dir, $mode, $recursive);
     }
+
+    public function feof($resource): bool
+    {
+        return feof($resource);
+    }
+
+    public function fread($resource, int $length): string|false
+    {
+        return fread($resource, $length);
+    }
 }

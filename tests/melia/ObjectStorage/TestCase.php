@@ -47,6 +47,15 @@ class TestCase extends \PHPUnit\Framework\TestCase
         return $tempDir;
     }
 
+    protected function createTemporaryFile(): string
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), 'ObjectStorageTest');
+        if (file_exists($tempFile)) {
+            unlink($tempFile);
+        }
+        return $tempFile;
+    }
+
     protected function reserveRandomStorageDirectory(): string
     {
         $path = tempnam(sys_get_temp_dir(), 'ObjectStorageSearchTest');
