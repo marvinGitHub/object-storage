@@ -368,7 +368,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getEventDispatcher()?->dispatch(Events::BEFORE_UPDATE, new ObjectPersistenceContext($uuid, $object));
         }
 
-        // LazyLoadReference: ungeladen → nur UUID zurückgeben
+        // LazyLoadReference: not loaded → only return UUID
         if ($object instanceof LazyLoadReference) {
             if (false === $object->isLoaded()) {
                 return $object->getUUID();
@@ -860,14 +860,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        // Load metadata once and derive class name and lifetime from it
+        // load metadata once and derive class name and lifetime from it
         $metadata = $this->loadMetadata($uuid);
         if (null === $metadata) {
             $this->getStateHandler()?->enableSafeMode();
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
         }
 
-        // Build object using the single metadata instance
+        // build object using the single metadata instance
         $object = $this->processLoadedData($data, $metadata);
 
         LifecycleGuard::wakeup($object);
