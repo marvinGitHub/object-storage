@@ -1059,11 +1059,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, new Context($uuid));
 
-        if ($this->getStateHandler()?->safeModeEnabled()) {
-            throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
-        }
-
         try {
+            if ($this->getStateHandler()?->safeModeEnabled()) {
+                throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
+            }
+
             $this->getLockAdapter()?->acquireExclusiveLock($uuid);
 
             $this->removeFromCache($uuid);
