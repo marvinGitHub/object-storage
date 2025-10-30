@@ -7,6 +7,8 @@ use ReflectionNamedType;
 use ReflectionObject;
 use ReflectionProperty;
 use ReflectionType;
+use ReflectionClass;
+use WeakMap;
 
 /**
  * A utility class that provides reflection-based methods
@@ -199,5 +201,43 @@ class Reflection
     {
         $reflection = new ReflectionObject($this->target);
         return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName)->getType() : null;
+    }
+
+    /**
+     * Retrieves and caches the property type of a given property within an object.
+     *
+     * If the property is declared within the class of the given object, its type is cached
+     * for later calls to improve performance. If the property is dynamic, its type
+     * is resolved without caching.
+     *
+     * @param object $object The object containing the property.
+     * @param string $propertyName The name of the property whose type is being retrieved.
+     * @return ReflectionType|null The type of the property, or null if the type could not be determined.
+     */
+    public function getCachedPropertyType(object $object, string $propertyName): ?ReflectionType
+    {
+        static $classPropertyTypeCache;
+        if (null === $classPropertyTypeCache) {
+            $classPropertyTypeCache = new WeakMap();
+        }
+
+        // Only cache if it's a declared property on the class
+        $core = new ReflectionClass($object);
+        if (!$core->hasProperty($propertyName)) {
+            // dynamic property: do not cache
+            return $this->getPropertyType($propertyName);
+        }
+
+        $bucket = $classPropertyTypeCache[$core] ??= [];
+
+        if (array_key_exists($propertyName, $bucket)) {
+            return $bucket[$propertyName];
+        }
+
+        $type = $this->getPropertyType($propertyName);
+        $bucket[$propertyName] = $type;
+        $classPropertyTypeCache[$core] = $bucket;
+
+        return $type;
     }
 }

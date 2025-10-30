@@ -113,6 +113,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     private WeakMap $processingStack;
 
     private WeakMap $objectUuidMap;
+    private WeakMap $lazyloadReferenceSupportCache;
 
     /** @var array<string>|null */
     private ?array $registeredClassNamesCache = null;
@@ -911,7 +912,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {
-            $type = $reflection->getPropertyType($propertyName);
+            $type = $reflection->getCachedPropertyType($object, $propertyName);
 
             if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
                 $refUUID = $value[$metadata->getReservedReferenceName()];
@@ -920,26 +921,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $reflection->set($propertyName, [$metadata->getReservedReferenceName() => $refUUID]);
                 } else {
                     $reference = new LazyLoadReference($this, $refUUID, $object, [$propertyName]);
-                    /* if LazyLoadReference is not allowed, then we need to convert the reference to the real object */
-                    if ($type instanceof ReflectionNamedType) {
-                        if (LazyLoadReference::class !== $type->getName() &&
-                            false === in_array($type->getName(), ['object', 'mixed'], true)
-                        ) {
-                            $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, new LazyTypeNotSupportedContext($className, $propertyName));
-                            $reference = $reference->getObject();
-                        }
-                    } else if ($type instanceof ReflectionUnionType) {
-                        $supportedTypes = array_map(function (ReflectionNamedType $type) {
-                            return $type->getName();
-                        }, array_filter($type->getTypes(), function (ReflectionType $type) {
-                            return $type instanceof ReflectionNamedType;
-                        }));
-                        if (false === in_array(LazyLoadReference::class, $supportedTypes, true) &&
-                            false === in_array('object', $supportedTypes, true)
-                        ) {
-                            $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, new LazyTypeNotSupportedContext($className, $propertyName));
-                            $reference = $reference->getObject();
-                        }
+
+                    if (false === $this->supportsLazyReference($type)) {
+                        $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, new LazyTypeNotSupportedContext($className, $propertyName));
+                        $reference = $reference->getObject();
                     }
                     $reflection->set($propertyName, $reference);
                 }
@@ -965,6 +950,54 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         return $object;
+    }
+
+    /**
+     * Determines if the given type supports lazy references based on the provided type reflection.
+     * It checks various scenarios, including no type-hint, named types, and union types.
+     *
+     * @param ReflectionType|null $type The reflection of the type to check, which can be null,
+     *                                  a named type, or a union type.
+     *
+     * @return bool Returns true if the type supports lazy references; otherwise, false.
+     */
+    private function supportsLazyReference(?ReflectionType $type): bool
+    {
+        if (null === $type) {
+            return true;
+        }
+
+        if (isset($this->lazyloadReferenceSupportCache[$type])) {
+            return $this->lazyloadReferenceSupportCache[$type];
+        }
+
+        $result = match (true) {
+            $type instanceof ReflectionNamedType => in_array(
+                $type->getName(),
+                [LazyLoadReference::class, 'object', 'mixed'],
+                true
+            ),
+            $type instanceof ReflectionUnionType => (static function (ReflectionUnionType $u): bool {
+                $names = array_map(
+                    static function (ReflectionNamedType $t): string {
+                        return $t->getName();
+                    },
+                    array_filter(
+                        $u->getTypes(),
+                        static function (ReflectionType $t): bool {
+                            return $t instanceof ReflectionNamedType;
+                        }
+                    )
+                );
+                return in_array(LazyLoadReference::class, $names, true)
+                    || in_array('object', $names, true)
+                    || in_array('mixed', $names, true);
+            })($type),
+            default => false,
+        };
+
+        $this->lazyloadReferenceSupportCache[$type] = $result;
+        return $result;
     }
 
     /**
@@ -1350,6 +1383,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->objectUuidMap = new WeakMap();
         $this->processingStack = new WeakMap();
+        $this->lazyloadReferenceSupportCache = new WeakMap();
 
         $this->setStorageDir($storageDir);
         $this->setClassRenameMap(new ClassRenameMap());
