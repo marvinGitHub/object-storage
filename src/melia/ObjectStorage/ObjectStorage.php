@@ -59,7 +59,7 @@ use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Runtime\ClassRenameMap;
 use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
-use melia\ObjectStorage\SPL\SplObjectStorage;
+use melia\ObjectStorage\SPL\WeakMapSweeper;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageInterface;
@@ -79,6 +79,7 @@ use ReflectionType;
 use ReflectionUnionType;
 use Throwable;
 use Traversable;
+use WeakMap;
 
 /**
  * Class responsible for storing, caching, and retrieving objects in a persistent storage system.
@@ -109,9 +110,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     private const FILE_SUFFIX_OBJECT = '.obj';
 
-    private SplObjectStorage $processingStack;
+    private WeakMap $processingStack;
 
-    private SplObjectStorage $objectUuidMap;
+    private WeakMap $objectUuidMap;
 
     /** @var array<string>|null */
     private ?array $registeredClassNamesCache = null;
@@ -290,8 +291,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function clearCache(): void
     {
         $this->getCache()?->clear();
-        $this->objectUuidMap->clear();
-        $this->processingStack->clear();
+        WeakMapSweeper::clear($this->objectUuidMap);
+        WeakMapSweeper::clear($this->processingStack);
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
@@ -1347,8 +1348,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         private int                     $maxNestingLevel = 100
     )
     {
-        $this->objectUuidMap = new SplObjectStorage();
-        $this->processingStack = new SplObjectStorage();
+        $this->objectUuidMap = new WeakMap();
+        $this->processingStack = new WeakMap();
 
         $this->setStorageDir($storageDir);
         $this->setClassRenameMap(new ClassRenameMap());
