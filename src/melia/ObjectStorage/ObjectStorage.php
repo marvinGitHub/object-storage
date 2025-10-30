@@ -936,7 +936,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $expectedType = $type->getName();
                     $givenType = gettype($value);
 
-                    if ($givenType !== $expectedType && in_array($givenType, ['integer', 'double', 'boolean', 'string'])) {
+                    static $scalarMap = ['integer' => true, 'double' => true, 'boolean' => true, 'string' => true];
+
+                    if ($givenType !== $expectedType && isset($scalarMap[$givenType])) {
                         $this->getEventDispatcher()?->dispatch(Events::BEFORE_TYPE_CONVERSION,
                             new TypeConversionContext($object, $propertyName, $value, $givenType, $expectedType));
 
