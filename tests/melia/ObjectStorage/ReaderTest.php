@@ -10,7 +10,7 @@ class ReaderTest extends TestCase
     {
         $filename = '/tmp/non-existing-file';
         $this->expectException(\melia\ObjectStorage\Exception\IOException::class);
-        $this->expectExceptionMessage(sprintf('File does not exist: %s', $filename));
+        $this->expectExceptionMessage(sprintf('Unable to read file: %s', $filename));
 
         $reader = new Reader();
         $reader->read($filename);
