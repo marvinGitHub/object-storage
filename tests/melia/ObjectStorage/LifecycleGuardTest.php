@@ -4,33 +4,35 @@ namespace Tests\melia\ObjectStorage;
 
 class ObjectStorageLifecycleTest extends TestCase
 {
-    public function testSleepIsCalledOnStoreAndWakeupOnLoad(): void
+    public function testSerializeIsCalledOnStoreAndUnserializeOnLoad(): void
     {
         $obj = new class {
-            public int $sleepCalls = 0;
-            public int $wakeupCalls = 0;
+            public int $serializeCalls = 0;
+            public int $unserializeCalls = 0;
             public string $state = 'live';
 
-            public function __sleep(): array
+            public function __serialize(): array
             {
-                $this->sleepCalls++;
+                $this->serializeCalls++;
                 $this->state = 'prepared';
-                return ['sleepCalls', 'wakeupCalls', 'state'];
+                return ['serializeCalls' => $this->serializeCalls, 'unserializeCalls' => $this->unserializeCalls, 'state' => $this->state];
             }
 
-            public function __wakeup(): void
+            public function __unserialize(array $data): void
             {
-                $this->wakeupCalls++;
+                $this->unserializeCalls++;
                 $this->state = 'restored';
             }
         };
 
+        $this->assertSame('live', $obj->state);
+
         // Act: store using ObjectStorage
         $uuid = $this->storage->store($obj);
 
-        // Assert: original object must be untouched (store clones before calling __sleep)
-        $this->assertSame(0, $obj->sleepCalls);
-        $this->assertSame('live', $obj->state);
+        // Assert: original object must be untouched (store clones before calling __serialize)
+        $this->assertSame(1, $obj->serializeCalls);
+        $this->assertSame('prepared', $obj->state);
 
         // Clear cache to force load path
         $this->storage->clearCache();
@@ -38,9 +40,9 @@ class ObjectStorageLifecycleTest extends TestCase
         // Act: load using ObjectStorage
         $loaded = $this->storage->load($uuid);
 
-        // Assert: wakeup called during load
+        // Assert: __unserialize called during load
         $this->assertNotNull($loaded);
-        $this->assertSame(1, $loaded->wakeupCalls);
+        $this->assertSame(1, $loaded->unserializeCalls);
         $this->assertSame('restored', $loaded->state);
     }
 }

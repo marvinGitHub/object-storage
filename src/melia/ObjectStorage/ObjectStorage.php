@@ -532,13 +532,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->getEventDispatcher()?->dispatch(Events::BEFORE_INITIAL_STORE, new ObjectPersistenceContext($uuid, $object));
             }
 
-            /* ensure that the object is going to sleep before creating the graph;
-               to ensure the object stays untouched, we create a graph from a copy (clone)
-            */
-            $clone = clone $object;
-
             $jsonGraph = json_encode(
-                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($clone, $metadata)),
+                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata)),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
             );
 
@@ -609,41 +604,41 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $result = [];
         $target = $context->getTarget();
 
-        /* check if the sleep methods return a list of property names to serialize */
-        $propertyNames = null;
+        /* use __serialize method if available, we don't consider __sleep since this will be deprecated in PHP 8.5 */
+        $properties = null;
         try {
-            $propertyNames = LifecycleGuard::sleep($target);
+            $properties = LifecycleGuard::serialize($target);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
         }
 
         $reflection = new Reflection($target);
 
-        /* if the sleep method returns null, serialize all properties */
-        if (null === $propertyNames) {
-            $propertyNames = $reflection->getPropertyNames();
+        /* if the __serialize method returns null, serialize all properties */
+        if (null === $properties) {
+            $properties = [];
+            foreach ($reflection->getPropertyNames() as $propertyName) {
+                if (false === $reflection->initialized($propertyName)) {
+                    continue;
+                }
+                $properties[$propertyName] = $reflection->get($propertyName);
+            }
         }
 
         // ensure deterministic order of properties
-        sort($propertyNames, SORT_STRING);
+        ksort($properties);
 
         // pre-scan property names to avoid reserved reference name collision
         $reserved = $context->getMetadata()->getReservedReferenceName();
-        while (in_array($reserved, $propertyNames, true)) {
+        while (array_key_exists($reserved, $properties)) {
             $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
         }
         $context->getMetadata()->setReservedReferenceName($reserved);
 
-        foreach ($propertyNames as $propertyName) {
+        foreach ($properties as $propertyName => $value) {
             if (false === is_string($propertyName)) {
                 throw new UnsupportedTypeException(sprintf('Property name must be a string. %s given.', gettype($propertyName)));
             }
-
-            if (false === $reflection->initialized($propertyName)) {
-                continue;
-            }
-
-            $value = $reflection->get($propertyName);
 
             try {
                 $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], 0);
@@ -703,8 +698,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
                 }
 
-                $loaded = $value->getObject();
-                $value = $loaded;
+                $value = $value->getObject();
             }
 
             $refUuid = Helper::getAssigned($value) ?? $this->objectUuidMap[$value] ?? $this->getNextAvailableUuid();
@@ -868,9 +862,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         // build object using the single metadata instance
-        $object = $this->processLoadedData($data, $metadata);
+        $object = $this->createInstance($metadata->getClassName());
 
-        LifecycleGuard::wakeup($object);
+        if (LifecycleGuard::supportsUnserialize($object)) {
+            LifecycleGuard::unserialize($object, $data);
+        } else {
+            $this->processLoadedData($object, $data, $metadata);
+        }
+
         Helper::assign($object, $uuid);
 
         $this->addToCache($uuid, $object, $metadata->getLifetime());
@@ -879,22 +878,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Converts the provided data array into an object of the specified class
-     * by mapping the data to the class's properties.
+     * Creates an instance of the specified class name. If the class does not exist,
+     * attempts to create a class alias and dispatches an event upon successful creation.
      *
-     * @param array $data An associative array containing property names and their corresponding values.
-     * @param Metadata $metadata
-     * @return object An instance of the specified class with its properties populated from the provided data.
-     * @throws ClassAliasCreationFailureException
-     * @throws DanglingReferenceException
-     * @throws InvalidUUIDException
-     * @throws ReflectionException
-     * @throws TypeConversionFailureException
+     * @param string $className The name of the class to instantiate.
+     * @return object An instance of the specified class.
+     * @throws ClassAliasCreationFailureException If the class alias could not be created for an unknown class.
+     * @throws ReflectionException If the class cannot be reflected or instantiated.
      */
-    private function processLoadedData(array $data, Metadata $metadata): object
+    private function createInstance(string $className): object
     {
-        $className = $metadata->getClassName();
-
         $classNameOverride = $this->getClassRenameMap()?->getAlias($className);
         if ($classNameOverride) {
             $className = $classNameOverride;
@@ -908,7 +901,26 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, new ClassAliasCreationContext($className));
         }
 
-        $object = (new ReflectionClass($className))->newInstanceWithoutConstructor();
+        return (new ReflectionClass($className))->newInstanceWithoutConstructor();
+    }
+
+    /**
+     * Converts the provided data array into an object of the specified class
+     * by mapping the data to the class's properties.
+     *
+     * @param object $object
+     * @param array $data An associative array containing property names and their corresponding values.
+     * @param Metadata $metadata
+     * @return object An instance of the specified class with its properties populated from the provided data.
+     * @throws DanglingReferenceException
+     * @throws InvalidUUIDException
+     * @throws ReflectionException
+     * @throws TypeConversionFailureException
+     */
+    private function processLoadedData(object $object, array $data, Metadata $metadata): object
+    {
+        $className = $metadata->getClassName();
+
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {

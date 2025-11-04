@@ -623,12 +623,12 @@ class ObjectStorageTest extends TestCase
         $this->assertSame([10 => 'x', 20 => 'y'], $materialized);
     }
 
-    public function testStoreSleepOnlySerializesGivenProperties()
+    public function testStoreObjectWithSerializeMethod()
     {
         $object = new class () {
-            public function __sleep()
+            public function __serialize()
             {
-                return ['a'];
+                return ['a' => $this->a ?? null];
             }
         };
         $object->a = 'test';

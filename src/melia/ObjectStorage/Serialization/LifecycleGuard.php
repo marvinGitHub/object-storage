@@ -8,42 +8,41 @@ use Traversable;
 class LifecycleGuard
 {
     /**
-     * Invokes the __sleep method on the given object if it is callable.
-     * This method is typically used to prepare an object for serialization.
+     * Serializes the given object into an array if the object implements the __serialize method.
      *
-     * @param object $object The object to be processed. It must implement a callable __sleep method if serialization preparation is needed.
-     * @return array|null
-     * @throws UnsupportedTypeException
+     * @param object $object The object to be serialized.
+     * @return array|null The serialized array representation of the object, or null if the object does not implement the __serialize method.
      */
-    public static function sleep(object $object): ?array
+    public static function serialize(object $object): ?array
     {
-        if (method_exists($object, '__sleep')) {
-            $propertyNames = $object->__sleep();
-
-            if ((null !== $propertyNames) && (false === is_iterable($propertyNames))) {
-                throw new UnsupportedTypeException('__sleep() must return an iterable or null, ' . gettype($propertyNames) . ' given');
-            }
-
-            if ($propertyNames instanceof Traversable) {
-                $propertyNames = iterator_to_array($propertyNames);
-            }
-
-            return $propertyNames;
+        if (is_callable([$object, '__serialize'])) {
+            return $object->__serialize();
         }
         return null;
     }
 
     /**
-     * Invokes the __wakeup method on the given object if it is callable.
-     * This method is typically used to reinitialize an object after it has been unserialized.
+     * Determines if the provided object supports the `__unserialize` method.
      *
-     * @param object $object The object to be processed. It must implement a callable __wakeup method if reinitialization is needed.
+     * @param object $object The object to check for support of the `__unserialize` method.
+     * @return bool True if the object defines a callable `__unserialize` method, false otherwise.
+     */
+    public static function supportsUnserialize(object $object): bool
+    {
+        return is_callable([$object, '__unserialize']);
+    }
+
+    /**
+     * Unserializes data into the provided object if it supports the `__unserialize` method.
+     *
+     * @param object $object The object into which the data should be unserialized.
+     * @param array $data The data to unserialize into the object.
      * @return void
      */
-    public static function wakeup(object $object): void
+    public static function unserialize(object $object, array $data): void
     {
-        if (is_callable([$object, '__wakeup'])) {
-            $object->__wakeup();
+        if (static::supportsUnserialize($object)) {
+            $object->__unserialize($data);
         }
     }
 }

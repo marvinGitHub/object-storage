@@ -419,18 +419,22 @@ Persist data, not live process artifacts. Keep serialization deterministic and r
 
 - Recommendation: only store finite, bounded generators/iterables. If you need streaming or lazy sequences, persist a bounded snapshot (e.g., a page) or a descriptor (query params, offsets) and reconstruct the stream at runtime.
 
-## Object Sleep and Wakeup
+Here’s an updated README section you can use.
 
-- On store: a clone is put to sleep via `__sleep()` before serialization; the original instance stays unchanged.
-- On load: after reconstruction, `__wakeup()` restores transient state.
+## Object Serialization Lifecycle
+
+This library uses PHP 7.4+ magic methods `__serialize()` and `__unserialize()` for custom persistence hooks. We no longer use `__sleep()` or `__wakeup()` since these will be deprecated in PHP 8.5.
+
+- On store: a clone is prepared via `__serialize()` before serialization; the original instance is not mutated.
+- On load: after reconstruction, `__unserialize()` restores transient or derived state.
 
 ### Implement
-- `__sleep()`: return properties to persist and prepare state.
-- `__wakeup()`: reinitialize resources, caches, or derived fields.
+- `__serialize(): array` — return a stable array of properties to persist; you may also prepare/normalize state for storage.
+- `__unserialize(array $data): void` — rebuild non-persisted resources, caches, and derived fields from the provided data.
 
 ### Notes
 - Hooks are optional; persistence works without them.
-- Don’t serialize raw resources; recreate them in `__wakeup()`.
+- Do not serialize raw resources or closures; reconstruct them in `__unserialize()`.
 - Lazy references may load on demand unless the property type requires a concrete object.
 
 ### Class Rename Map
@@ -438,7 +442,7 @@ Persist data, not live process artifacts. Keep serialization deterministic and r
 Map old class names to new ones so stored objects keep loading after refactors.
 
 - On load, if metadata says Old\Class and a mapping Old\Class -> New\Class exists, the object is created as New\Class.
-- If no mapping and the class doesn’t exist, a temporary alias is created to keep loading working.
+- If no mapping or class exist, a temporary alias is created to keep loading working.
 
 **Usage**
 
