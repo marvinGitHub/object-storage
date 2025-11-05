@@ -58,6 +58,7 @@ use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Runtime\ClassRenameMap;
 use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
+use melia\ObjectStorage\Runtime\Placeholder;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\SPL\WeakMapSweeper;
 use melia\ObjectStorage\State\StateHandler;
@@ -894,8 +895,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         if (false === class_exists($className)) {
-            if (false === class_alias(get_class(new class {
-                }), $className)) {
+            // alias from a stable, named placeholder instead of an anonymous class
+            if (false === class_alias(Placeholder::class, $className)) {
                 throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
             }
             $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, new ClassAliasCreationContext($className));
