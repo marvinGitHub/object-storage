@@ -99,25 +99,25 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * The suffix used for metadata files.
      */
-    private const FILE_SUFFIX_METADATA = '.metadata';
+    protected const FILE_SUFFIX_METADATA = '.metadata';
 
     /**
      * The suffix used for stub files.
      */
-    private const FILE_SUFFIX_STUB = '.stub';
+    protected const FILE_SUFFIX_STUB = '.stub';
 
     /**
      * The suffix used for object files.
      */
-    private const FILE_SUFFIX_OBJECT = '.obj';
+    protected const FILE_SUFFIX_OBJECT = '.obj';
 
-    private WeakMap $processingStack;
+    protected WeakMap $processingStack;
 
-    private WeakMap $objectUuidMap;
-    private WeakMap $lazyloadReferenceSupportCache;
+    protected WeakMap $objectUuidMap;
+    protected WeakMap $lazyloadReferenceSupportCache;
 
     /** @var array<string>|null */
-    private ?array $registeredClassNamesCache = null;
+    protected ?array $registeredClassNamesCache = null;
 
     /**
      * Sets the lifetime (time-to-live) for the given UUID, updating its expiration timestamp
@@ -217,7 +217,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException If the file content cannot be decoded.
      */
-    private function loadFromJsonFile(string $filename): ?array
+    protected function loadFromJsonFile(string $filename): ?array
     {
         try {
             $data = $this->getReader()->read($filename);
@@ -267,7 +267,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws MetadataSavingFailureException
      * @throws InvalidUUIDException
      */
-    private function saveMetadata(Metadata $metadata): void
+    protected function saveMetadata(Metadata $metadata): void
     {
         try {
             $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
@@ -440,7 +440,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws StubDeletionFailureException If the stub file could not be deleted.
      * @throws InvalidUUIDException
      */
-    private function deleteStub(string $className, string $uuid): void
+    protected function deleteStub(string $className, string $uuid): void
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
         if (file_exists($filePathStub)) {
@@ -504,7 +504,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws Throwable
      * @throws UnsupportedTypeException
      */
-    private function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
+    protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
     {
         try {
             if (!isset($this->objectUuidMap[$object])) {
@@ -600,7 +600,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws UnsupportedTypeException
      * @throws Throwable
      */
-    private function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
+    protected function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
     {
         $result = [];
         $target = $context->getTarget();
@@ -672,7 +672,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws UnsupportedTypeException
      * @throws Throwable
      */
-    private function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
+    protected function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
     {
         if ($level > $this->maxNestingLevel) {
             throw new MaxNestingLevelExceededException('Maximum nesting level of ' . $this->maxNestingLevel . ' exceeded');
@@ -848,14 +848,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SerializationFailureException
      * @throws TypeConversionFailureException|Throwable
      */
-    private function loadFromStorage(string $uuid): ?object
+    protected function loadFromStorage(string $uuid): ?object
     {
         $data = $this->loadFromJsonFile($this->getFilePathData($uuid));
         if (false === is_array($data)) {
             return null;
         }
 
-        // load metadata once and derive class name and lifetime from it
+        // load metadata once and derive the class name and lifetime from it
         $metadata = $this->loadMetadata($uuid);
         if (null === $metadata) {
             $this->getStateHandler()?->enableSafeMode();
@@ -887,7 +887,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ClassAliasCreationFailureException If the class alias could not be created for an unknown class.
      * @throws ReflectionException If the class cannot be reflected or instantiated.
      */
-    private function createInstance(string $className): object
+    protected function createInstance(string $className): object
     {
         $classNameOverride = $this->getClassRenameMap()?->getAlias($className);
         if ($classNameOverride) {
@@ -918,7 +918,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws ReflectionException
      * @throws TypeConversionFailureException
      */
-    private function processLoadedData(object $object, array $data, Metadata $metadata): object
+    protected function processLoadedData(object $object, array $data, Metadata $metadata): object
     {
         $className = $metadata->getClassName();
 
@@ -976,7 +976,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return bool Returns true if the type supports lazy references; otherwise, false.
      */
-    private function supportsLazyReference(?ReflectionType $type): bool
+    protected function supportsLazyReference(?ReflectionType $type): bool
     {
         if (null === $type) {
             return true;
@@ -1029,7 +1029,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *               or recursively processed subarrays.
      * @throws InvalidUUIDException
      */
-    private function processLoadedArray(Metadata $metadata, object $object, array $array, array $path): array
+    protected function processLoadedArray(Metadata $metadata, object $object, array $array, array $path): array
     {
         $processed = [];
         foreach ($array as $key => $value) {
@@ -1062,7 +1062,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @return void
      * @throws InvalidUUIDException
      */
-    private function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
+    protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
     {
         try {
             $cache = $this->getCache();
@@ -1090,7 +1090,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws InvalidUUIDException
      * @throws InvalidArgumentException
      */
-    private function removeFromCache(string $uuid): void
+    protected function removeFromCache(string $uuid): void
     {
         $this->getCache()?->delete($uuid);
         $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, new Context($uuid));
@@ -1176,7 +1176,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws SafeModeActivationFailedException
      * @throws IOException
      */
-    private function registerClassname(string $className): void
+    protected function registerClassname(string $className): void
     {
         $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
 
@@ -1331,7 +1331,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return Traversable An iterator that provides filtered access to stub files in the directory.
      */
-    private function createStubIterator(string $pathClassStubs): Traversable
+    protected function createStubIterator(string $pathClassStubs): Traversable
     {
         $pattern = $pathClassStubs . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_STUB;
 
@@ -1455,7 +1455,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string|null $className The classname to filter objects by. If null, no filtering is applied.
      * @return Traversable An iterator for traversing filtered objects.
      */
-    private function createObjectIterator(?string $className): Traversable
+    protected function createObjectIterator(?string $className): Traversable
     {
         $pattern = $this->getStorageDir() . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
         return new class (new GlobIterator($pattern), $className, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
