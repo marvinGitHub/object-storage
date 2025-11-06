@@ -126,7 +126,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param int|float|null $ttl The time-to-live (in seconds) to set for the UUID.
      *
      * @return void
-     * @throws InvalidUUIDException
      * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
      * @throws MetadataSavingFailureException
      */
@@ -160,7 +159,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $uuid The unique identifier for which the expiration is being set.
      * @param DateTimeInterface|null $expiresAt The date and time at which the UUID should expire, or null for no expiration.
      * @return void
-     * @throws InvalidUUIDException
      * @throws MetadataNotFoundException
      * @throws MetadataSavingFailureException
      */
@@ -175,7 +173,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param null|string $uuid The unique identifier for the metadata to be loaded.
      * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
-     * @throws InvalidUUIDException
      */
     public function loadMetadata(?string $uuid): ?Metadata
     {
@@ -422,7 +419,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid
      * @return string|null
-     * @throws InvalidUUIDException
      */
     public function getClassName(string $uuid): ?string
     {
@@ -436,7 +432,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $uuid The unique identifier associated with the stub.
      * @return void
      * @throws StubDeletionFailureException If the stub file could not be deleted.
-     * @throws InvalidUUIDException
      */
     protected function deleteStub(string $className, string $uuid): void
     {
@@ -549,18 +544,21 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $classNameChanged = $metadata->getClassName() !== $previousClassname;
 
             if ($checksumChanged || $classNameChanged) {
-                try {
-                    $previousObject = $this->exists($uuid) ? $this->load($uuid) : null;
-                } catch (Throwable $e) {
-                    $this->getLogger()?->log($e);
-                    $previousObject = null;
-                }
+                $contextBuilderObjectPersistenceContext = function () use ($uuid, $object): ObjectPersistenceContext {
+                    try {
+                        $previousObject = $this->exists($uuid) ? $this->load($uuid) : null;
+                    } catch (Throwable $e) {
+                        $this->getLogger()?->log($e);
+                        $previousObject = null;
+                    }
+                    return new ObjectPersistenceContext($uuid, $object, $previousObject);
+                };
 
                 try {
                     $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
-                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, fn() => new ObjectPersistenceContext($uuid, $object, $previousObject));
+                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                 } catch (Throwable $e) {
-                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, fn() => new ObjectPersistenceContext($uuid, $object, $previousObject));
+                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
                     throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
                 }
 
