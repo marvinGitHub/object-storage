@@ -48,12 +48,11 @@ class FileSystem extends LockAdapterAbstract
 
     /**
      * @throws LockException
-     * @throws InvalidUUIDException
      */
     public function acquireSharedLock(string $uuid, int|float $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_SHARED, $timeout);
-        $this->getEventDispatcher()?->dispatch(Events::SHARED_LOCK_ACQUIRED, new Context($uuid));
+        $this->getEventDispatcher()?->dispatch(Events::SHARED_LOCK_ACQUIRED, fn() => new Context($uuid));
     }
 
     /**
@@ -138,6 +137,12 @@ class FileSystem extends LockAdapterAbstract
         return isset($this->activeLocks[$uuid]) && $this->activeLocks[$uuid]['exclusive'];
     }
 
+    /**
+     * Checks if the lock is held by a process other than the current one.
+     *
+     * @param string|null $uuid The unique identifier for the lock, or null if no identifier is provided.
+     * @return bool Returns true if the lock is held by another process, otherwise false.
+     */
     public function isLockedByOtherProcess(?string $uuid): bool
     {
         return false === $this->isLockedByThisProcess($uuid) && file_exists($this->getLockFilePath($uuid));
@@ -171,12 +176,11 @@ class FileSystem extends LockAdapterAbstract
 
     /**
      * @throws LockException
-     * @throws InvalidUUIDException
      */
     public function acquireExclusiveLock(string $uuid, int|float $timeout = 10): void
     {
         $this->lock($uuid, static::TYPE_EXCLUSIVE, $timeout);
-        $this->getEventDispatcher()?->dispatch(Events::EXCLUSIVE_LOCK_ACQUIRED, new Context($uuid));
+        $this->getEventDispatcher()?->dispatch(Events::EXCLUSIVE_LOCK_ACQUIRED, fn() => new Context($uuid));
     }
 
     /**
@@ -196,6 +200,11 @@ class FileSystem extends LockAdapterAbstract
         }
     }
 
+    /**
+     * Retrieves the list of currently active lock identifiers.
+     *
+     * @return string[] An array of identifiers for active locks.
+     */
     public function getActiveLocks(): array
     {
         return array_keys($this->activeLocks);
@@ -208,7 +217,6 @@ class FileSystem extends LockAdapterAbstract
      * @param string $uuid The unique identifier for the lock to be released.
      * @return void
      * @throws LockException If no active lock is found for the given UUID.
-     * @throws InvalidUUIDException
      */
     public function releaseLock(string $uuid): void
     {
@@ -234,6 +242,6 @@ class FileSystem extends LockAdapterAbstract
 
         unset($this->activeLocks[$uuid]);
 
-        $this->getEventDispatcher()?->dispatch(Events::LOCK_RELEASED, new Context($uuid));
+        $this->getEventDispatcher()?->dispatch(Events::LOCK_RELEASED, fn() => new Context($uuid));
     }
 }

@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Event;
 
 use melia\ObjectStorage\Event\Context\ContextInterface;
+use melia\ObjectStorage\Exception\ContextBuilderFailureException;
 use melia\ObjectStorage\Logger\LoggerAwareTrait;
 use Throwable;
 
@@ -54,12 +55,23 @@ class Dispatcher implements DispatcherInterface
      * If a listener throws an exception, it is logged without interrupting the dispatch process.
      *
      * @param string $event The name of the event to be dispatched.
-     * @param ContextInterface|null $context Optional context information passed to the listeners.
+     * @param callable|null $contextBuilder
      * @return void
      */
-    public function dispatch(string $event, ?ContextInterface $context = null): void
+    public function dispatch(string $event, ?callable $contextBuilder = null): void
     {
         foreach ($this->listeners[$event] ?? [] as $listener) {
+            $context = null;
+            try {
+                if (is_callable($contextBuilder)) {
+                    $context = $contextBuilder();
+                    if (false === $context instanceof ContextInterface) {
+                        throw new ContextBuilderFailureException('Context builder must return an instance of ' . ContextInterface::class);
+                    }
+                }
+            } catch (Throwable $e) {
+                $this->getLogger()?->log(new ContextBuilderFailureException('Context builder failed: ' . $e->getMessage(), code: $e->getCode(), previous: $e));;
+            }
             try {
                 $listener($context);
             } catch (Throwable $e) {

@@ -16,10 +16,10 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         $dispatcher = new class extends Dispatcher {
             public array $events = [];
 
-            public function dispatch(string $event, ?ContextInterface $context = null): void
+            public function dispatch(string $event, ?callable $contextBuilder = null): void
             {
                 $this->events[] = $event;
-                parent::dispatch($event, $context);
+                parent::dispatch($event, $contextBuilder);
             }
         };
         $this->storage->setEventDispatcher($dispatcher);

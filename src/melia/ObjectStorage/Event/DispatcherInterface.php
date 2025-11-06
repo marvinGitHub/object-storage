@@ -10,5 +10,5 @@ interface DispatcherInterface
 
     public function removeListener(string $event, callable $listener): void;
 
-    public function dispatch(string $event, ?ContextInterface $context = null): void;
+    public function dispatch(string $event, ?callable $contextBuilder = null): void;
 }
