@@ -213,6 +213,7 @@ class Reflection
      * @param object $object The object containing the property.
      * @param string $propertyName The name of the property whose type is being retrieved.
      * @return ReflectionType|null The type of the property, or null if the type could not be determined.
+     * @throws ReflectionException
      */
     public function getCachedPropertyType(object $object, string $propertyName): ?ReflectionType
     {
@@ -222,7 +223,7 @@ class Reflection
         }
 
         // Only cache if it's a declared property on the class
-        $core = new ReflectionClass($object);
+        $core = static::getReflectionClass($object::class);
         if (!$core->hasProperty($propertyName)) {
             // dynamic property: do not cache
             return $this->getPropertyType($propertyName);
@@ -239,5 +240,14 @@ class Reflection
         $classPropertyTypeCache[$core] = $bucket;
 
         return $type;
+    }
+
+    /**
+     * @throws ReflectionException
+     */
+    public static function getReflectionClass(string $className): ReflectionClass
+    {
+        static $cache = [];
+        return $cache[$className] ??= new ReflectionClass($className);
     }
 }

@@ -902,7 +902,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, new ClassAliasCreationContext($className));
         }
 
-        return (new ReflectionClass($className))->newInstanceWithoutConstructor();
+        return Reflection::getReflectionClass($className)->newInstanceWithoutConstructor();
     }
 
     /**
