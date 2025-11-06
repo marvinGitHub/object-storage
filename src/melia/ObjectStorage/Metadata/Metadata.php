@@ -9,6 +9,7 @@ use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 class Metadata implements JsonSerializable
 {
     const RESERVED_REFERENCE_NAME_DEFAULT = '__reference';
+    const VERSION = 1;
 
     use AwareTrait;
 
@@ -198,13 +199,13 @@ class Metadata implements JsonSerializable
     public function jsonSerialize(): array
     {
         return [
-            'className' => $this->className,
-            'timestampCreation' => $this->timestampCreation,
-            'version' => $this->version,
-            'checksum' => $this->checksum,
-            'timestampExpiresAt' => $this->timestampExpiresAt,
-            'uuid' => $this->uuid,
-            'reservedReferenceName' => $this->reservedReferenceName,
+            'className' => $this->className ?? '',
+            'timestampCreation' => $this->timestampCreation ?? microtime(true),
+            'version' => $this->version ?? Metadata::VERSION,
+            'checksum' => $this->checksum ?? '',
+            'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
+            'uuid' => $this->uuid ?? '',
+            'reservedReferenceName' => $this->reservedReferenceName ?? Metadata::RESERVED_REFERENCE_NAME_DEFAULT,
         ];
     }
 }

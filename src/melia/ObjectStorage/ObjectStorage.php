@@ -58,7 +58,6 @@ use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Runtime\ClassRenameMap;
 use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
-use melia\ObjectStorage\Runtime\Placeholder;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\SPL\WeakMapSweeper;
 use melia\ObjectStorage\State\StateHandler;
@@ -806,7 +805,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier of the object.
      * @return bool Returns true if the object is expired, false otherwise.
-     * @throws InvalidUUIDException
      */
     public function expired(string $uuid): bool
     {
@@ -825,7 +823,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier used to load the metadata.
      * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
-     * @throws InvalidUUIDException
      */
     public function getLifetime(string $uuid): ?float
     {
@@ -891,8 +888,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         if (false === class_exists($className)) {
-            // alias from a stable, named placeholder instead of an anonymous class
-            if (false === class_alias(Placeholder::class, $className)) {
+            // don't create alias from a stable class, otherwise all unknown aliases will be stored as a placeholder class
+            if (false === class_alias(get_class(new class {
+                }), $className)) {
                 throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
             }
             $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, fn() => new ClassAliasCreationContext($className));
@@ -1056,7 +1054,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *                            than or equal to 0, the object is removed from the cache.
      *
      * @return void
-     * @throws InvalidUUIDException
      */
     protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
     {
@@ -1147,7 +1144,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @param string $className
      * @param string $uuid
-     * @throws InvalidUUIDException
      * @throws StubSavingFailureException
      */
     public function createStub(string $className, string $uuid): void
@@ -1242,7 +1238,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @return array
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws InvalidUUIDException
      */
     public function getClassNames(?array $subSet = null): array
     {
@@ -1265,7 +1260,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /**
      * @throws IOException
-     * @throws InvalidUUIDException
      */
     public function getMemoryConsumption(string $uuid): int
     {
@@ -1289,7 +1283,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * and recreating them for each listed UUID.
      *
      * @return void
-     * @throws InvalidUUIDException
      * @throws StubSavingFailureException
      */
     public function rebuildStubs(): void
