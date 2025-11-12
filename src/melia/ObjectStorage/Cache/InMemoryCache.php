@@ -3,32 +3,76 @@
 namespace melia\ObjectStorage\Cache;
 
 use DateInterval;
+use DateTimeImmutable;
 use Psr\SimpleCache\CacheInterface;
 
 /**
- * A simple in-memory implementation of the CacheInterface.
+ * Simple in-memory PSR-16 cache with TTL support.
  *
- * This class provides methods to manage key-value pairs stored in memory,
- * allowing operations such as retrieval, storage, deletion, and checking
- * the existence of keys.
+ * Stores values alongside absolute expiration timestamps and evicts on read/has.
  */
 class InMemoryCache implements CacheInterface
 {
+    /**
+     * Internal storage:
+     * - key => ['v' => mixed value, 'e' => float|null expiresAtTimestamp]
+     *
+     * @var array<string, array{v:mixed, e:float|null}>
+     */
+    protected array $data = [];
 
     /**
-     * Constructor method.
-     *
-     * @param array $data An optional array of data to initialize the instance.
-     * @return void
+     * @param array $initial Optional initial values (stored without expiry)
      */
-    public function __construct(protected array $data = [])
+    public function __construct(protected array $initial = [])
     {
+        foreach ($initial as $k => $v) {
+            $this->data[$k] = ['v' => $v, 'e' => null];
+        }
     }
 
     /**
-     * Clears all data from the data array and resets it to an empty state.
-     *
-     * @return bool True if the data array was successfully cleared.
+     * @inheritDoc
+     */
+    public function get(string $key, mixed $default = null): mixed
+    {
+        if (!array_key_exists($key, $this->data)) {
+            return $default;
+        }
+        $entry = $this->data[$key];
+        if ($this->isExpired($entry['e'])) {
+            unset($this->data[$key]);
+            return $default;
+        }
+        return $entry['v'];
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function set(string $key, mixed $value, DateInterval|int|null $ttl = null): bool
+    {
+        $expiresAt = $this->normalizeTtl($ttl);
+        if ($expiresAt !== null && $expiresAt <= microtime(true)) {
+            // Already expired: drop from cache (no-op success)
+            unset($this->data[$key]);
+            return true;
+        }
+        $this->data[$key] = ['v' => $value, 'e' => $expiresAt];
+        return true;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function delete(string $key): bool
+    {
+        unset($this->data[$key]);
+        return true;
+    }
+
+    /**
+     * @inheritDoc
      */
     public function clear(): bool
     {
@@ -36,6 +80,9 @@ class InMemoryCache implements CacheInterface
         return true;
     }
 
+    /**
+     * @inheritDoc
+     */
     public function getMultiple(iterable $keys, mixed $default = null): iterable
     {
         $result = [];
@@ -46,17 +93,8 @@ class InMemoryCache implements CacheInterface
     }
 
     /**
-     * Retrieves the value associated with the provided key from the data array.
-     *
-     * @param string $key The key to look up in the data array.
-     * @param mixed $default The default value to return if the key is not found.
-     * @return mixed The value associated with the key, or the default value if the key does not exist.
+     * @inheritDoc
      */
-    public function get(string $key, mixed $default = null): mixed
-    {
-        return $this->data[$key] ?? $default;
-    }
-
     public function setMultiple(iterable $values, DateInterval|int|null $ttl = null): bool
     {
         foreach ($values as $key => $value) {
@@ -66,24 +104,13 @@ class InMemoryCache implements CacheInterface
     }
 
     /**
-     * Sets a value associated with the provided key in the data array, with an optional time-to-live.
-     *
-     * @param string $key The key to associate with the value.
-     * @param mixed $value The value to store in the data array.
-     * @param DateInterval|int|null $ttl The time-to-live for the key-value pair, either as an interval, an integer in seconds, or null for no TTL.
-     * @return bool True on successful storage of the key-value pair.
+     * @inheritDoc
      */
-    public function set(string $key, mixed $value, DateInterval|int|null $ttl = null): bool
-    {
-        $this->data[$key] = $value;
-        return true;
-    }
-
     public function deleteMultiple(iterable $keys): bool
     {
         $success = true;
         foreach ($keys as $key) {
-            if (false === $this->delete($key)) {
+            if ($this->delete($key) === false) {
                 $success = false;
             }
         }
@@ -91,19 +118,45 @@ class InMemoryCache implements CacheInterface
     }
 
     /**
-     * Deletes the value associated with the provided key from the data array.
-     *
-     * @param string $key The key of the element to be deleted from the data array.
-     * @return bool True if the deletion is performed.
+     * @inheritDoc
      */
-    public function delete(string $key): bool
+    public function has(string $key): bool
     {
-        unset($this->data[$key]);
+        if (!array_key_exists($key, $this->data)) {
+            return false;
+        }
+        $entry = $this->data[$key];
+        if ($this->isExpired($entry['e'])) {
+            unset($this->data[$key]);
+            return false;
+        }
         return true;
     }
 
-    public function has(string $key): bool
+    /**
+     * Convert PSR-16 TTL formats to an absolute unix timestamp (float seconds) or null.
+     * - null => no expiry
+     * - int seconds => now + seconds (can be <= 0)
+     * - DateInterval => now + interval
+     */
+    private function normalizeTtl(DateInterval|int|null $ttl): ?float
     {
-        return isset($this->data[$key]);
+        if ($ttl === null) {
+            return null;
+        }
+        if ($ttl instanceof DateInterval) {
+            $now = new DateTimeImmutable('now');
+            $target = $now->add($ttl);
+            return (float)$target->getTimestamp();
+        }
+        return microtime(true) + (int)$ttl;
+    }
+
+    /**
+     * Check if an absolute expiry timestamp is in the past.
+     */
+    private function isExpired(?float $expiresAt): bool
+    {
+        return $expiresAt !== null && $expiresAt <= microtime(true);
     }
 }
