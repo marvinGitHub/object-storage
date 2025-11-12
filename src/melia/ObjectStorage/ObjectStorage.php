@@ -526,9 +526,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             $jsonGraph = json_encode(
-                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata)),
-                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
-            );
+                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata)));
 
             if (false === $jsonGraph) {
                 $this->getEventDispatcher()?->dispatch(Events::JSON_ENCODING_FAILURE, fn() => new Context($uuid));
