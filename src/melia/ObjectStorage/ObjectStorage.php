@@ -540,9 +540,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
 
             $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
-            $classNameChanged = $metadata->getClassName() !== $previousClassname;
+            $classNameChanged = null !== $previousClassname && $metadata->getClassName() !== $previousClassname;
+            $lifetimeChanged = $ttl !== $loadedMetadata?->getLifetime();
 
-            if ($checksumChanged || $classNameChanged) {
+            $writeGraph = $checksumChanged || $classNameChanged;
+            $writeStub = $checksumChanged || $classNameChanged;
+            $writeMetadata = $checksumChanged || $classNameChanged || $lifetimeChanged;
+            $writeCache = $checksumChanged || $classNameChanged || $lifetimeChanged;
+
+            if ($writeGraph) {
                 $contextBuilderObjectPersistenceContext = function () use ($uuid, $object): ObjectPersistenceContext {
                     try {
                         $previousObject = $this->exists($uuid) ? $this->load($uuid) : null;
@@ -560,16 +566,23 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                     $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
                     throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
                 }
-
-                $this->saveMetadata($metadata);
-                $this->createStub($className, $uuid);
             }
 
-            if ((null !== $previousClassname) && $classNameChanged) {
+            if ($classNameChanged) {
                 $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, fn() => new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
-            $this->addToCache($uuid, $object, $ttl);
+            if ($writeMetadata) {
+                $this->saveMetadata($metadata);
+            }
+
+            if ($writeCache) {
+                $this->addToCache($uuid, $object, $ttl);
+            }
+
+            if ($writeStub) {
+                $this->createStub($className, $uuid);
+            }
         } finally {
             if (isset($this->processingStack[$object])) {
                 unset($this->processingStack[$object]);
@@ -1152,7 +1165,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->registerClassname($className);
             $pathname = $this->getFilePathStub($className, $uuid);
             $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-            $this->createEmptyFile($pathname);
+            $this->createEmptyFile($pathname); // TODO check if file exists
             $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, fn() => new StubContext($uuid, $className));
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
