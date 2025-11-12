@@ -1160,10 +1160,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function createStub(string $className, string $uuid): void
     {
         try {
-            $this->registerClassname($className);
             $pathname = $this->getFilePathStub($className, $uuid);
+            if (file_exists($pathname)) {
+                return;
+            }
+
+            $this->registerClassname($className);
             $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-            $this->createEmptyFile($pathname); // TODO check if file exists
+            $this->createEmptyFile($pathname);
             $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, fn() => new StubContext($uuid, $className));
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);

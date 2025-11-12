@@ -45,8 +45,8 @@ class ObjectStorageSpyWriterTest extends TestCase
         $this->storage->store($user, $uuid);
         $callsAfterModification = $this->writerSpy->getAtomicWriteCallCount();
 
-        // 3 -> data, metadata and stub
-        $this->assertEquals(3, $callsAfterModification, 'Modified object should trigger writes');
+        // 3 -> data, metadata (stub won't be regenerated since it exists already)
+        $this->assertEquals(2, $callsAfterModification, 'Modified object should trigger writes');
 
         // Verify the content actually changed by loading and checking
         $this->storage->clearCache();
@@ -167,7 +167,9 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Assert
         $this->assertEquals(0, $unchangedCalls, 'Unchanged store should not write');
-        $this->assertEquals(3, $changedCalls, 'Changed store should write data + metadata + stub');
+
+        // 2 -> data, metadata (stub won't be regenerated since it exists already)
+        $this->assertEquals(2, $changedCalls, 'Changed store should write data + metadata + stub');
         $this->assertEquals(0, $unchangedAgainCalls, 'Unchanged store after change should not write');
 
         // Verify the change persisted
@@ -175,6 +177,4 @@ class ObjectStorageSpyWriterTest extends TestCase
         $loadedUser = $this->storage->load($uuid);
         $this->assertEquals('Changed Name', $loadedUser->name);
     }
-
-
 }
