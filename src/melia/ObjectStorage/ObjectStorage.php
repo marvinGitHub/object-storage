@@ -25,6 +25,7 @@ use melia\ObjectStorage\Event\Context\TypeConversionContext;
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
+use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\ClosureSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
@@ -208,11 +209,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
      *
      * @param string $filename The path to the file to read and decode data from.
+     * @param string|null $checksum Optional. The checksum of the file content to be validated.
      * @return array|null Returns the decoded data as an associative array.
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException If the file content cannot be decoded.
+     * @throws ChecksumMismatchException
      */
-    protected function loadFromJsonFile(string $filename): ?array
+    protected function loadFromJsonFile(string $filename, ?string $checksum = null): ?array
     {
         try {
             $data = $this->getReader()->read($filename);
@@ -220,6 +223,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->getLogger()?->log($e);
             $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, fn() => new IOContext($filename));
             return null;
+        }
+
+        $currentChecksum = $this->generateChecksum($data);
+        if ($checksum && $currentChecksum !== $checksum) {
+            throw new ChecksumMismatchException(sprintf('Checksum mismatch for file %s. Current: %s Expected: %s', $filename, $currentChecksum, $checksum));
         }
 
         $data = json_decode($data, true, $this->maxNestingLevel);
@@ -533,7 +541,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 throw new SerializationFailureException('Unable export object graph to JSON');
             }
 
-            $metadata->setChecksum(md5($jsonGraph));
+            $metadata->setChecksum($this->generateChecksum($jsonGraph));
 
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
 
@@ -854,16 +862,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function loadFromStorage(string $uuid): ?object
     {
-        $data = $this->loadFromJsonFile($this->getFilePathData($uuid));
-        if (false === is_array($data)) {
-            return null;
-        }
-
         // load metadata once and derive the class name and lifetime from it
         $metadata = $this->loadMetadata($uuid);
         if (null === $metadata) {
             $this->getStateHandler()?->enableSafeMode();
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
+        }
+
+        try {
+            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), $metadata->getChecksum());
+        } catch (ChecksumMismatchException $e) {
+            $this->getStateHandler()?->enableSafeMode();
+            throw $e;
+        }
+
+        if (false === is_array($data)) {
+            return null;
         }
 
         // build object using the single metadata instance
@@ -1198,6 +1212,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
+     * @throws ChecksumMismatchException
      */
     public function getRegisteredClassnames(): ?array
     {
@@ -1505,5 +1520,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 return $this->current();
             }
         };
+    }
+
+    /**
+     * Generates an MD5 checksum for the given string data.
+     *
+     * @param string $data The input data for which the checksum will be generated.
+     * @return string The generated MD5 checksum as a hexadecimal string.
+     */
+    protected function generateChecksum(string $data): string
+    {
+        return md5($data);
     }
 }
