@@ -49,6 +49,7 @@ use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
 use melia\ObjectStorage\File\Directory;
+use melia\ObjectStorage\File\IO\RealAdapter;
 use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
@@ -1219,7 +1220,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws ChecksumMismatchException
      */
     public function getRegisteredClassnames(): ?array
     {
@@ -1265,7 +1265,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function createEmptyFile(string $filename): void
     {
-        $this->getWriter()->atomicWrite($filename);
+        (new RealAdapter())->touch($filename);
     }
 
     /**

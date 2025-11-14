@@ -63,4 +63,9 @@ class RealAdapter implements AdapterInterface
     {
         return fread($resource, $length);
     }
+
+    public function touch(string $filename): bool
+    {
+        return touch($filename);
+    }
 }

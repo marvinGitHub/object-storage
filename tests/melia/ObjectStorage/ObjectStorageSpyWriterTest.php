@@ -20,11 +20,12 @@ class ObjectStorageSpyWriterTest extends TestCase
         $this->storage->store($user, $uuid);
         $callsAfterSecondStore = $this->writerSpy->getAtomicWriteCallCount();
 
-        // 3 -> data, metadata and stub, classname
-        $this->assertEquals(4, $callsAfterFirstStore, 'First store should write data and metadata files, stub and classname');
+        // 3 -> data, metadata and classname
+        $this->assertEquals(3, $callsAfterFirstStore, 'First store should write data and metadata files, stub and classname');
         $this->assertEquals(0, $callsAfterSecondStore, 'Second store should not write any files (object unchanged)');
 
         // Verify files actually exist (proving real writer was called)
+        $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
         $this->assertTrue(file_exists($this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . '.obj'));
         $this->assertTrue(file_exists($this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . '.metadata'));
     }
@@ -64,7 +65,8 @@ class ObjectStorageSpyWriterTest extends TestCase
         $calls = $this->writerSpy->getMethodCalls();
 
         // Assert - Verify call details
-        $this->assertCount(4, $calls, 'Should have 2 calls (data + metadata + stub + classname)');
+        $this->assertCount(3, $calls, 'Should have 3 calls (data + metadata + classname)');
+        $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
 
         // Check first call (data file)
         $dataCall = $calls[0];
@@ -130,7 +132,8 @@ class ObjectStorageSpyWriterTest extends TestCase
         $finalMetadataTime = filemtime($metadataFile);
 
         // Assert
-        $this->assertEquals(4, $initialCallCount, 'Initial store should write 2 files (data, metadata and stub, classname)');
+        $this->assertEquals(3, $initialCallCount, 'Initial store should write 3 files (data, metadata and classname)');
+        $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
         $this->assertEquals(0, $subsequentCallCount, 'Subsequent stores should not write any files');
         $this->assertEquals($initialDataTime, $finalDataTime, 'Data file timestamp should not change');
         $this->assertEquals($initialMetadataTime, $finalMetadataTime, 'Metadata file timestamp should not change');
