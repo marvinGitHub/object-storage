@@ -141,6 +141,7 @@ try {
                 'uuid' => $uuid,
                 'classname' => $classname ?? '',
                 'checksum' => $metadata?->getChecksum() ?? '',
+                'algorithm' => $metadata?->getChecksumAlgorithm() ?? '',
                 'isLocked' => $isLocked,
                 'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited'
             ]);
@@ -163,6 +164,7 @@ try {
                         $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
                         $metadata = $storage->loadMetadata($uuid);
                         $metadata->setChecksum($md5 = md5($json));
+                        $metadata->setChecksumAlgorithm('md5');
                         $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), json_encode($metadata));
                         $storage->getLockAdapter()->releaseLock($uuid);
                         $success = $dataWritten && $metadataWritten;
