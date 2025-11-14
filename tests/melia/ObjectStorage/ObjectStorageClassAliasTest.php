@@ -16,7 +16,7 @@ class ObjectStorageClassAliasTest extends TestCase
 
         $this->assertFalse(class_exists($unknownClassname));
 
-        file_put_contents(sprintf('%s%s%s.metadata', $dir, DIRECTORY_SEPARATOR, $uuid), sprintf('{"timestamp":1756892960,"className":"%s","uuid":"099c84a5-78cb-4e30-a15f-2b4ef7ec176d","version":"1.0","checksum":"b029245bf19000f67e92da851c959928"}', $unknownClassname));
+        file_put_contents(sprintf('%s%s%s.metadata', $dir, DIRECTORY_SEPARATOR, $uuid), sprintf('{"timestamp":1756892960,"className":"%s","uuid":"099c84a5-78cb-4e30-a15f-2b4ef7ec176d","version":"1.0","checksum":"671130ff","checksumAlgorithm":"crc32b"}', $unknownClassname));
         file_put_contents(sprintf('%s%s%s.obj', $dir, DIRECTORY_SEPARATOR, $uuid), '{"name":"Lazy-B"}');
 
         $storage = new ObjectStorage($dir);

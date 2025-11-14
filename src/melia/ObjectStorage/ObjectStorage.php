@@ -95,6 +95,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use MetadataCacheAwareTrait;
     use ClassRenameMapAwareTrait;
 
+    const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
+
     /**
      * The suffix used for metadata files.
      */
@@ -209,13 +211,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
      *
      * @param string $filename The path to the file to read and decode data from.
-     * @param string|null $checksum Optional. The checksum of the file content to be validated.
+     * @param callable|null $validator
      * @return array|null Returns the decoded data as an associative array.
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException If the file content cannot be decoded.
-     * @throws ChecksumMismatchException
      */
-    protected function loadFromJsonFile(string $filename, ?string $checksum = null): ?array
+    protected function loadFromJsonFile(string $filename, ?callable $validator = null): ?array
     {
         try {
             $data = $this->getReader()->read($filename);
@@ -225,9 +226,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        $currentChecksum = $this->generateChecksum($data);
-        if ($checksum && $currentChecksum !== $checksum) {
-            throw new ChecksumMismatchException(sprintf('Checksum mismatch for file %s. Current: %s Expected: %s', $filename, $currentChecksum, $checksum));
+        if (is_callable($validator)) {
+            $validator($data);
         }
 
         $data = json_decode($data, true, $this->maxNestingLevel);
@@ -520,6 +520,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->processingStack[$object] = true;
 
             $metadata = new Metadata();
+            $metadata->setChecksumAlgorithm(static::CHECKSUM_ALGORITHM_DEFAULT);
             $metadata->setTimestampCreation($timestampCreation = microtime(true));
             $metadata->setUuid($uuid);
             $metadata->setClassName($className = get_class($object));
@@ -541,7 +542,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 throw new SerializationFailureException('Unable export object graph to JSON');
             }
 
-            $metadata->setChecksum($this->generateChecksum($jsonGraph));
+            $metadata->setChecksum($this->generateChecksum($jsonGraph, $metadata->getChecksumAlgorithm()));
 
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
 
@@ -870,7 +871,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), $metadata->getChecksum());
+            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), function (string $data) use ($metadata) {
+                $checksum = $this->generateChecksum($data, $metadata->getChecksumAlgorithm());
+
+                if ($metadata->getChecksum() !== $checksum) {
+                    throw new ChecksumMismatchException(sprintf('Checksum mismatch for uuid %s. Current: %s Expected: %s', $metadata->getUUID(), $checksum, $metadata->getChecksum()));
+                }
+            });
         } catch (ChecksumMismatchException $e) {
             $this->getStateHandler()?->enableSafeMode();
             throw $e;
@@ -1523,13 +1530,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Generates an MD5 checksum for the given string data.
+     * Generates a checksum for the given data using the specified hashing algorithm.
      *
-     * @param string $data The input data for which the checksum will be generated.
-     * @return string The generated MD5 checksum as a hexadecimal string.
+     * @param string $data The input data for which the checksum is to be generated.
+     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
+     * @return string The generated checksum as a hashed string.
      */
-    protected function generateChecksum(string $data): string
+    protected function generateChecksum(string $data, string $algorithm): string
     {
-        return md5($data);
+        return hash($algorithm, $data);
     }
 }

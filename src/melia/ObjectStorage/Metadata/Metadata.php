@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Metadata;
 
 use JsonSerializable;
+use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 
@@ -17,6 +18,7 @@ class Metadata implements JsonSerializable
     private float $timestampCreation;
     private int $version;
     private string $checksum;
+    private string $checksumAlgorithm = 'crc32b';
     private null|float $timestampExpiresAt = null;
 
     private array $references = [];
@@ -39,6 +41,14 @@ class Metadata implements JsonSerializable
         }
         if (array_key_exists('checksum', $data)) {
             $metadata->setChecksum($data['checksum']);
+        }
+        if (array_key_exists('checksumAlgorithm', $data)) {
+            $metadata->setChecksumAlgorithm($data['checksumAlgorithm']);
+        } else {
+            /* backwards compatibility */
+            if (32 === strlen($metadata->getChecksum())) {
+                $metadata->setChecksumAlgorithm('md5');
+            }
         }
         if (array_key_exists('timestampExpiresAt', $data)) {
             $metadata->setTimestampExpiresAt($data['timestampExpiresAt']);
@@ -192,6 +202,27 @@ class Metadata implements JsonSerializable
     }
 
     /**
+     * Sets the checksum algorithm to be used.
+     *
+     * @param string $checksumAlgorithm The name of the checksum algorithm to set.
+     * @return void
+     */
+    public function setChecksumAlgorithm(string $checksumAlgorithm): void
+    {
+        $this->checksumAlgorithm = $checksumAlgorithm;
+    }
+
+    /**
+     * Retrieves the checksum algorithm used.
+     *
+     * @return string The name of the checksum algorithm.
+     */
+    public function getChecksumAlgorithm(): string
+    {
+        return $this->checksumAlgorithm;
+    }
+
+    /**
      * Prepares data for JSON serialization.
      *
      * @return array An associative array containing the object's properties to be serialized.
@@ -203,6 +234,7 @@ class Metadata implements JsonSerializable
             'timestampCreation' => $this->timestampCreation ?? microtime(true),
             'version' => $this->version ?? Metadata::VERSION,
             'checksum' => $this->checksum ?? '',
+            'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
             'uuid' => $this->uuid ?? '',
             'reservedReferenceName' => $this->reservedReferenceName ?? Metadata::RESERVED_REFERENCE_NAME_DEFAULT,
