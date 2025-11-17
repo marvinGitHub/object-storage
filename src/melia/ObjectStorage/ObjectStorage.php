@@ -1188,7 +1188,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->registerClassname($className);
             $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-            $this->createEmptyFile($pathname);
+            $this->getWriter()->createEmptyFile($pathname);
             $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, fn() => new StubContext($uuid, $className));
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
@@ -1254,17 +1254,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         if (false === (new Directory($directory))->createIfNotExists()) {
             throw new IOException('Unable to create directory: ' . $directory);
         }
-    }
-
-    /**
-     * Creates an empty file with the specified filename.
-     *
-     * @param string $filename The name of the file to be created.
-     * @return void
-     */
-    protected function createEmptyFile(string $filename): void
-    {
-        (new RealAdapter())->touch($filename);
     }
 
     /**

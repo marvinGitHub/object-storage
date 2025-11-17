@@ -62,7 +62,7 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Act - Store object
         $uuid = $this->storage->store($user);
-        $calls = $this->writerSpy->getMethodCalls();
+        $calls = $this->writerSpy->getAtomicWriteCalls();
 
         // Assert - Verify call details
         $this->assertCount(3, $calls, 'Should have 3 calls (data + metadata + classname)');

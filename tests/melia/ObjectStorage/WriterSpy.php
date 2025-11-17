@@ -29,9 +29,25 @@ class WriterSpy implements WriterInterface
         $this->realWriter?->atomicWrite($filename, $data);
     }
 
+    public function createEmptyFile(string $filename): void
+    {
+        $this->methodCalls[] = [
+            'method' => 'createEmptyFile',
+            'filename' => $filename,
+            'timestamp' => microtime(true)
+        ];
+
+        $this->realWriter?->createEmptyFile($filename);
+    }
+
     public function getMethodCalls(): array
     {
         return $this->methodCalls;
+    }
+
+    public function getAtomicWriteCalls(): array
+    {
+        return array_filter($this->methodCalls, fn($call) => $call['method'] === 'atomicWrite');
     }
 
     public function getCallsForUuid(string $uuid): array

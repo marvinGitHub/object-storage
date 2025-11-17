@@ -104,4 +104,15 @@ class Writer implements WriterInterface
             throw new IOException('Unable to close file: ' . $filename);
         }
     }
+
+    /**
+     * Creates an empty file with the specified filename.
+     *
+     * @param string $filename The name of the file to be created.
+     * @return void
+     */
+    public function createEmptyFile(string $filename): void
+    {
+        $this->getAdapter()->touch($filename);
+    }
 }
