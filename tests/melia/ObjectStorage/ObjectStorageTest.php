@@ -684,6 +684,11 @@ class ObjectStorageTest extends TestCase
                 }
                 // subsequent calls are ignored
             }
+
+            public function createEmptyFile(string $filename): void
+            {
+                // TODO: Implement createEmptyFile() method.
+            }
         };
 
         $this->storage->setWriter($failingWriter);
@@ -712,6 +717,11 @@ class ObjectStorageTest extends TestCase
                     throw new \RuntimeException('Simulated metadata write failure');
                 }
                 // all other calls succeed (no-op here)
+            }
+
+            public function createEmptyFile(string $filename): void
+            {
+                // TODO: Implement createEmptyFile() method.
             }
         };
 

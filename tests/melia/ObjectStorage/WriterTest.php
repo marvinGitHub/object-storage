@@ -20,4 +20,9 @@ class WriterTest extends TestCase
         $writer->atomicWrite($filename, null);
         $this->assertEquals('', $reader->read($filename));
     }
+
+    public function createEmptyFile(): void
+    {
+
+    }
 }
