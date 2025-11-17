@@ -91,9 +91,7 @@ class FileSystem extends LockAdapterAbstract
             default => throw new LockException('Invalid lock type'),
         };
 
-        if (false === file_exists($lockFile)) {
-            $this->getWriter()->atomicWrite($lockFile, '');
-        }
+        $this->getWriter()->atomicWrite($lockFile, '');
 
         $handle = fopen($lockFile, 'r+');
         if ($handle === false) {

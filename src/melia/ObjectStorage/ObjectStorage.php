@@ -444,12 +444,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function deleteStub(string $className, string $uuid): void
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
-        if (file_exists($filePathStub)) {
-            if (!unlink($filePathStub)) {
-                throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
-            }
-            $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, fn() => new StubContext($uuid, $className));
+
+        if (file_exists($filePathStub) && !unlink($filePathStub)) {
+            throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
         }
+        $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, fn() => new StubContext($uuid, $className));
     }
 
     /**
