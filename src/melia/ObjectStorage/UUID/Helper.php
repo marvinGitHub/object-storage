@@ -23,11 +23,14 @@ class Helper
             return null;
         }
 
-        $instanceOfAwareInterface = $object instanceof AwareInterface;
-        $hasMethod = method_exists($object, 'getUUID');
-        if ($instanceOfAwareInterface && $hasMethod) {
+        if ($object instanceof AwareInterface) {
             return $object->getUUID();
         }
+
+        if (method_exists($object, 'getUUID')) {
+            return $object->getUUID();
+        }
+
         $reflection = new Reflection($object);
         try {
             $uuid = $reflection->get('uuid');
@@ -55,11 +58,13 @@ class Helper
         /* important: only assign if the object implements AwareInterface to not break existing code or introduce unexpected behavior */
         $instanceOfAwareInterface = $object instanceof AwareInterface;
 
-        if ($instanceOfAwareInterface) {
-            if (Validator::validate($uuid) === false) {
-                throw new InvalidUUIDException(sprintf('Invalid UUID: %s', $uuid));
-            }
-            $object->setUUID($uuid);
+        if (!$instanceOfAwareInterface) {
+            return;
         }
+
+        if (Validator::validate($uuid) === false) {
+            throw new InvalidUUIDException(sprintf('Invalid UUID: %s', $uuid));
+        }
+        $object->setUUID($uuid);
     }
 }
