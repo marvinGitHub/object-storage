@@ -301,6 +301,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->getCache()?->clear();
         WeakMapSweeper::clear($this->objectUuidMap);
         WeakMapSweeper::clear($this->processingStack);
+        WeakMapSweeper::clear($this->lazyloadReferenceSupportCache);
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
