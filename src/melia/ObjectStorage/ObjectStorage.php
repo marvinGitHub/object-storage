@@ -1209,12 +1209,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
 
-        if (!in_array($className, $registeredClassnames, true)) {
-            $this->registeredClassNamesCache[] = $className;
+        if (!isset($registeredClassnames[$className])) {
+            $this->registeredClassNamesCache[$className] = $className;
             $this->createDirectoryIfNotExist($this->getStubDirectory());
             $this->getWriter()->atomicWrite(
                 $this->getFilePathClassnames(),
-                json_encode($this->registeredClassNamesCache, JSON_UNESCAPED_SLASHES)
+                json_encode($this->registeredClassNamesCache)
             );
         }
     }
