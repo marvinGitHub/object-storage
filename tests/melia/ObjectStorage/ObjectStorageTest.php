@@ -796,4 +796,16 @@ class ObjectStorageTest extends TestCase
         $new = $this->storage->load($uuid);
         $this->assertInstanceOf(stdClass::class, $new);
     }
+
+    public function testStoreWithStaticAttribute()
+    {
+        $a = new class {
+            public static $foo = 'bar';
+        };
+        $uuid = $this->storage->store($a);
+        $this->assertNotEmpty($uuid);
+        $this->storage->clearCache();
+        $loaded = $this->storage->load($uuid);
+        $this->assertEquals('bar', $loaded::$foo);
+    }
 }
