@@ -448,7 +448,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
 
-        if ($this->getIOAdapter()->fileExists($filePathStub) && !$this->getIOAdapter()->unlink($filePathStub)) {
+        if ($this->getIOAdapter()->isFile($filePathStub) && !$this->getIOAdapter()->unlink($filePathStub)) {
             throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
         }
         $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, fn() => new StubContext($uuid, $className));
@@ -760,7 +760,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function exists(string $uuid): bool
     {
-        return $this->getIOAdapter()->fileExists($this->getFilePathData($uuid));
+        return $this->getIOAdapter()->isFile($this->getFilePathData($uuid));
     }
 
     /**
@@ -1155,7 +1155,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             $filePathMetadata = $this->getFilePathMetadata($uuid);
-            if ($this->getIOAdapter()->fileExists($filePathMetadata)) {
+            if ($this->getIOAdapter()->isFile($filePathMetadata)) {
                 if (!$this->getIOAdapter()->unlink($filePathMetadata)) {
                     throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
                 }
@@ -1185,7 +1185,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         try {
             $pathname = $this->getFilePathStub($className, $uuid);
-            if ($this->getIOAdapter()->fileExists($pathname)) {
+            if ($this->getIOAdapter()->isFile($pathname)) {
                 return;
             }
 
@@ -1230,7 +1230,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         $filenameClassnames = $this->getFilePathClassnames();
-        if ($this->getIOAdapter()->fileExists($filenameClassnames)) {
+        if ($this->getIOAdapter()->isFile($filenameClassnames)) {
             $this->registeredClassNamesCache = $this->loadFromJsonFile($filenameClassnames) ?? [];
         } else {
             $this->registeredClassNamesCache = [];

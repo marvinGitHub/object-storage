@@ -70,7 +70,7 @@ class Dispatcher implements DispatcherInterface
                     }
                 }
             } catch (Throwable $e) {
-                $this->getLogger()?->log(new ContextBuilderFailureException('Context builder failed: ' . $e->getMessage(), code: $e->getCode(), previous: $e));;
+                $this->getLogger()?->log(new ContextBuilderFailureException('Context builder failed: ' . $e->getMessage(), code: $e->getCode(), previous: $e));
             }
             try {
                 $listener($context);

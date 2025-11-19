@@ -6,9 +6,10 @@ use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
+use melia\ObjectStorage\File\IO\AdapterAwareTrait;
+use melia\ObjectStorage\File\IO\RealAdapter;
 use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\Logger\LoggerAwareTrait;
-use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use Throwable;
 
 class FileSystem extends LockAdapterAbstract
@@ -18,6 +19,7 @@ class FileSystem extends LockAdapterAbstract
 
     use LoggerAwareTrait;
     use WriterAwareTrait;
+    use AdapterAwareTrait;
 
     /**
      * Defines the suffix used for lock files to indicate processing or restricted access.
@@ -34,6 +36,7 @@ class FileSystem extends LockAdapterAbstract
     public function __construct(string $lockDir)
     {
         $this->setLockDir($lockDir);
+        $this->setIOAdapter(new RealAdapter());
     }
 
     public function getLockDir(): string
@@ -91,12 +94,13 @@ class FileSystem extends LockAdapterAbstract
             default => throw new LockException('Invalid lock type'),
         };
 
-        $handle = fopen($lockFile, 'w+');
+        $adapter = $this->getIOAdapter();
+        $handle = $adapter->fopen($lockFile, 'w+');
         if ($handle === false) {
             throw new LockException('Unable to open lock file: ' . $lockFile);
         }
 
-        while (!flock($handle, $lockType | LOCK_NB)) {
+        while (!$adapter->flock($handle, $lockType | LOCK_NB)) {
             if (microtime(true) - $startTime > $timeout) {
                 fclose($handle);
                 throw new LockException(sprintf('Timeout while waiting for lock: %s (%s)', $uuid, ($type === static::TYPE_SHARED ? 'shared' : 'exclusive')));
@@ -141,7 +145,7 @@ class FileSystem extends LockAdapterAbstract
      */
     public function isLockedByOtherProcess(?string $uuid): bool
     {
-        return false === $this->isLockedByThisProcess($uuid) && file_exists($this->getLockFilePath($uuid));
+        return false === $this->isLockedByThisProcess($uuid) && $this->getIOAdapter()->isFile($this->getLockFilePath($uuid));
     }
 
     /**
@@ -222,17 +226,19 @@ class FileSystem extends LockAdapterAbstract
             throw new LockException('No active lock found for uuid: ' . $uuid);
         }
 
-        if (false === flock($lock['handle'], LOCK_UN)) {
+        $adapter = $this->getIOAdapter();
+
+        if (false === $adapter->flock($lock['handle'], LOCK_UN)) {
             throw new LockException('Unable to release lock: ' . $uuid);
         }
 
-        if (false === fclose($lock['handle'])) {
+        if (false === $adapter->fclose($lock['handle'])) {
             throw new LockException('Unable to close lock file: ' . $uuid);
         }
 
         $path = $this->getLockFilePath($uuid);
 
-        if (file_exists($path) && false === @unlink($this->getLockFilePath($uuid))) {
+        if ($adapter->isFile($path) && false === $adapter->unlink($path)) {
             throw new LockException('Unable to delete lock file: ' . $uuid);
         }
 

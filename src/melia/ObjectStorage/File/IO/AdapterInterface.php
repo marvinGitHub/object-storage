@@ -17,6 +17,8 @@ interface AdapterInterface
     /** @return int|false */
     public function ftell($resource);
 
+    public function flock($resource, int $operation, &$wouldblock = null): bool;
+
     public function ftruncate($resource, int $size): bool;
 
     public function fclose($resource): bool;
@@ -32,4 +34,8 @@ interface AdapterInterface
     public function fileSize(string $filename): bool|int;
 
     public function isDir(string $filename): bool;
+
+    public function isFile(string $filename): bool;
+
+    public function fileGetContents(string $filename): false|string;
 }

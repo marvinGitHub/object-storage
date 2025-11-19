@@ -45,9 +45,9 @@ final class WriterRecoveryTest extends TestCase
             ->with($handle)
             ->willReturn(true);
 
-        // recovery: fileExists checked -> pretend file exists
+        // recovery: isFile checked
         $adapter->expects(self::once())
-            ->method('fileExists')
+            ->method('isFile')
             ->with($filename)
             ->willReturn(true);
 
@@ -115,7 +115,7 @@ final class WriterRecoveryTest extends TestCase
 
         // file does not exist -> unlink must not be called
         $adapter->expects(self::once())
-            ->method('fileExists')
+            ->method('isFile')
             ->with($filename)
             ->willReturn(false);
 

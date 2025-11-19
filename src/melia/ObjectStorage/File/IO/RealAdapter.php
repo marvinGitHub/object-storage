@@ -78,4 +78,19 @@ class RealAdapter implements AdapterInterface
     {
         return is_dir($filename);
     }
+
+    public function isFile(string $filename): bool
+    {
+        return is_file($filename);
+    }
+
+    public function flock($resource, int $operation, &$wouldblock = null): bool
+    {
+        return flock($resource, $operation, $wouldblock);
+    }
+
+    public function fileGetContents(string $filename): false|string
+    {
+        return @file_get_contents($filename);
+    }
 }

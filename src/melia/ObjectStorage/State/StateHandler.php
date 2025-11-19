@@ -5,6 +5,8 @@ namespace melia\ObjectStorage\State;
 use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
+use melia\ObjectStorage\File\IO\AdapterAwareTrait;
+use melia\ObjectStorage\File\IO\RealAdapter;
 use melia\ObjectStorage\File\WriterAwareTrait;
 use Throwable;
 
@@ -12,8 +14,10 @@ class StateHandler
 {
     public function __construct(private string $stateDir)
     {
+        $this->setIOAdapter(new RealAdapter());
     }
 
+    use AdapterAwareTrait;
     use WriterAwareTrait;
     use DispatcherAwareTrait;
 
@@ -24,8 +28,9 @@ class StateHandler
      */
     public function disableSafeMode(): bool
     {
-        if (file_exists($filename = $this->getFilePathSafeMode())) {
-            $success = unlink($filename);
+        $adapter = $this->getIOAdapter();
+        if ($adapter->isFile($filename = $this->getFilePathSafeMode())) {
+            $success = $adapter->unlink($filename);
             $this->eventDispatcher->dispatch(Events::SAFE_MODE_DISABLED);
             return $success;
         }
@@ -50,7 +55,8 @@ class StateHandler
     public function safeModeEnabled(): bool
     {
         $filename = $this->getFilePathSafeMode();
-        return file_exists($filename) && (bool)file_get_contents($filename) === true;
+        $adapter = $this->getIOAdapter();
+        return $adapter->isFile($filename) && (bool)$adapter->fileGetContents($filename) === true;
     }
 
     /**

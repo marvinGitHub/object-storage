@@ -47,7 +47,7 @@ class Writer implements WriterInterface
                 }
             }
 
-            if (false === $adapter->fileExists($filename)) {
+            if (false === $adapter->isFile($filename)) {
                 return;
             }
 
