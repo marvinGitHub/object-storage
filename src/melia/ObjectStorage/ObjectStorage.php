@@ -1396,6 +1396,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param CacheInterface|null $cache
      * @param GeneratorInterface|null $generator
      * @param CacheInterface|null $metadataCache
+     * @param AdapterInterface|null $adapter
      * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
      */
