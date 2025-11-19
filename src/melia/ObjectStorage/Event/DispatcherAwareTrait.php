@@ -2,7 +2,7 @@
 
 namespace melia\ObjectStorage\Event;
 
-trait AwareTrait
+trait DispatcherAwareTrait
 {
     protected ?DispatcherInterface $eventDispatcher = null;
 

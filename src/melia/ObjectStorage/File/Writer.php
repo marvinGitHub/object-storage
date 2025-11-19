@@ -4,12 +4,12 @@ namespace melia\ObjectStorage\File;
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\IO\AdapterInterface;
-use melia\ObjectStorage\File\IO\AwareTrait;
+use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\RealAdapter;
 
 class Writer implements WriterInterface
 {
-    use AwareTrait;
+    use AdapterAwareTrait;
 
     /**
      * Retrieves the adapter instance used for input/output operations.
@@ -17,7 +17,7 @@ class Writer implements WriterInterface
      *
      * @return AdapterInterface|null The adapter instance or null if not set.
      */
-    public function getAdapter(): ?AdapterInterface
+    public function getIOAdapter(): ?AdapterInterface
     {
         if (null === $this->ioAdapter) {
             $this->ioAdapter = new RealAdapter();
@@ -39,7 +39,7 @@ class Writer implements WriterInterface
     public function atomicWrite(string $filename, ?string $data = null, bool $createDirectoryIfNotExist = false): void
     {
         $recover = function ($resource) use ($filename) {
-            $adapter = $this->getAdapter();
+            $adapter = $this->getIOAdapter();
 
             if (is_resource($resource)) {
                 if (false === $adapter->fclose($resource)) {
@@ -61,13 +61,13 @@ class Writer implements WriterInterface
             $directory->createIfNotExists();
         }
 
-        $adapter = $this->getAdapter();
+        $adapter = $this->getIOAdapter();
         if (null === $adapter) {
             throw new IOException('No adapter has been set');
         }
 
         /* do not use file_put_contents() here, because it does not support atomic writes */
-        $file = $this->getAdapter()->fopen($filename, 'w+');
+        $file = $this->getIOAdapter()->fopen($filename, 'w+');
 
         if (false === $file) {
             $recover($file);
@@ -113,6 +113,6 @@ class Writer implements WriterInterface
      */
     public function createEmptyFile(string $filename): void
     {
-        $this->getAdapter()->touch($filename);
+        $this->getIOAdapter()->touch($filename);
     }
 }

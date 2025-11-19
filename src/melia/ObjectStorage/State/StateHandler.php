@@ -2,7 +2,7 @@
 
 namespace melia\ObjectStorage\State;
 
-use melia\ObjectStorage\Event\AwareTrait;
+use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\File\WriterAwareTrait;
@@ -15,7 +15,7 @@ class StateHandler
     }
 
     use WriterAwareTrait;
-    use AwareTrait;
+    use DispatcherAwareTrait;
 
     /**
      * Disables safe mode by removing the related safe mode file if it exists.

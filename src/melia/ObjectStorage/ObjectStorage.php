@@ -12,7 +12,7 @@ use Iterator;
 use Exception as PHPDefaultException;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Context\GraphBuilderContext;
-use melia\ObjectStorage\Event\AwareTrait;
+use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
@@ -49,6 +49,8 @@ use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
 use melia\ObjectStorage\File\Directory;
+use melia\ObjectStorage\File\IO\AdapterAwareTrait;
+use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
 use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\WriterAwareTrait;
@@ -89,9 +91,10 @@ use WeakMap;
  */
 class ObjectStorage extends StorageAbstract implements StorageInterface, StorageMemoryConsumptionInterface
 {
+    use AdapterAwareTrait;
     use WriterAwareTrait;
     use ReaderAwareTrait;
-    use AwareTrait;
+    use DispatcherAwareTrait;
     use Cache\AwareTrait;
     use MetadataCacheAwareTrait;
     use ClassRenameMapAwareTrait;
@@ -445,7 +448,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
 
-        if (file_exists($filePathStub) && !unlink($filePathStub)) {
+        if ($this->getIOAdapter()->fileExists($filePathStub) && !$this->getIOAdapter()->unlink($filePathStub)) {
             throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
         }
         $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, fn() => new StubContext($uuid, $className));
@@ -757,7 +760,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function exists(string $uuid): bool
     {
-        return file_exists($this->getFilePathData($uuid));
+        return $this->getIOAdapter()->fileExists($this->getFilePathData($uuid));
     }
 
     /**
@@ -1147,13 +1150,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $className = $this->getClassName($uuid);
             $filePath = $this->getFilePathData($uuid);
 
-            if (!unlink($filePath)) {
+            if (!$this->getIOAdapter()->unlink($filePath)) {
                 throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
             }
 
             $filePathMetadata = $this->getFilePathMetadata($uuid);
-            if (file_exists($filePathMetadata)) {
-                if (!unlink($filePathMetadata)) {
+            if ($this->getIOAdapter()->fileExists($filePathMetadata)) {
+                if (!$this->getIOAdapter()->unlink($filePathMetadata)) {
                     throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
                 }
             }
@@ -1182,7 +1185,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         try {
             $pathname = $this->getFilePathStub($className, $uuid);
-            if (file_exists($pathname)) {
+            if ($this->getIOAdapter()->fileExists($pathname)) {
                 return;
             }
 
@@ -1227,7 +1230,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         $filenameClassnames = $this->getFilePathClassnames();
-        if (file_exists($filenameClassnames)) {
+        if ($this->getIOAdapter()->fileExists($filenameClassnames)) {
             $this->registeredClassNamesCache = $this->loadFromJsonFile($filenameClassnames) ?? [];
         } else {
             $this->registeredClassNamesCache = [];
@@ -1288,15 +1291,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getMemoryConsumption(string $uuid): int
     {
-        if (false === $fileSizeData = @filesize($path = $this->getFilePathData($uuid))) {
+        if (false === $fileSizeData = $this->getIOAdapter()->fileSize($path = $this->getFilePathData($uuid))) {
             throw new IOException('Unable to determine file size for file ' . $path);
         }
 
-        if (false === $fileSizeMetadata = @filesize($path = $this->getFilePathMetadata($uuid))) {
+        if (false === $fileSizeMetadata = $this->getIOAdapter()->fileSize($path = $this->getFilePathMetadata($uuid))) {
             throw new IOException('Unable to determine file size for file ' . $path);
         }
 
-        if (false === $fileSizeStub = @filesize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
+        if (false === $fileSizeStub = $this->getIOAdapter()->fileSize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
             throw new IOException('Unable to determine file size for file ' . $path);
         }
 
@@ -1328,7 +1331,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function list(?string $className = null): Traversable
     {
-        if (null !== $className && is_dir($pathClassStubs = $this->getClassStubDirectory($className))) {
+        if (null !== $className && $this->getIOAdapter()->isDir($pathClassStubs = $this->getClassStubDirectory($className))) {
             return $this->createStubIterator($pathClassStubs);
         }
 
@@ -1405,6 +1408,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         ?CacheInterface                 $cache = null,
         ?GeneratorInterface             $generator = null,
         ?CacheInterface                 $metadataCache = null,
+        ?AdapterInterface               $adapter = null,
         private int                     $maxNestingLevel = 100
     )
     {
@@ -1414,6 +1418,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         $this->setStorageDir($storageDir);
         $this->setClassRenameMap(new ClassRenameMap());
+
+        if (null === $adapter) {
+            $adapter = new RealAdapter();
+        }
+        $this->setIOAdapter($adapter);
 
         if (null === $cache) {
             $cache = new InMemoryCache();

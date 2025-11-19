@@ -26,5 +26,10 @@ interface AdapterInterface
     public function fileExists(string $filename): bool;
 
     public function mkdir(string $dir, int $mode = 0777, bool $recursive = true): bool;
+
     public function touch(string $filename): bool;
+
+    public function fileSize(string $filename): bool|int;
+
+    public function isDir(string $filename): bool;
 }

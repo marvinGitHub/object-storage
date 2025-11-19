@@ -2,7 +2,7 @@
 
 namespace melia\ObjectStorage\File\IO;
 
-trait AwareTrait
+trait AdapterAwareTrait
 {
     protected ?AdapterInterface $ioAdapter = null;
 
@@ -11,9 +11,9 @@ trait AwareTrait
      *
      * @return AdapterInterface|null The adapter instance if set, null otherwise.
      */
-    public function getAdapter(): ?AdapterInterface
+    public function getIOAdapter(): ?AdapterInterface
     {
-        return $this->ioAdapter;
+        return $this->ioAdapter ?? new RealAdapter();
     }
 
     /**
@@ -22,7 +22,7 @@ trait AwareTrait
      * @param AdapterInterface|null $ioAdapter The I/O adapter instance or null to reset.
      * @return void
      */
-    public function setAdapter(?AdapterInterface $ioAdapter): void
+    public function setIOAdapter(?AdapterInterface $ioAdapter): void
     {
         $this->ioAdapter = $ioAdapter;
     }

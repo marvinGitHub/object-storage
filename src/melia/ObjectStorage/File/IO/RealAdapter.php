@@ -68,4 +68,14 @@ class RealAdapter implements AdapterInterface
     {
         return touch($filename);
     }
+
+    public function fileSize(string $filename): bool|int
+    {
+        return @filesize($filename);
+    }
+
+    public function isDir(string $filename): bool
+    {
+        return is_dir($filename);
+    }
 }
