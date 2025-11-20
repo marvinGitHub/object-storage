@@ -733,9 +733,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->objectUuidMap[$value] = $refUuid;
 
             if (false === isset($this->processingStack[$value])) {
-                /* TODO inherit ttl? */
                 $context->increaseLevel();
-                $this->serializeAndStore($value, $refUuid, null, $context);
+                $metadata = $context->getMetadata();
+                $this->serializeAndStore($value, $refUuid, $metadata->inheritLifetime() ? $metadata->getLifetime() : null, $context);
             }
 
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
