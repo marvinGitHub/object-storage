@@ -538,15 +538,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->getEventDispatcher()?->dispatch(Events::BEFORE_INITIAL_STORE, fn() => new ObjectPersistenceContext($uuid, $object));
             }
 
-            $context = new GraphBuilderContext($object, $metadata, 1);
-            if ($contextParent) {
-                $context->setLevel($contextParent->getLevel() + 1);
-            }
+            $context = new GraphBuilderContext($object, $metadata, $contextParent ? $contextParent->getLevel() : 1);
 
             $graph = $this->createGraphAndStoreReferencedChildren($context);
             $jsonGraph = json_encode(
                 value: $graph,
-                depth: $context->getLevel() + 1
+                depth: $this->maxDepth
             );
 
             if (false === $jsonGraph) {
