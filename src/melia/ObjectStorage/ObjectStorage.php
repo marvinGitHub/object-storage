@@ -32,7 +32,7 @@ use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
+use melia\ObjectStorage\Exception\MaxDepthExceededException;
 use melia\ObjectStorage\Exception\MetadataNotFoundException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
@@ -234,7 +234,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $validator($data);
         }
 
-        $data = json_decode($data, true, $this->maxNestingLevel);
+        $data = json_decode($data, true, $this->maxDepth);
 
         if (null === $data) {
             $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, fn() => new IOContext($filename));
@@ -276,7 +276,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function saveMetadata(Metadata $metadata): void
     {
         try {
-            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxNestingLevel));
+            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxDepth));
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, fn() => new Context($metadata->getUUID()));
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, fn() => new Context($metadata->getUUID()));
@@ -350,7 +350,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws IOException
      * @throws InvalidArgumentException
      * @throws InvalidUUIDException
-     * @throws MaxNestingLevelExceededException
+     * @throws MaxDepthExceededException
      * @throws MetadataSavingFailureException
      * @throws ObjectSavingFailureException
      * @throws ReflectionException
@@ -492,13 +492,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param object $object
      * @param string $uuid
      * @param float|int|null $ttl
-     * @param int $level
+     * @param GraphBuilderContext|null $context
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
      * @throws InvalidArgumentException
      * @throws InvalidUUIDException
-     * @throws MaxNestingLevelExceededException
+     * @throws MaxDepthExceededException
      * @throws MetadataSavingFailureException
      * @throws ObjectSavingFailureException
      * @throws ReflectionException
@@ -508,7 +508,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws Throwable
      * @throws UnsupportedTypeException
      */
-    protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null, int $level = 1): void
+    protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null, ?GraphBuilderContext $contextParent = null): void
     {
         try {
             if (!isset($this->objectUuidMap[$object])) {
@@ -538,8 +538,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->getEventDispatcher()?->dispatch(Events::BEFORE_INITIAL_STORE, fn() => new ObjectPersistenceContext($uuid, $object));
             }
 
+            $context = new GraphBuilderContext($object, $metadata, 1);
+            if ($contextParent) {
+                $context->setLevel($contextParent->getLevel() + 1);
+            }
+
+            $graph = $this->createGraphAndStoreReferencedChildren($context);
             $jsonGraph = json_encode(
-                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata, $level)));
+                value: $graph,
+                depth: $context->getLevel() + 1
+            );
 
             if (false === $jsonGraph) {
                 $this->getEventDispatcher()?->dispatch(Events::JSON_ENCODING_FAILURE, fn() => new Context($uuid));
@@ -606,14 +614,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * referenced child elements, ensuring deterministic property order.
      *
      * @param GraphBuilderContext $context
-     * @param int $level
      * @return array An associative array representing the graph structure of the object's properties.
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
      * @throws InvalidArgumentException
      * @throws InvalidUUIDException
-     * @throws MaxNestingLevelExceededException
+     * @throws MaxDepthExceededException
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
@@ -662,7 +669,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             try {
-                $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], $context->getLevel());
+                $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName]);
             } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                 $this->getLogger()?->log($e);
             }
@@ -675,27 +682,29 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param GraphBuilderContext $context
      * @param mixed $value
      * @param array $path
-     * @param int $level
      * @return mixed
      *
+     * @throws ClosureSerializationNotSupportedException
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
+     * @throws InvalidArgumentException
      * @throws InvalidUUIDException
-     * @throws MaxNestingLevelExceededException
+     * @throws MaxDepthExceededException
+     * @throws MetadataSavingFailureException
+     * @throws ObjectSavingFailureException
      * @throws ReflectionException
      * @throws ResourceSerializationNotSupportedException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws InvalidArgumentException
-     * @throws ClosureSerializationNotSupportedException
-     * @throws UnsupportedTypeException
+     * @throws StubSavingFailureException
      * @throws Throwable
+     * @throws UnsupportedTypeException
      */
-    protected function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path, int $level): mixed
+    protected function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path): mixed
     {
-        if ($level > $this->maxNestingLevel) {
-            throw new MaxNestingLevelExceededException('Maximum nesting level of ' . $this->maxNestingLevel . ' exceeded');
+        if ($context->getLevel() > $this->maxDepth) {
+            throw new MaxDepthExceededException('Maximum depth of ' . $this->maxDepth . ' exceeded');
         }
 
         if (is_resource($value)) {
@@ -728,7 +737,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             if (false === isset($this->processingStack[$value])) {
                 /* TODO inherit ttl? */
-                $this->serializeAndStore($value, $refUuid, null, $level + 1);
+                $context->increaseLevel();
+                $this->serializeAndStore($value, $refUuid, null, $context);
             }
 
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
@@ -736,6 +746,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         if (is_iterable($value)) {
             $out = [];
+            $context->increaseLevel();
+
             foreach ($value as $k => $v) {
                 try {
                     $isSupportedKey = is_string($k) || is_int($k);
@@ -744,7 +756,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         throw new UnsupportedKeyException('Only string and integer keys are supported.');
                     }
 
-                    $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level);
+                    $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]));
                 } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                     $this->getLogger()?->log($e);
                 }
@@ -1400,7 +1412,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param GeneratorInterface|null $generator
      * @param CacheInterface|null $metadataCache
      * @param AdapterInterface|null $adapter
-     * @param int $maxNestingLevel The maximum allowed depth for object nesting during processing. Defaults to 100.
+     * @param int $maxDepth The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
      */
     public function __construct(
@@ -1413,7 +1425,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         ?GeneratorInterface             $generator = null,
         ?CacheInterface                 $metadataCache = null,
         ?AdapterInterface               $adapter = null,
-        private int                     $maxNestingLevel = 100
+        private int                     $maxDepth = 100
     )
     {
         $this->objectUuidMap = new WeakMap();

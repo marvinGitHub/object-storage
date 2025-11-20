@@ -8,6 +8,7 @@ use melia\ObjectStorage\Metadata\MetadataAwareTrait;
 class GraphBuilderContext
 {
     private object $target;
+
     private int $level;
     use MetadataAwareTrait;
 
@@ -26,6 +27,16 @@ class GraphBuilderContext
     public function getLevel(): int
     {
         return $this->level;
+    }
+
+    public function setLevel(int $level): void
+    {
+        $this->level = $level;
+    }
+
+    public function increaseLevel(): void
+    {
+        $this->level++;
     }
 
     public function getMetadata(): Metadata

@@ -12,7 +12,7 @@ use IteratorAggregate;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
-use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
+use melia\ObjectStorage\Exception\MaxDepthExceededException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
@@ -810,10 +810,10 @@ class ObjectStorageTest extends TestCase
         $this->assertEquals('bar', $loaded::$foo);
     }
 
-    public function testMaxNestingLevelExceeded()
+    public function testMaxDepthExceeded()
     {
         // Instantiate storage with a low nesting limit (e.g., 2)
-        $storage = new ObjectStorage($this->reserveRandomStorageDirectory(), maxNestingLevel: 2);
+        $storage = new ObjectStorage($this->reserveRandomStorageDirectory(), maxDepth: 2);
 
         $root = new stdClass();
         $level1 = new stdClass();
@@ -827,7 +827,7 @@ class ObjectStorageTest extends TestCase
         try {
             $storage->store($root);
         }catch (Exception $e) {
-            $this->assertInstanceOf(MaxNestingLevelExceededException::class, $e->getPrevious());
+            $this->assertInstanceOf(MaxDepthExceededException::class, $e->getPrevious());
         }
 
     }
