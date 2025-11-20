@@ -12,6 +12,7 @@ use IteratorAggregate;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
+use melia\ObjectStorage\Exception\MaxNestingLevelExceededException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
@@ -807,5 +808,47 @@ class ObjectStorageTest extends TestCase
         $this->storage->clearCache();
         $loaded = $this->storage->load($uuid);
         $this->assertEquals('bar', $loaded::$foo);
+    }
+
+    public function testMaxNestingLevelExceeded()
+    {
+        // Instantiate storage with a low nesting limit (e.g., 2)
+        $storage = new ObjectStorage($this->reserveRandomStorageDirectory(), maxNestingLevel: 2);
+
+        $root = new stdClass();
+        $level1 = new stdClass();
+        $level2 = new stdClass();
+        $level3 = new stdClass();
+
+        $root->child = $level1;
+        $level1->child = $level2;
+        $level2->child = $level3;
+
+        try {
+            $storage->store($root);
+        }catch (Exception $e) {
+            $this->assertInstanceOf(MaxNestingLevelExceededException::class, $e->getPrevious());
+        }
+
+    }
+
+    public function testLazyReferenceSkippedForIncompatibleType()
+    {
+        // Class with a strictly typed property that cannot hold a LazyLoadReference
+        $parent = new class {
+            public stdClass $child;
+        };
+        $parent->child = new stdClass();
+        $parent->child->foo = 'bar';
+
+        $uuid = $this->storage->store($parent);
+        $this->storage->clearCache();
+
+        $loaded = $this->storage->load($uuid);
+
+        // Since $child is typed as stdClass, we expect the real object, not a LazyLoadReference proxy
+        $this->assertInstanceOf(stdClass::class, $loaded->child);
+        $this->assertNotInstanceOf(LazyLoadReference::class, $loaded->child);
+        $this->assertEquals('bar', $loaded->child->foo);
     }
 }

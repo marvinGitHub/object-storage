@@ -492,7 +492,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param object $object
      * @param string $uuid
      * @param float|int|null $ttl
-     *
+     * @param int $level
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
@@ -508,7 +508,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @throws Throwable
      * @throws UnsupportedTypeException
      */
-    protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null): void
+    protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null, int $level = 1): void
     {
         try {
             if (!isset($this->objectUuidMap[$object])) {
@@ -539,7 +539,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             $jsonGraph = json_encode(
-                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata)));
+                $this->createGraphAndStoreReferencedChildren(new GraphBuilderContext($object, $metadata, $level)));
 
             if (false === $jsonGraph) {
                 $this->getEventDispatcher()?->dispatch(Events::JSON_ENCODING_FAILURE, fn() => new Context($uuid));
@@ -606,18 +606,19 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * referenced child elements, ensuring deterministic property order.
      *
      * @param GraphBuilderContext $context
+     * @param int $level
      * @return array An associative array representing the graph structure of the object's properties.
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
+     * @throws InvalidArgumentException
      * @throws InvalidUUIDException
      * @throws MaxNestingLevelExceededException
      * @throws ReflectionException
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
-     * @throws InvalidArgumentException
-     * @throws UnsupportedTypeException
      * @throws Throwable
+     * @throws UnsupportedTypeException
      */
     protected function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
     {
@@ -661,7 +662,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             try {
-                $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], 0);
+                $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName], $context->getLevel());
             } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                 $this->getLogger()?->log($e);
             }
@@ -726,7 +727,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->objectUuidMap[$value] = $refUuid;
 
             if (false === isset($this->processingStack[$value])) {
-                $this->serializeAndStore($value, $refUuid);
+                /* TODO inherit ttl? */
+                $this->serializeAndStore($value, $refUuid, null, $level + 1);
             }
 
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
@@ -742,7 +744,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         throw new UnsupportedKeyException('Only string and integer keys are supported.');
                     }
 
-                    $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level + 1);
+                    $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]), $level);
                 } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                     $this->getLogger()?->log($e);
                 }
