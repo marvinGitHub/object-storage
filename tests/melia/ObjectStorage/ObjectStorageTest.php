@@ -830,6 +830,22 @@ class ObjectStorageTest extends TestCase
             $this->assertInstanceOf(MaxDepthExceededException::class, $e->getPrevious());
         }
 
+
+        $a = new stdClass();
+        $a->a = [
+            [
+                [
+                    [
+                        'b' => 'c'
+                    ]
+                ]
+            ]
+        ];
+        try {
+            $storage->store($a);
+        } catch (Exception $e) {
+            $this->assertInstanceOf(MaxDepthExceededException::class, $e->getPrevious());
+        }
     }
 
     public function testLazyReferenceSkippedForIncompatibleType()
