@@ -2,8 +2,16 @@
 
 namespace melia\ObjectStorage\Strategy;
 
-interface StrategyInterface
+use melia\ObjectStorage\Context\GraphBuilderContext;
+use melia\ObjectStorage\UUID\Generator\AwareInterface;
+
+interface StrategyInterface extends AwareInterface
 {
-    public function inheritLifetime(): bool;
+    public function inheritLifetime(?GraphBuilderContext $context = null): bool;
+
     public function getChecksumAlgorithm(): string;
+
+    public function serialize(array $graph, int $depth): ?string;
+
+    public function unserialize(string $data): array;
 }

@@ -8,7 +8,10 @@ use melia\ObjectStorage\Exception\ObjectMatchingFailureException;
 use melia\ObjectStorage\Locking\LockAdapterAwareTrait;
 use melia\ObjectStorage\Logger\LoggerAwareTrait;
 use melia\ObjectStorage\State\StateHandlerAwareTrait;
+use melia\ObjectStorage\Strategy\AwareTrait as StrategyAwareTrait;
+use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
+use melia\ObjectStorage\UUID\Generator\Generator;
 use melia\ObjectStorage\UUID\Validator;
 use Throwable;
 use Traversable;
@@ -24,11 +27,16 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
     use LockAdapterAwareTrait;
     use StateHandlerAwareTrait;
     use GeneratorAwareTrait;
+    use StrategyAwareTrait;
 
+    /**
+     * @throws GenerationFailureException
+     */
     public function getNextAvailableUuid(): string
     {
         do {
-            $uuid = $this->getGenerator()->generate();
+            $generator = $this->getStrategy()?->getGenerator() ?? new Generator();
+            $uuid = $generator->generate();
         } while ($this->exists($uuid));
         return $uuid;
     }

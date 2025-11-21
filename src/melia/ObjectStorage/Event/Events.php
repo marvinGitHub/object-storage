@@ -39,7 +39,7 @@ interface Events
     public const CACHE_WRITE_FAILED = 'object-storage.cache_write_failed';
     public const IO_READ_FAILURE = 'object-storage.io_read_failure';
     public const JSON_DECODING_FAILURE = 'object-storage.json_decoding_failure';
-    public const JSON_ENCODING_FAILURE = 'object-storage.json_encoding_failure';
+    public const GRAPH_SERIALIZATION_FAILURE = 'object-storage.graph_serialization_failure';
     public const METADATA_LOADING_FAILURE = 'object-storage.metadata_loading_failure';
     public const OBJECT_SAVING_FAILURE = 'object-storage.object_saving_failure';
     public const OBJECT_LOADING_FAILURE = 'object-storage.object_loading_failure';

@@ -68,11 +68,10 @@ use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
-use melia\ObjectStorage\Strategy\AwareTrait as StrategyAwareTrait;
+use melia\ObjectStorage\Strategy\Standard;
+use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
-use melia\ObjectStorage\UUID\Generator\Generator as UUIDGenerator;
-use melia\ObjectStorage\UUID\Generator\GeneratorInterface;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
 use Psr\SimpleCache\CacheInterface;
@@ -99,7 +98,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use Cache\AwareTrait;
     use MetadataCacheAwareTrait;
     use ClassRenameMapAwareTrait;
-    use StrategyAwareTrait;
 
     const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
 
@@ -543,17 +541,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $context = new GraphBuilderContext($object, $metadata, $contextParent ? $contextParent->getLevel() : 1);
 
             $graph = $this->createGraphAndStoreReferencedChildren($context);
-            $jsonGraph = json_encode(
-                value: $graph,
-                depth: $this->maxDepth
-            );
+            $serializedGraph = $this->getStrategy()?->serialize($graph, $this->maxDepth) ?? null;
 
-            if (false === $jsonGraph) {
-                $this->getEventDispatcher()?->dispatch(Events::JSON_ENCODING_FAILURE, fn() => new Context($uuid));
-                throw new SerializationFailureException('Unable export object graph to JSON');
+            if (null === $serializedGraph) {
+                $this->getEventDispatcher()?->dispatch(Events::GRAPH_SERIALIZATION_FAILURE, fn() => new Context($uuid));
+                throw new SerializationFailureException('Unable serialize graph');
             }
 
-            $metadata->setChecksum($this->generateChecksum($jsonGraph, $metadata->getChecksumAlgorithm()));
+            $metadata->setChecksum($this->generateChecksum($serializedGraph, $metadata->getChecksumAlgorithm()));
 
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
 
@@ -578,7 +573,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 };
 
                 try {
-                    $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $jsonGraph);
+                    $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $serializedGraph);
                     $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                 } catch (Throwable $e) {
                     $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
@@ -737,7 +732,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
                 $metadata = $context->getMetadata();
-                $this->serializeAndStore($value, $refUuid, $this->getStrategy()?->inheritLifetime() ?? false ? $metadata->getLifetime() : null, $context);
+                $this->serializeAndStore($value, $refUuid, $this->getStrategy()?->inheritLifetime($context) ?? false ? $metadata->getLifetime() : null, $context);
             }
 
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
@@ -1408,9 +1403,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param StateHandler|null $stateHandler
      * @param DispatcherInterface|null $eventDispatcher
      * @param CacheInterface|null $cache
-     * @param GeneratorInterface|null $generator
      * @param CacheInterface|null $metadataCache
      * @param AdapterInterface|null $adapter
+     * @param StrategyInterface|null $strategy
      * @param int $maxDepth The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
      */
@@ -1421,9 +1416,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         protected ?StateHandler         $stateHandler = null,
         ?DispatcherInterface            $eventDispatcher = null,
         ?CacheInterface                 $cache = null,
-        ?GeneratorInterface             $generator = null,
         ?CacheInterface                 $metadataCache = null,
         ?AdapterInterface               $adapter = null,
+        ?StrategyInterface              $strategy = null,
         private int                     $maxDepth = 100
     )
     {
@@ -1439,6 +1434,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
         $this->setIOAdapter($adapter);
 
+        if (null === $strategy) {
+            $strategy = new Standard();
+        }
+        $this->setStrategy($strategy);
+
         if (null === $cache) {
             $cache = new InMemoryCache();
         }
@@ -1448,11 +1448,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $metadataCache = new InMemoryCache();
         }
         $this->setMetadataCache($metadataCache);
-
-        if (null === $generator) {
-            $generator = new UUIDGenerator();
-        }
-        $this->setGenerator($generator);
 
         if (null === $eventDispatcher) {
             $eventDispatcher = new Dispatcher();

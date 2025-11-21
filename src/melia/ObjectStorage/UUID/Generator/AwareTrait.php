@@ -11,7 +11,7 @@ trait AwareTrait
         return $this->generator;
     }
 
-    public function setGenerator(?GeneratorInterface $generator): void
+    public function setGenerator(?GeneratorInterface $generator = null): void
     {
         $this->generator = $generator;
     }
