@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Metadata;
 
 use JsonSerializable;
+use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
@@ -13,12 +14,13 @@ class Metadata implements JsonSerializable
     const VERSION = 1;
 
     use AwareTrait;
+    use AlgorithmAwareTrait;
 
     private string $className;
     private float $timestampCreation;
     private int $version;
     private string $checksum;
-    private string $checksumAlgorithm = 'crc32b';
+
     private null|float $timestampExpiresAt = null;
 
     private array $references = [];
@@ -199,27 +201,6 @@ class Metadata implements JsonSerializable
     public function setReservedReferenceName(string $reservedReferenceName): void
     {
         $this->reservedReferenceName = $reservedReferenceName;
-    }
-
-    /**
-     * Sets the checksum algorithm to be used.
-     *
-     * @param string $checksumAlgorithm The name of the checksum algorithm to set.
-     * @return void
-     */
-    public function setChecksumAlgorithm(string $checksumAlgorithm): void
-    {
-        $this->checksumAlgorithm = $checksumAlgorithm;
-    }
-
-    /**
-     * Retrieves the checksum algorithm used.
-     *
-     * @return string The name of the checksum algorithm.
-     */
-    public function getChecksumAlgorithm(): string
-    {
-        return $this->checksumAlgorithm;
     }
 
     /**

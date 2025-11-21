@@ -526,7 +526,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->processingStack[$object] = true;
 
             $metadata = new Metadata();
-            $metadata->setChecksumAlgorithm(static::CHECKSUM_ALGORITHM_DEFAULT);
+            $metadata->setChecksumAlgorithm($this->getStrategy()?->getChecksumAlgorithm() ?? static::CHECKSUM_ALGORITHM_DEFAULT);
             $metadata->setTimestampCreation($timestampCreation = microtime(true));
             $metadata->setUuid($uuid);
             $metadata->setClassName($className = get_class($object));

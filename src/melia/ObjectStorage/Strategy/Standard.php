@@ -2,8 +2,11 @@
 
 namespace melia\ObjectStorage\Strategy;
 
+use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
+
 class Standard implements StrategyInterface
 {
+    use AlgorithmAwareTrait;
     private bool $inheritLifetime = false;
     public function enableLifetimeInheritance(): void
     {
