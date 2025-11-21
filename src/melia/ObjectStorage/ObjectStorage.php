@@ -68,6 +68,7 @@ use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
+use melia\ObjectStorage\Strategy\AwareTrait as StrategyAwareTrait;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use melia\ObjectStorage\UUID\Generator\Generator as UUIDGenerator;
@@ -98,6 +99,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use Cache\AwareTrait;
     use MetadataCacheAwareTrait;
     use ClassRenameMapAwareTrait;
+    use StrategyAwareTrait;
 
     const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
 
@@ -735,7 +737,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
                 $metadata = $context->getMetadata();
-                $this->serializeAndStore($value, $refUuid, $metadata->inheritLifetime() ? $metadata->getLifetime() : null, $context);
+                $this->serializeAndStore($value, $refUuid, $this->getStrategy()?->inheritLifetime() ?? false ? $metadata->getLifetime() : null, $context);
             }
 
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];

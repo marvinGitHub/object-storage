@@ -23,7 +23,6 @@ class Metadata implements JsonSerializable
 
     private array $references = [];
     private string $reservedReferenceName = Metadata::RESERVED_REFERENCE_NAME_DEFAULT;
-    private bool $inheritLifetime = false;
 
     /**
      * @throws InvalidUUIDException
@@ -59,9 +58,6 @@ class Metadata implements JsonSerializable
         }
         if (array_key_exists('reservedReferenceName', $data)) {
             $metadata->setReservedReferenceName($data['reservedReferenceName']);
-        }
-        if (array_key_exists('inheritLifetime', $data)) {
-            $data['inheritLifetime'] ? $metadata->enableLifetimeInheritance() : $metadata->disableLifetimeInheritance();
         }
         return $metadata;
     }
@@ -227,36 +223,6 @@ class Metadata implements JsonSerializable
     }
 
     /**
-     * Enables lifetime inheritance for the object.
-     *
-     * @return void No return value.
-     */
-    public function enableLifetimeInheritance(): void
-    {
-        $this->inheritLifetime = true;
-    }
-
-    /**
-     * Disables the inheritance of lifetime for the object.
-     *
-     * @return void
-     */
-    public function disableLifetimeInheritance(): void
-    {
-        $this->inheritLifetime = false;
-    }
-
-    /**
-     * Retrieves the inheritance status of the object's lifetime.
-     *
-     * @return bool True if the object inherits its lifetime, false otherwise.
-     */
-    public function inheritLifetime(): bool
-    {
-        return $this->inheritLifetime;
-    }
-
-    /**
      * Prepares data for JSON serialization.
      *
      * @return array An associative array containing the object's properties to be serialized.
@@ -271,7 +237,6 @@ class Metadata implements JsonSerializable
             'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
             'uuid' => $this->uuid ?? '',
-            'inheritLifetime' => $this->inheritLifetime ?? false,
             'reservedReferenceName' => $this->reservedReferenceName ?? Metadata::RESERVED_REFERENCE_NAME_DEFAULT,
         ];
     }
