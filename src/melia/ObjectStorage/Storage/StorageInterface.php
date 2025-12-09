@@ -20,6 +20,7 @@ interface StorageInterface extends LoggerAwareInterface
     public function list(?string $className = null): Traversable;
 
     public function expired(string $uuid): bool;
+    public function removeFromCache(string $uuid): void;
 
     public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void;
 

@@ -92,6 +92,8 @@ When a lazy reference loads, it:
     - Returns stored class name for the UUID.
 - clearCache(): void
     - Clears in-memory caches.
+- removeFromCache(string $uuid): void
+    - Removes object from cache 
 - rebuildStubs(): void
     - Rebuilds class stub index.
 

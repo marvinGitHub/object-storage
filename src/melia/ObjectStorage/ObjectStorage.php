@@ -1126,7 +1126,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @throws InvalidArgumentException
      */
-    protected function removeFromCache(string $uuid): void
+    public function removeFromCache(string $uuid): void
     {
         $this->getCache()?->delete($uuid);
         $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, fn() => new Context($uuid));
