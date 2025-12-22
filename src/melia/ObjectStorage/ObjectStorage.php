@@ -76,10 +76,13 @@ use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionType;
 use ReflectionUnionType;
+use SplFileInfo;
 use Throwable;
 use Traversable;
 use WeakMap;
@@ -123,6 +126,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /** @var array<string>|null */
     protected ?array $registeredClassNamesCache = null;
+
+    /** @var array<string, bool> */
+    protected array $verifiedDirectories = [];
 
     /**
      * Sets the lifetime (time-to-live) for the given UUID, updating its expiration timestamp
@@ -250,10 +256,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier used to build the metadata file path.
      * @return string Returns the file path of the metadata corresponding to the provided UUID.
+     * @throws IOException
      */
     public function getFilePathMetadata(string $uuid): string
     {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+        return $this->getShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
     }
 
     /**
@@ -492,7 +499,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param object $object
      * @param string $uuid
      * @param float|int|null $ttl
-     * @param GraphBuilderContext|null $context
+     * @param GraphBuilderContext|null $contextParent
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
@@ -766,6 +773,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The UUID to check if the associated file exists.
      * @return bool True if the file exists, false otherwise.
+     * @throws IOException
      */
     public function exists(string $uuid): bool
     {
@@ -777,10 +785,37 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The unique identifier used to generate the file path.
      * @return string The full file path constructed using the UUID.
+     * @throws IOException
      */
     public function getFilePathData(string $uuid): string
     {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+        return $this->getShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+    }
+
+    /**
+     * Returns a sharded directory path based on the UUID prefix.
+     *
+     * @param string $uuid
+     * @return string
+     * @throws IOException
+     */
+    protected function getShardedDirectory(string $uuid): string
+    {
+        // sharding based on the first two characters: storage/a/b
+        $shard1 = $uuid[0];
+        $shard2 = $uuid[1];
+
+        $path = $this->getStorageDir() . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
+
+        // cache the directory check to avoid repeated I/O calls
+        if (!isset($this->verifiedDirectories[$path])) {
+            if (!$this->getIOAdapter()->isDir($path)) {
+                $this->createDirectoryIfNotExist($path);
+            }
+            $this->verifiedDirectories[$path] = true;
+        }
+
+        return $path;
     }
 
     /**
@@ -1488,14 +1523,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function createObjectIterator(?string $className): Traversable
     {
-        $pattern = $this->getStorageDir() . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_OBJECT;
-        return new class (new GlobIterator($pattern), $className, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
+        $directoryIterator = new RecursiveDirectoryIterator($this->getStorageDir(), RecursiveDirectoryIterator::SKIP_DOTS);
+        $recursiveIterator = new RecursiveIteratorIterator($directoryIterator);
+
+        return new class ($recursiveIterator, $className, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
 
             private ?string $expectedClassname = null;
             private string $extension;
             private ObjectStorage $storage;
 
-            public function __construct(GlobIterator $iterator, ?string $className, string $extension, ObjectStorage $storage)
+            public function __construct(Iterator $iterator, ?string $className, string $extension, ObjectStorage $storage)
             {
                 parent::__construct($iterator);
                 $this->expectedClassname = $className;
@@ -1511,6 +1548,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             public function accept(): bool
             {
+                $fileInfo = $this->getInnerIterator()->current();
+                if (!$fileInfo instanceof SplFileInfo || $fileInfo->isDir()) {
+                    return false;
+                }
+
+                if ('.' . $fileInfo->getExtension() !== $this->extension) {
+                    return false;
+                }
+
                 if (null !== $this->expectedClassname) {
                     try {
                         $uuid = $this->current();
@@ -1526,7 +1572,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             public function current(): string
             {
-                return basename(parent::current(), $this->extension);
+                $fileInfo = $this->getInnerIterator()->current();
+                return $fileInfo->getBasename($this->extension);
             }
 
             public function key(): string

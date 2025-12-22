@@ -26,8 +26,8 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Verify files actually exist (proving real writer was called)
         $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
-        $this->assertTrue(file_exists($this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . '.obj'));
-        $this->assertTrue(file_exists($this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . '.metadata'));
+        $this->assertTrue(file_exists($this->storage->getFilePathData($uuid)));
+        $this->assertTrue(file_exists($this->storage->getFilePathMetadata($uuid)));
     }
 
     public function testStorageOfChangedObjectDoesCallAtomicWrite(): void
@@ -106,8 +106,8 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Act - First store
         $uuid = $this->storage->store($user);
-        $dataFile = $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . '.obj';
-        $metadataFile = $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . $uuid . '.metadata';
+        $dataFile = $this->storage->getFilePathData($uuid);
+        $metadataFile = $this->storage->getFilePathMetadata($uuid);
 
         // Get initial file timestamps
         clearstatcache();
