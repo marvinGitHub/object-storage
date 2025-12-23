@@ -63,7 +63,6 @@ use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Runtime\ClassRenameMap;
 use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
-use melia\ObjectStorage\SPL\WeakMapSweeper;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageInterface;
@@ -338,9 +337,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function clearCache(): void
     {
         $this->getCache()?->clear();
-        WeakMapSweeper::clear($this->objectUuidMap);
-        WeakMapSweeper::clear($this->processingStack);
-        WeakMapSweeper::clear($this->lazyloadReferenceSupportCache);
+        $this->objectUuidMap = new WeakMap();
+        $this->processingStack = new WeakMap();
+        $this->lazyloadReferenceSupportCache = new WeakMap();
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
