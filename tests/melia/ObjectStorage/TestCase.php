@@ -56,9 +56,9 @@ class TestCase extends \PHPUnit\Framework\TestCase
         return $tempFile;
     }
 
-    protected function reserveRandomStorageDirectory(): string
+    protected function reserveRandomDirectory(): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'ObjectStorageSearchTest');
+        $path = tempnam(sys_get_temp_dir(), 'RandomDirectory');
         if (file_exists($path)) {
             unlink($path);
         }

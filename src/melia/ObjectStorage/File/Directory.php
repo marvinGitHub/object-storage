@@ -41,19 +41,21 @@ class Directory
     /**
      * Performs cleanup by removing the specified directory and its contents if it exists.
      *
-     * @return void
+     * @return bool
      */
-    public function tearDown(): void
+    public function tearDown(): bool
     {
         if (null === $this->path) {
-            return;
+            return false;
         }
 
         if (false === is_dir($this->path)) {
-            return;
+            return false;
         }
 
-        exec(sprintf('rm -rf %s', escapeshellarg($this->path)));
+        $exitCode = null;
+        exec(command: sprintf('rm -rf %s', escapeshellarg($this->path)), result_code: $exitCode);
+        return $exitCode === 0;
     }
 
     /**

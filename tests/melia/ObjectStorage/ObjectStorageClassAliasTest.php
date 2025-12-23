@@ -8,7 +8,7 @@ class ObjectStorageClassAliasTest extends TestCase
 {
     public function testClassAlias()
     {
-        $dir = $this->reserveRandomStorageDirectory();
+        $dir = $this->reserveRandomDirectory();
         $uuid = '877d51df-aebd-4807-8701-95e007e9b701';
         do {
             $unknownClassname = uniqid('SomeUnknownClass');

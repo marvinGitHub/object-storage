@@ -237,7 +237,7 @@ class ObjectStorageTest extends TestCase
 
     public function testList()
     {
-        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomDirectory());
         $someUUID = $someStorage->store(new stdClass());
         $anotherUUID = $someStorage->store(new stdClass());
 
@@ -261,8 +261,8 @@ class ObjectStorageTest extends TestCase
 
     public function testAssume()
     {
-        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
-        $someOtherStorage = new ObjectStorage($someOtherDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomDirectory());
+        $someOtherStorage = new ObjectStorage($someOtherDir = $this->reserveRandomDirectory());
 
         $this->assertEquals(0, $someStorage->count());
         $this->assertEquals(0, $someOtherStorage->count());
@@ -280,7 +280,7 @@ class ObjectStorageTest extends TestCase
 
     public function testStoreWithArrayReference()
     {
-        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomDirectory());
 
         $someObject = new stdClass();
         $someObject->foo = ['test' => new stdClass()];
@@ -298,7 +298,7 @@ class ObjectStorageTest extends TestCase
      */
     public function testLazyLoadReferenceUpdatesParent()
     {
-        $someStorage = new ObjectStorage($someDir = $this->reserveRandomStorageDirectory());
+        $someStorage = new ObjectStorage($someDir = $this->reserveRandomDirectory());
 
         $someObject = new stdClass();
         $test = new stdClass();
@@ -813,7 +813,7 @@ class ObjectStorageTest extends TestCase
     public function testMaxDepthExceeded()
     {
         // Instantiate storage with a low nesting limit (e.g., 2)
-        $storage = new ObjectStorage($this->reserveRandomStorageDirectory(), maxDepth: 2);
+        $storage = new ObjectStorage($this->reserveRandomDirectory(), maxDepth: 2);
 
         $root = new stdClass();
         $level1 = new stdClass();
