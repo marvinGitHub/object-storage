@@ -12,6 +12,8 @@ A lightweight, file-based object store for PHP that persists object graphs by UU
 - Simple object storage viewer (view.php)
 - Directory sharding for large datasets
 
+## Changelog
+
 Changes for each release will be documented in the [Changelog](Changelog.md) file.
 
 ## Installation
