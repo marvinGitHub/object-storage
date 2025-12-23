@@ -48,14 +48,13 @@ class Reflection
      */
     public function set(string $propertyName, mixed $value): void
     {
-        $reflection = $this->getReflectionObject();
-        if ($reflection->hasProperty($propertyName)) {
-            $property = $reflection->getProperty($propertyName);
+        $property = $this->getProperty($propertyName);
 
+        if (null === $property) {
+            $this->target->$propertyName = $value;
+        } else {
             $property->setAccessible(true);
             $property->setValue($this->target, $value);
-        } else {
-            $this->target->$propertyName = $value;
         }
     }
 
@@ -64,13 +63,12 @@ class Reflection
      *
      * @param string $propertyName The name of the property to retrieve.
      *
-     * @return ReflectionProperty The ReflectionProperty object representing the specified property of the target object.
-     * @throws ReflectionException
+     * @return ReflectionProperty|null The ReflectionProperty object representing the specified property of the target object.
      */
-    public function getProperty(string $propertyName): ReflectionProperty
+    public function getProperty(string $propertyName): ?ReflectionProperty
     {
         $reflection = $this->getReflectionObject();
-        return $reflection->getProperty($propertyName);
+        return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName) : null;
     }
 
     /**
@@ -78,12 +76,13 @@ class Reflection
      *
      * @param string $propertyName The name of the property name to be accessed.
      * @return mixed The value of the specified property name.
-     * @throws ReflectionException
      */
     public function get(string $propertyName): mixed
     {
-        $reflection = $this->getReflectionObject();
-        $property = $reflection->getProperty($propertyName);
+        $property = $this->getProperty($propertyName);
+        if (null === $property) {
+            return null;
+        }
 
         $property->setAccessible(true);
         return $property->isInitialized($this->target) ? $property->getValue($this->target) : null;
@@ -103,37 +102,35 @@ class Reflection
             return true;
         }
 
-        try {
-            $reflection = $this->getReflectionObject();
-            $property = $reflection->getProperty($propertyName);
-
-            $property->setAccessible(true);
-
-            if (false === $property->isInitialized($this->target)) {
-                return true;
-            }
-
-            $type = $property->getType();
-
-            if ($type === null || $type->allowsNull()) {
-                $property->setValue($this->target, null);
-                return true;
-            }
-
-            if ($property->hasDefaultValue()) {
-                $property->setValue($this->target, $property->getDefaultValue());
-                return true;
-            }
-
-            if ($type instanceof ReflectionNamedType) {
-                $defaultValue = $this->getDefaultValueForType($type->getName());
-                if ($defaultValue !== null) {
-                    $property->setValue($this->target, $defaultValue);
-                    return true;
-                }
-            }
-        } catch (ReflectionException $e) {
+        $property = $this->getProperty($propertyName);
+        if (null === $property) {
             return false;
+        }
+
+        $property->setAccessible(true);
+
+        if (false === $property->isInitialized($this->target)) {
+            return true;
+        }
+
+        $type = $property->getType();
+
+        if ($type === null || $type->allowsNull()) {
+            $property->setValue($this->target, null);
+            return true;
+        }
+
+        if ($property->hasDefaultValue()) {
+            $property->setValue($this->target, $property->getDefaultValue());
+            return true;
+        }
+
+        if ($type instanceof ReflectionNamedType) {
+            $defaultValue = $this->getDefaultValueForType($type->getName());
+            if ($defaultValue !== null) {
+                $property->setValue($this->target, $defaultValue);
+                return true;
+            }
         }
 
         return false;
@@ -170,8 +167,10 @@ class Reflection
         }
 
         try {
-            $reflection = $this->getReflectionObject();
-            $property = $reflection->getProperty($propertyName);
+            $property = $this->getProperty($propertyName);
+            if (null === $property) {
+                return false;
+            }
 
             $property->setAccessible(true);
             return $property->isInitialized($this->target);
@@ -257,6 +256,11 @@ class Reflection
         return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName)->getType() : null;
     }
 
+    /**
+     * Retrieves a ReflectionObject instance for the current target object.
+     *
+     * @return ReflectionObject The ReflectionObject instance associated with the target object.
+     */
     public function getReflectionObject(): ReflectionObject
     {
         static $cache;
