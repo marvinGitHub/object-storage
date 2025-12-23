@@ -587,7 +587,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 throw new SerializationFailureException('Unable serialize graph');
             }
 
-            $metadata->setChecksum($this->generateChecksum($serializedGraph, $metadata->getChecksumAlgorithm()));
+            $metadata->setChecksum(static::generateChecksum($serializedGraph, $metadata->getChecksumAlgorithm()));
 
             $previousClassname = $loadedMetadata?->getClassName() ?? null;
 
@@ -818,7 +818,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
      * @return string The generated checksum as a hashed string.
      */
-    protected function generateChecksum(string $data, string $algorithm): string
+    protected static function generateChecksum(string $data, string $algorithm): string
     {
         return hash($algorithm, $data);
     }
@@ -936,8 +936,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), function (string $data) use ($metadata) {
-                $checksum = $this->generateChecksum($data, $metadata->getChecksumAlgorithm());
+            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), static function (string $data) use ($metadata) {
+                $checksum = static::generateChecksum($data, $metadata->getChecksumAlgorithm());
 
                 if ($metadata->getChecksum() !== $checksum) {
                     throw new ChecksumMismatchException(sprintf('Checksum mismatch for uuid %s. Current: %s Expected: %s', $metadata->getUUID(), $checksum, $metadata->getChecksum()));
