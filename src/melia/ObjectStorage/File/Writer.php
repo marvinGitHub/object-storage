@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\File;
 
+use Closure;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
@@ -12,21 +13,17 @@ class Writer implements WriterInterface
     use AdapterAwareTrait;
 
     /**
-     * Performs an atomic write operation to the specified file. Ensures that the file content
-     * is written safely and completely, handling directory creation if needed, and managing
-     * file system operations to reduce risks of data loss or corruption.
+     * Creates a recovery handler for managing cleanup operations in case of a failure during a file operation.
+     * The returned closure ensures resources are properly closed and the file is deleted if necessary.
      *
-     * @param string $filename The path to the file to write.
-     * @param string|null $data The data to write to the file. If null, an empty string will be written.
-     * @param bool $createDirectoryIfNotExist Indicates whether the parent directory should be created if it does not exist.
-     * @return void
-     * @throws IOException If any file operation such as opening, writing, truncating, or closing fails.
+     * @param resource|null $resource The file resource to close. Can be null if no resource needs to be closed.
+     * @param string $filename The name of the file to be deleted during recovery.
+     * @return Closure A closure that performs the recovery operations when invoked.
      */
-    public function atomicWrite(string $filename, ?string $data = null, bool $createDirectoryIfNotExist = false): void
+    protected function createRecoveryHandler($resource, string $filename): Closure
     {
-        $recover = function ($resource) use ($filename) {
-            $adapter = $this->getIOAdapter();
-
+        $adapter = $this->getIOAdapter();
+        return static function () use ($filename, $resource, $adapter) {
             if (is_resource($resource)) {
                 if (false === $adapter->fclose($resource)) {
                     throw new IOException('Unable to close file: ' . $filename);
@@ -41,7 +38,21 @@ class Writer implements WriterInterface
                 throw new IOException('Unable to delete file during recovery: ' . $filename);
             }
         };
+    }
 
+    /**
+     * Performs an atomic write operation to the specified file. Ensures that the file content
+     * is written safely and completely, handling directory creation if needed, and managing
+     * file system operations to reduce risks of data loss or corruption.
+     *
+     * @param string $filename The path to the file to write.
+     * @param string|null $data The data to write to the file. If null, an empty string will be written.
+     * @param bool $createDirectoryIfNotExist Indicates whether the parent directory should be created if it does not exist.
+     * @return void
+     * @throws IOException If any file operation such as opening, writing, truncating, or closing fails.
+     */
+    public function atomicWrite(string $filename, ?string $data = null, bool $createDirectoryIfNotExist = false): void
+    {
         if ($createDirectoryIfNotExist) {
             $directory = new Directory(Directory::getDirectoryName($filename));
             $directory->createIfNotExists();
@@ -56,37 +67,37 @@ class Writer implements WriterInterface
         $file = $this->getIOAdapter()->fopen($filename, 'w+');
 
         if (false === $file) {
-            $recover($file);
+            $this->createRecoveryHandler(null, $filename)();
             throw new IOException('Unable to open file for writing: ' . $filename);
         }
 
         if (false === $adapter->rewind($file)) {
-            $recover($file);
+            $this->createRecoveryHandler($file, $filename)();
             throw new IOException('Unable to rewind file: ' . $filename);
         }
 
         if (false === $adapter->fwrite($file, $data ?? '')) {
-            $recover($file);
+            $this->createRecoveryHandler($file, $filename)();
             throw new IOException('Unable to write to file: ' . $filename);
         }
 
         if (false === $adapter->fflush($file)) {
-            $recover($file);
+            $this->createRecoveryHandler($file, $filename)();
             throw new IOException('Unable to flush file: ' . $filename);
         }
 
         if (false === $position = $adapter->ftell($file)) {
-            $recover($file);
+            $this->createRecoveryHandler($file, $filename)();
             throw new IOException('Unable to get file position: ' . $filename);
         }
 
         if (false === $adapter->ftruncate($file, $position)) {
-            $recover($file);
+            $this->createRecoveryHandler($file, $filename)();
             throw new IOException('Unable to truncate file: ' . $filename);
         }
 
         if (false === $adapter->fclose($file)) {
-            $recover($file);
+            $this->createRecoveryHandler($file, $filename)();
             throw new IOException('Unable to close file: ' . $filename);
         }
     }
