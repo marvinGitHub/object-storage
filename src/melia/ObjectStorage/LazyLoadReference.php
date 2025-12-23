@@ -6,7 +6,6 @@ use JsonSerializable;
 use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
-use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
 use melia\ObjectStorage\Storage\StorageInterface;

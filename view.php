@@ -36,6 +36,7 @@ try {
             } catch (IOException $e) {
                 $classnames = [];
             }
+            sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
 
             echo $twig->render('list-classnames.html', [
                 'storage' => $storageDir,

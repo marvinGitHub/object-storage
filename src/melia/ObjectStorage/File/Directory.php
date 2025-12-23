@@ -18,16 +18,6 @@ class Directory
     }
 
     /**
-     * Retrieves the current file path.
-     *
-     * @return string|null The current file path, or null if not set.
-     */
-    public function getPath(): ?string
-    {
-        return $this->path;
-    }
-
-    /**
      * Retrieves the directory name from a given file path.
      *
      * @param string $path The file path from which to extract the directory name.
@@ -36,6 +26,16 @@ class Directory
     public static function getDirectoryName(string $path): string
     {
         return pathinfo($path, PATHINFO_DIRNAME);
+    }
+
+    /**
+     * Retrieves the current file path.
+     *
+     * @return string|null The current file path, or null if not set.
+     */
+    public function getPath(): ?string
+    {
+        return $this->path;
     }
 
     /**
@@ -57,6 +57,23 @@ class Directory
     }
 
     /**
+     * Reserves a temporary directory with a random name in the system's temporary directory.
+     *
+     * @return bool Returns true if the temporary directory was successfully created or reserved, false otherwise.
+     */
+    public function reserveRandomTemporaryDirectory(): bool
+    {
+        $path = tempnam(sys_get_temp_dir(), static::class);
+
+        if (file_exists($path)) {
+            unlink($path);
+        }
+
+        $this->path = $path;
+        return $this->createIfNotExists();
+    }
+
+    /**
      * Creates a directory at the specified path if it does not already exist.
      *
      * @return bool Returns true if the directory exists or was successfully created, false otherwise.
@@ -72,22 +89,5 @@ class Directory
         }
 
         return true;
-    }
-
-    /**
-     * Reserves a temporary directory with a random name in the system's temporary directory.
-     *
-     * @return bool Returns true if the temporary directory was successfully created or reserved, false otherwise.
-     */
-    public function reserveRandomTemporaryDirectory(): bool
-    {
-        $path = tempnam(sys_get_temp_dir(), static::class);
-
-        if (file_exists($path)) {
-            unlink($path);
-        }
-
-        $this->path = $path;
-        return $this->createIfNotExists();
     }
 }

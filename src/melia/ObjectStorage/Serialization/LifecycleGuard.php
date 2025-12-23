@@ -2,9 +2,6 @@
 
 namespace melia\ObjectStorage\Serialization;
 
-use melia\ObjectStorage\Exception\UnsupportedTypeException;
-use Traversable;
-
 class LifecycleGuard
 {
     /**
@@ -22,17 +19,6 @@ class LifecycleGuard
     }
 
     /**
-     * Determines if the provided object supports the `__unserialize` method.
-     *
-     * @param object $object The object to check for support of the `__unserialize` method.
-     * @return bool True if the object defines a callable `__unserialize` method, false otherwise.
-     */
-    public static function supportsUnserialize(object $object): bool
-    {
-        return is_callable([$object, '__unserialize']);
-    }
-
-    /**
      * Unserializes data into the provided object if it supports the `__unserialize` method.
      *
      * @param object $object The object into which the data should be unserialized.
@@ -44,5 +30,16 @@ class LifecycleGuard
         if (static::supportsUnserialize($object)) {
             $object->__unserialize($data);
         }
+    }
+
+    /**
+     * Determines if the provided object supports the `__unserialize` method.
+     *
+     * @param object $object The object to check for support of the `__unserialize` method.
+     * @return bool True if the object defines a callable `__unserialize` method, false otherwise.
+     */
+    public static function supportsUnserialize(object $object): bool
+    {
+        return is_callable([$object, '__unserialize']);
     }
 }

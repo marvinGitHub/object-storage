@@ -34,46 +34,6 @@ class InMemoryCache implements CacheInterface
     /**
      * @inheritDoc
      */
-    public function get(string $key, mixed $default = null): mixed
-    {
-        if (!array_key_exists($key, $this->data)) {
-            return $default;
-        }
-        $entry = $this->data[$key];
-        if ($this->isExpired($entry['e'])) {
-            unset($this->data[$key]);
-            return $default;
-        }
-        return $entry['v'];
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function set(string $key, mixed $value, DateInterval|int|null $ttl = null): bool
-    {
-        $expiresAt = $this->normalizeTtl($ttl);
-        if ($expiresAt !== null && $expiresAt <= microtime(true)) {
-            // Already expired: drop from cache (no-op success)
-            unset($this->data[$key]);
-            return true;
-        }
-        $this->data[$key] = ['v' => $value, 'e' => $expiresAt];
-        return true;
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function delete(string $key): bool
-    {
-        unset($this->data[$key]);
-        return true;
-    }
-
-    /**
-     * @inheritDoc
-     */
     public function clear(): bool
     {
         $this->data = [];
@@ -95,6 +55,30 @@ class InMemoryCache implements CacheInterface
     /**
      * @inheritDoc
      */
+    public function get(string $key, mixed $default = null): mixed
+    {
+        if (!array_key_exists($key, $this->data)) {
+            return $default;
+        }
+        $entry = $this->data[$key];
+        if ($this->isExpired($entry['e'])) {
+            unset($this->data[$key]);
+            return $default;
+        }
+        return $entry['v'];
+    }
+
+    /**
+     * Check if an absolute expiry timestamp is in the past.
+     */
+    private function isExpired(?float $expiresAt): bool
+    {
+        return $expiresAt !== null && $expiresAt <= microtime(true);
+    }
+
+    /**
+     * @inheritDoc
+     */
     public function setMultiple(iterable $values, DateInterval|int|null $ttl = null): bool
     {
         foreach ($values as $key => $value) {
@@ -106,30 +90,15 @@ class InMemoryCache implements CacheInterface
     /**
      * @inheritDoc
      */
-    public function deleteMultiple(iterable $keys): bool
+    public function set(string $key, mixed $value, DateInterval|int|null $ttl = null): bool
     {
-        $success = true;
-        foreach ($keys as $key) {
-            if ($this->delete($key) === false) {
-                $success = false;
-            }
-        }
-        return $success;
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function has(string $key): bool
-    {
-        if (!array_key_exists($key, $this->data)) {
-            return false;
-        }
-        $entry = $this->data[$key];
-        if ($this->isExpired($entry['e'])) {
+        $expiresAt = $this->normalizeTtl($ttl);
+        if ($expiresAt !== null && $expiresAt <= microtime(true)) {
+            // Already expired: drop from cache (no-op success)
             unset($this->data[$key]);
-            return false;
+            return true;
         }
+        $this->data[$key] = ['v' => $value, 'e' => $expiresAt];
         return true;
     }
 
@@ -153,10 +122,41 @@ class InMemoryCache implements CacheInterface
     }
 
     /**
-     * Check if an absolute expiry timestamp is in the past.
+     * @inheritDoc
      */
-    private function isExpired(?float $expiresAt): bool
+    public function deleteMultiple(iterable $keys): bool
     {
-        return $expiresAt !== null && $expiresAt <= microtime(true);
+        $success = true;
+        foreach ($keys as $key) {
+            if ($this->delete($key) === false) {
+                $success = false;
+            }
+        }
+        return $success;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function delete(string $key): bool
+    {
+        unset($this->data[$key]);
+        return true;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function has(string $key): bool
+    {
+        if (!array_key_exists($key, $this->data)) {
+            return false;
+        }
+        $entry = $this->data[$key];
+        if ($this->isExpired($entry['e'])) {
+            unset($this->data[$key]);
+            return false;
+        }
+        return true;
     }
 }

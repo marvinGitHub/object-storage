@@ -2,12 +2,12 @@
 
 namespace melia\ObjectStorage\Reflection;
 
+use ReflectionClass;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionObject;
 use ReflectionProperty;
 use ReflectionType;
-use ReflectionClass;
 use WeakMap;
 
 /**
@@ -192,18 +192,6 @@ class Reflection
     }
 
     /**
-     * Retrieves the type of the specified property of the target object using reflection.
-     *
-     * @param string $propertyName The name of the property whose type is to be retrieved.
-     * @return ReflectionType|null The type of the property as a ReflectionType object, or null if the property does not exist or does not have a type.
-     */
-    public function getPropertyType(string $propertyName): ?ReflectionType
-    {
-        $reflection = new ReflectionObject($this->target);
-        return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName)->getType() : null;
-    }
-
-    /**
      * Retrieves and caches the property type of a given property within an object.
      *
      * If the property is declared within the class of the given object, its type is cached
@@ -249,5 +237,17 @@ class Reflection
     {
         static $cache = [];
         return $cache[$className] ??= new ReflectionClass($className);
+    }
+
+    /**
+     * Retrieves the type of the specified property of the target object using reflection.
+     *
+     * @param string $propertyName The name of the property whose type is to be retrieved.
+     * @return ReflectionType|null The type of the property as a ReflectionType object, or null if the property does not exist or does not have a type.
+     */
+    public function getPropertyType(string $propertyName): ?ReflectionType
+    {
+        $reflection = new ReflectionObject($this->target);
+        return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName)->getType() : null;
     }
 }

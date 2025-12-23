@@ -5,15 +5,14 @@ namespace melia\ObjectStorage;
 use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
-use FilesystemIterator;
+use Exception as PHPDefaultException;
 use FilterIterator;
 use Generator;
 use GlobIterator;
 use Iterator;
-use Exception as PHPDefaultException;
+use IteratorAggregate;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Context\GraphBuilderContext;
-use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
@@ -24,6 +23,7 @@ use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
 use melia\ObjectStorage\Event\Context\StubContext;
 use melia\ObjectStorage\Event\Context\TypeConversionContext;
 use melia\ObjectStorage\Event\Dispatcher;
+use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ChecksumMismatchException;
@@ -50,6 +50,7 @@ use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
 use melia\ObjectStorage\File\Directory;
+use melia\ObjectStorage\File\Helper as FileHelper;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
@@ -76,17 +77,13 @@ use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionType;
 use ReflectionUnionType;
-use SplFileInfo;
 use Throwable;
 use Traversable;
 use WeakMap;
-use melia\ObjectStorage\File\Helper as FileHelper;
 
 /**
  * Class responsible for storing, caching, and retrieving objects in a persistent storage system.
@@ -132,6 +129,21 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected array $verifiedDirectories = [];
 
     /**
+     * Sets the expiration date and time for the specified UUID. If no expiration is provided,
+     * the lifetime will be unset or considered indefinite.
+     *
+     * @param string $uuid The unique identifier for which the expiration is being set.
+     * @param DateTimeInterface|null $expiresAt The date and time at which the UUID should expire, or null for no expiration.
+     * @return void
+     * @throws MetadataNotFoundException
+     * @throws MetadataSavingFailureException
+     */
+    public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
+    {
+        $this->setLifetime($uuid, $expiresAt ? $expiresAt->getTimestamp() - microtime(true) : null);
+    }
+
+    /**
      * Sets the lifetime (time-to-live) for the given UUID, updating its expiration timestamp
      * in the metadata and dispatching an event to notify listeners of the change.
      *
@@ -163,21 +175,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
 
         $this->getLockAdapter()?->releaseLock($uuid);
-    }
-
-    /**
-     * Sets the expiration date and time for the specified UUID. If no expiration is provided,
-     * the lifetime will be unset or considered indefinite.
-     *
-     * @param string $uuid The unique identifier for which the expiration is being set.
-     * @param DateTimeInterface|null $expiresAt The date and time at which the UUID should expire, or null for no expiration.
-     * @return void
-     * @throws MetadataNotFoundException
-     * @throws MetadataSavingFailureException
-     */
-    public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
-    {
-        $this->setLifetime($uuid, $expiresAt ? $expiresAt->getTimestamp() - microtime(true) : null);
     }
 
     /**
@@ -265,6 +262,30 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Returns a sharded directory path based on the UUID prefix.
+     *
+     * @param string $uuid
+     * @return string
+     * @throws IOException
+     */
+    protected function getShardedDirectory(string $uuid): string
+    {
+        // sharding based on the first two characters: storage/a/b
+        $shard1 = $uuid[0];
+        $shard2 = $uuid[1];
+
+        $path = $this->getStorageDir() . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
+
+        // cache the directory check to avoid repeated I/O calls
+        if (!isset($this->verifiedDirectories[$path])) {
+            $this->createDirectoryIfNotExist($path);
+            $this->verifiedDirectories[$path] = true;
+        }
+
+        return $path;
+    }
+
+    /**
      * Retrieves the directory path where storage operations are performed.
      *
      * @return string The storage directory path as a string.
@@ -275,33 +296,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Retrieves the file path for storing corrupted artifacts.
-     *
-     * @return string The file path where corrupted artifacts are stored.
-     */
-    protected function getFilePathCorruptedArtifacts(): string
-    {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'corrupted';
-    }
-
-    /**
-     * Marks the file associated with the given UUID as corrupted by moving it
-     * to the corrupted artifacts directory.
-     *
-     * @param string $uuid The unique identifier of the file to be marked as corrupted.
-     *
-     * @return void
      * @throws IOException
      */
-    protected function markAsCorrupted(string $uuid): void
+    protected function createDirectoryIfNotExist(string $directory): void
     {
-        $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
-
-        if (is_file($path = $this->getFilePathMetadata($uuid))) {
-            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
-        }
-        if (is_file($path = $this->getFilePathData($uuid))) {
-            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        if (false === (new Directory($directory))->createIfNotExists()) {
+            throw new IOException('Unable to create directory: ' . $directory);
         }
     }
 
@@ -801,6 +801,29 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Retrieves the lifetime of the metadata associated with the specified UUID.
+     *
+     * @param string $uuid The unique identifier used to load the metadata.
+     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
+     */
+    public function getLifetime(string $uuid): ?float
+    {
+        return $this->loadMetadata($uuid)?->getLifetime();
+    }
+
+    /**
+     * Generates a checksum for the given data using the specified hashing algorithm.
+     *
+     * @param string $data The input data for which the checksum is to be generated.
+     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
+     * @return string The generated checksum as a hashed string.
+     */
+    protected function generateChecksum(string $data, string $algorithm): string
+    {
+        return hash($algorithm, $data);
+    }
+
+    /**
      * Checks if a file exists for a specific UUID.
      *
      * @param string $uuid The UUID to check if the associated file exists.
@@ -822,30 +845,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function getFilePathData(string $uuid): string
     {
         return $this->getShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
-    }
-
-    /**
-     * Returns a sharded directory path based on the UUID prefix.
-     *
-     * @param string $uuid
-     * @return string
-     * @throws IOException
-     */
-    protected function getShardedDirectory(string $uuid): string
-    {
-        // sharding based on the first two characters: storage/a/b
-        $shard1 = $uuid[0];
-        $shard2 = $uuid[1];
-
-        $path = $this->getStorageDir() . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
-
-        // cache the directory check to avoid repeated I/O calls
-        if (!isset($this->verifiedDirectories[$path])) {
-            $this->createDirectoryIfNotExist($path);
-            $this->verifiedDirectories[$path] = true;
-        }
-
-        return $path;
     }
 
     /**
@@ -913,17 +912,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         return $expired;
-    }
-
-    /**
-     * Retrieves the lifetime of the metadata associated with the specified UUID.
-     *
-     * @param string $uuid The unique identifier used to load the metadata.
-     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
-     */
-    public function getLifetime(string $uuid): ?float
-    {
-        return $this->loadMetadata($uuid)?->getLifetime();
     }
 
     /**
@@ -1324,16 +1312,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * @throws IOException
-     */
-    protected function createDirectoryIfNotExist(string $directory): void
-    {
-        if (false === (new Directory($directory))->createIfNotExists()) {
-            throw new IOException('Unable to create directory: ' . $directory);
-        }
-    }
-
-    /**
      * Get a list of classnames for a subset of objects
      *
      * @param array|null $subSet
@@ -1561,7 +1539,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function createObjectIterator(?string $className): Traversable
     {
-        return new class ($className, static::FILE_SUFFIX_OBJECT, $this) implements \IteratorAggregate {
+        return new class ($className, static::FILE_SUFFIX_OBJECT, $this) implements IteratorAggregate {
             public function __construct(
                 private ?string       $className,
                 private string        $extension,
@@ -1570,7 +1548,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             {
             }
 
-            public function getIterator(): \Generator
+            public function getIterator(): Generator
             {
                 $storageDir = $this->storage->getStorageDir();
                 $extensionLen = strlen($this->extension);
@@ -1609,14 +1587,33 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Generates a checksum for the given data using the specified hashing algorithm.
+     * Marks the file associated with the given UUID as corrupted by moving it
+     * to the corrupted artifacts directory.
      *
-     * @param string $data The input data for which the checksum is to be generated.
-     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
-     * @return string The generated checksum as a hashed string.
+     * @param string $uuid The unique identifier of the file to be marked as corrupted.
+     *
+     * @return void
+     * @throws IOException
      */
-    protected function generateChecksum(string $data, string $algorithm): string
+    protected function markAsCorrupted(string $uuid): void
     {
-        return hash($algorithm, $data);
+        $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
+
+        if (is_file($path = $this->getFilePathMetadata($uuid))) {
+            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        }
+        if (is_file($path = $this->getFilePathData($uuid))) {
+            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        }
+    }
+
+    /**
+     * Retrieves the file path for storing corrupted artifacts.
+     *
+     * @return string The file path where corrupted artifacts are stored.
+     */
+    protected function getFilePathCorruptedArtifacts(): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'corrupted';
     }
 }

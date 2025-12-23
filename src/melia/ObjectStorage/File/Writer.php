@@ -3,27 +3,13 @@
 namespace melia\ObjectStorage\File;
 
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
+use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
 
 class Writer implements WriterInterface
 {
     use AdapterAwareTrait;
-
-    /**
-     * Retrieves the adapter instance used for input/output operations.
-     * If the adapter is not already initialized, a new instance of RealAdapter is created and assigned.
-     *
-     * @return AdapterInterface|null The adapter instance or null if not set.
-     */
-    public function getIOAdapter(): ?AdapterInterface
-    {
-        if (null === $this->ioAdapter) {
-            $this->ioAdapter = new RealAdapter();
-        }
-        return $this->ioAdapter;
-    }
 
     /**
      * Performs an atomic write operation to the specified file. Ensures that the file content
@@ -103,6 +89,20 @@ class Writer implements WriterInterface
             $recover($file);
             throw new IOException('Unable to close file: ' . $filename);
         }
+    }
+
+    /**
+     * Retrieves the adapter instance used for input/output operations.
+     * If the adapter is not already initialized, a new instance of RealAdapter is created and assigned.
+     *
+     * @return AdapterInterface|null The adapter instance or null if not set.
+     */
+    public function getIOAdapter(): ?AdapterInterface
+    {
+        if (null === $this->ioAdapter) {
+            $this->ioAdapter = new RealAdapter();
+        }
+        return $this->ioAdapter;
     }
 
     /**

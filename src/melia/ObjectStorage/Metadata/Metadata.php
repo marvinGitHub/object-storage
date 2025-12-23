@@ -65,6 +65,27 @@ class Metadata implements JsonSerializable
     }
 
     /**
+     * Retrieves the checksum value.
+     *
+     * @return string The checksum value.
+     */
+    public function getChecksum(): string
+    {
+        return $this->checksum;
+    }
+
+    /**
+     * Sets the checksum value.
+     *
+     * @param string $checksum The checksum value to be set.
+     * @return void
+     */
+    public function setChecksum(string $checksum): void
+    {
+        $this->checksum = $checksum;
+    }
+
+    /**
      * Retrieves the class name of the current instance.
      *
      * @return string The name of the class.
@@ -125,27 +146,6 @@ class Metadata implements JsonSerializable
     public function setVersion(int $version): void
     {
         $this->version = $version;
-    }
-
-    /**
-     * Retrieves the checksum value.
-     *
-     * @return string The checksum value.
-     */
-    public function getChecksum(): string
-    {
-        return $this->checksum;
-    }
-
-    /**
-     * Sets the checksum value.
-     *
-     * @param string $checksum The checksum value to be set.
-     * @return void
-     */
-    public function setChecksum(string $checksum): void
-    {
-        $this->checksum = $checksum;
     }
 
     /**
