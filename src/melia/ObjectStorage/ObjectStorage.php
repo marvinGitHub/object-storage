@@ -5,6 +5,7 @@ namespace melia\ObjectStorage;
 use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
+use FilesystemIterator;
 use FilterIterator;
 use Generator;
 use GlobIterator;
@@ -840,9 +841,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         // cache the directory check to avoid repeated I/O calls
         if (!isset($this->verifiedDirectories[$path])) {
-            if (!$this->getIOAdapter()->isDir($path)) {
-                $this->createDirectoryIfNotExist($path);
-            }
+            $this->createDirectoryIfNotExist($path);
             $this->verifiedDirectories[$path] = true;
         }
 
@@ -1562,62 +1561,49 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function createObjectIterator(?string $className): Traversable
     {
-        $directoryIterator = new RecursiveDirectoryIterator($this->getStorageDir(), RecursiveDirectoryIterator::SKIP_DOTS);
-        $recursiveIterator = new RecursiveIteratorIterator($directoryIterator);
-
-        return new class ($recursiveIterator, $className, static::FILE_SUFFIX_OBJECT, $this) extends FilterIterator {
-
-            private ?string $expectedClassname = null;
-            private string $extension;
-            private ObjectStorage $storage;
-
-            public function __construct(Iterator $iterator, ?string $className, string $extension, ObjectStorage $storage)
+        return new class ($className, static::FILE_SUFFIX_OBJECT, $this) implements \IteratorAggregate {
+            public function __construct(
+                private ?string       $className,
+                private string        $extension,
+                private ObjectStorage $storage
+            )
             {
-                parent::__construct($iterator);
-                $this->expectedClassname = $className;
-                $this->storage = $storage;
-                $this->extension = $extension;
             }
 
-            public function rewind(): void
+            public function getIterator(): \Generator
             {
-                clearstatcache(true, $this->storage->getStorageDir());
-                parent::rewind();
-            }
+                $storageDir = $this->storage->getStorageDir();
+                $extensionLen = strlen($this->extension);
 
-            public function accept(): bool
-            {
-                $fileInfo = $this->getInnerIterator()->current();
-                if (!$fileInfo instanceof SplFileInfo || $fileInfo->isDir()) {
-                    return false;
-                }
+                clearstatcache(true, $storageDir);
 
-                if ('.' . $fileInfo->getExtension() !== $this->extension) {
-                    return false;
-                }
+                // Targeted traversal of the 2-level sharded structure
+                $shard1Dirs = glob($storageDir . DIRECTORY_SEPARATOR . '?', GLOB_ONLYDIR) ?: [];
 
-                if (null !== $this->expectedClassname) {
-                    try {
-                        $uuid = $this->current();
-                        $assignedClassname = $this->storage->getClassName($uuid);
-                        return $assignedClassname === $this->expectedClassname;
-                    } catch (Throwable $e) {
-                        $this->storage->getLogger()?->log($e);
-                        return false;
+                foreach ($shard1Dirs as $shard1) {
+                    $shard2Dirs = glob($shard1 . DIRECTORY_SEPARATOR . '?', GLOB_ONLYDIR) ?: [];
+
+                    foreach ($shard2Dirs as $shard2) {
+                        $files = glob($shard2 . DIRECTORY_SEPARATOR . '*' . $this->extension) ?: [];
+
+                        foreach ($files as $file) {
+                            $uuid = substr(basename($file), 0, -$extensionLen);
+
+                            if (null !== $this->className) {
+                                try {
+                                    if ($this->storage->getClassName($uuid) !== $this->className) {
+                                        continue;
+                                    }
+                                } catch (Throwable $e) {
+                                    $this->storage->getLogger()?->log($e);
+                                    continue;
+                                }
+                            }
+
+                            yield $uuid => $uuid;
+                        }
                     }
                 }
-                return true;
-            }
-
-            public function current(): string
-            {
-                $fileInfo = $this->getInnerIterator()->current();
-                return $fileInfo->getBasename($this->extension);
-            }
-
-            public function key(): string
-            {
-                return $this->current();
             }
         };
     }
