@@ -51,7 +51,7 @@ class Reflection
         $property = $this->getProperty($propertyName);
 
         if (null === $property) {
-            $this->target->$propertyName = $value;
+            $this->target->{$propertyName} = $value;
         } else {
             $property->setAccessible(true);
             $property->setValue($this->target, $value);
@@ -166,17 +166,13 @@ class Reflection
             return true;
         }
 
-        try {
-            $property = $this->getProperty($propertyName);
-            if (null === $property) {
-                return false;
-            }
-
-            $property->setAccessible(true);
-            return $property->isInitialized($this->target);
-        } catch (ReflectionException $e) {
+        $property = $this->getProperty($propertyName);
+        if (null === $property) {
             return false;
         }
+
+        $property->setAccessible(true);
+        return $property->isInitialized($this->target);
     }
 
     /**
@@ -252,8 +248,7 @@ class Reflection
      */
     public function getPropertyType(string $propertyName): ?ReflectionType
     {
-        $reflection = $this->getReflectionObject();
-        return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName)->getType() : null;
+        return $this->getProperty($propertyName)?->getType();
     }
 
     /**
