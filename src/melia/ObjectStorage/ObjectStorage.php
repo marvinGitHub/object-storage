@@ -277,10 +277,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $path = $this->getStorageDir() . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
 
         // cache the directory check to avoid repeated I/O calls
-        if (!isset($this->verifiedDirectories[$path])) {
-            $this->createDirectoryIfNotExist($path);
-            $this->verifiedDirectories[$path] = true;
-        }
+        $this->createDirectoryIfNotExist($path);
 
         return $path;
     }
@@ -300,9 +297,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function createDirectoryIfNotExist(string $directory): void
     {
+        if (isset($this->verifiedDirectories[$directory])) {
+            return;
+        }
         if (false === (new Directory($directory))->createIfNotExists()) {
             throw new IOException('Unable to create directory: ' . $directory);
         }
+        $this->verifiedDirectories[$directory] = true;
     }
 
     /**

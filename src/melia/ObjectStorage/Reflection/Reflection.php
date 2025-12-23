@@ -48,7 +48,7 @@ class Reflection
      */
     public function set(string $propertyName, mixed $value): void
     {
-        $reflection = new ReflectionObject($this->target);
+        $reflection = $this->getReflectionObject();
         if ($reflection->hasProperty($propertyName)) {
             $property = $reflection->getProperty($propertyName);
 
@@ -69,7 +69,7 @@ class Reflection
      */
     public function getProperty(string $propertyName): ReflectionProperty
     {
-        $reflection = new ReflectionObject($this->target);
+        $reflection = $this->getReflectionObject();
         return $reflection->getProperty($propertyName);
     }
 
@@ -82,7 +82,7 @@ class Reflection
      */
     public function get(string $propertyName): mixed
     {
-        $reflection = new ReflectionObject($this->target);
+        $reflection = $this->getReflectionObject();
         $property = $reflection->getProperty($propertyName);
 
         $property->setAccessible(true);
@@ -104,7 +104,7 @@ class Reflection
         }
 
         try {
-            $reflection = new ReflectionObject($this->target);
+            $reflection = $this->getReflectionObject();
             $property = $reflection->getProperty($propertyName);
 
             $property->setAccessible(true);
@@ -139,6 +139,12 @@ class Reflection
         return false;
     }
 
+    /**
+     * Returns the default value for a given type name.
+     *
+     * @param string $typeName The name of the type for which the default value is needed.
+     * @return mixed The default value corresponding to the specified type name.
+     */
     private function getDefaultValueForType(string $typeName): mixed
     {
         return match ($typeName) {
@@ -164,7 +170,7 @@ class Reflection
         }
 
         try {
-            $reflection = new ReflectionObject($this->target);
+            $reflection = $this->getReflectionObject();
             $property = $reflection->getProperty($propertyName);
 
             $property->setAccessible(true);
@@ -182,7 +188,7 @@ class Reflection
      */
     public function getPropertyNames(): array
     {
-        $reflection = new ReflectionObject($this->target);
+        $reflection = $this->getReflectionObject();
         return array_unique(
             array_merge(
                 array_keys(get_object_vars($this->target)),
@@ -247,7 +253,16 @@ class Reflection
      */
     public function getPropertyType(string $propertyName): ?ReflectionType
     {
-        $reflection = new ReflectionObject($this->target);
+        $reflection = $this->getReflectionObject();
         return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName)->getType() : null;
+    }
+
+    public function getReflectionObject(): ReflectionObject
+    {
+        static $cache;
+        if (null === $cache) {
+            $cache = new WeakMap();
+        }
+        return $cache[$this->target] ??= new ReflectionObject($this->target);
     }
 }
