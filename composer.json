@@ -74,6 +74,7 @@
     "twig/twig": "^3.19",
     "fakerphp/faker": "^1.24",
     "phpstan/phpstan": "^2.1",
-    "perftools/php-profiler": "^1.2"
+    "perftools/php-profiler": "^1.2",
+    "monolog/monolog": "^2.10"
   }
 }

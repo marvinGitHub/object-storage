@@ -86,6 +86,7 @@ use SplFileInfo;
 use Throwable;
 use Traversable;
 use WeakMap;
+use melia\ObjectStorage\File\Helper as FileHelper;
 
 /**
  * Class responsible for storing, caching, and retrieving objects in a persistent storage system.
@@ -271,6 +272,37 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function getStorageDir(): string
     {
         return rtrim($this->storageDir, DIRECTORY_SEPARATOR);
+    }
+
+    /**
+     * Retrieves the file path for storing corrupted artifacts.
+     *
+     * @return string The file path where corrupted artifacts are stored.
+     */
+    protected function getFilePathCorruptedArtifacts(): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'corrupted';
+    }
+
+    /**
+     * Marks the file associated with the given UUID as corrupted by moving it
+     * to the corrupted artifacts directory.
+     *
+     * @param string $uuid The unique identifier of the file to be marked as corrupted.
+     *
+     * @return void
+     * @throws IOException
+     */
+    protected function markAsCorrupted(string $uuid): void
+    {
+        $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, fn() => new Context($uuid));
+
+        if (is_file($path = $this->getFilePathMetadata($uuid))) {
+            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        }
+        if (is_file($path = $this->getFilePathData($uuid))) {
+            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        }
     }
 
     /**
@@ -1356,14 +1388,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @return void
      * @throws StubSavingFailureException
+     * @throws IOException
      */
     public function rebuildStubs(): void
     {
+        /* tear down stub directory, otherwise list() method would use it */
         $directory = new Directory($this->getStubDirectory());
         $directory->tearDown();
 
         foreach ($this->list() as $uuid) {
             $className = $this->getClassName($uuid);
+
+            if (empty($className)) {
+                $this->markAsCorrupted($uuid);
+                continue;
+            }
+
             $this->createStub($className, $uuid);
         }
     }

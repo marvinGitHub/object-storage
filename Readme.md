@@ -197,6 +197,7 @@ The object storage emits lifecycle events around critical operations. You can su
 - METADATA_LOADING_FAILURE — dispatched when metadata loading fails.
 - OBJECT_LOADING_FAILURE — dispatched when object loading fails.
 - OBJECT_SAVING_FAILURE — dispatched when object saving fails.
+- OBJECT_CORRUPTION_DETECTED — dispatched when object corruption is detected.
 
 Event constants are defined in melia\ObjectStorage\Event\Events.
 

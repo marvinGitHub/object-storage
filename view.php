@@ -4,8 +4,17 @@ use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
 
 require_once __DIR__ . '/vendor/autoload.php';
+
+if (!is_file($logfile = __DIR__ . '/logs/error.log')) {
+    touch($logfile);
+}
+
+$logger = new Logger('ObjectStorageViewer');
+$logger->pushHandler(new StreamHandler($logfile));
 
 $loader = new FilesystemLoader(__DIR__ . '/views');
 $twig = new Environment($loader);
@@ -80,6 +89,7 @@ try {
                 $success = false === $storage->exists($uuid);
             } catch (Throwable $e) {
                 $success = false;
+                $logger->error($e);
             }
 
             echo $twig->render('delete-record.html', [
@@ -108,6 +118,7 @@ try {
                 $success = $dataWritten && $metadataWritten;
             } catch (Throwable $e) {
                 $success = false;
+                $logger->error($e);
             }
 
             echo $twig->render('duplicate-record.html', [
@@ -173,6 +184,7 @@ try {
                         if ($storage?->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
                             $storage?->getLockAdapter()->releaseLock($uuid);
                         }
+                        $logger->error($e);
                     }
                 }
             }
@@ -191,6 +203,7 @@ try {
                 $storage->rebuildStubs();
             } catch (Throwable $e) {
                 $success = false;
+                $logger->error($e);
             }
 
             echo $twig->render('rebuild-stubs.html', [
@@ -200,6 +213,6 @@ try {
 
             break;
     }
-} catch (LoaderError|RuntimeError|SyntaxError $e) {
-    var_dump($e);
+} catch (Throwable $e) {
+    $logger->error($e);
 }
