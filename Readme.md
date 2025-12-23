@@ -4,12 +4,15 @@
 
 A lightweight, file-based object store for PHP that persists object graphs by UUID, supports lazy loading, parent auto-updates, and handles deeply nested structures. Includes a simple viewer UI for exploring stored objects.
 
-- Persistent storage by UUID (JSON + metadata)
+- Persistent storage by UUID (data + metadata + stubs)
 - Lazy loading of references with transparent replacement in parents
 - Safe mode, locking, in-memory caching
 - Class stubs for fast listing, class registry
 - Automatic class aliasing if a class is unknown at load time
 - Simple object storage viewer (view.php)
+- Directory sharding for large datasets
+
+Changes for each release will be documented in the [Changelog](Changelog.md) file.
 
 ## Installation
 
