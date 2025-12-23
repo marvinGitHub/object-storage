@@ -3,7 +3,10 @@
 namespace melia\ObjectStorage;
 
 use JsonSerializable;
+use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
+use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
 use melia\ObjectStorage\Storage\StorageInterface;
@@ -85,18 +88,38 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
     private function loadIfNeeded(): void
     {
         if ($this->loadedObject === null) {
-            if (false === $this->storage->exists($this->uuid)) {
-                throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" does not exist', $this->uuid ?? ''));
-            }
-            if ($this->storage->expired($this->uuid)) {
-                throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" is expired', $this->uuid ?? ''));
+            $storage = $this->getStorage();
+
+            static $listener;
+            if (null === $listener) {
+                $listener = function (Context $context) {
+                    if ($this->uuid === $context->getUuid()) {
+                        throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" is expired', $this->uuid ?? ''));
+                    }
+                };
             }
 
-            $this->loadedObject = $this->getStorage()->load($this->uuid);
+            if ($storage instanceof ObjectStorage) {
+                $storage->getEventDispatcher()?->addListener(Events::OBJECT_EXPIRED, $listener);
+            }
+
+            try {
+                $this->loadedObject = $storage->load($this->uuid);
+            } catch (Throwable $e) {
+                $storage->getLogger()?->log($e);
+            } finally {
+                if ($storage instanceof ObjectStorage) {
+                    $storage->getEventDispatcher()?->removeListener(Events::OBJECT_EXPIRED, $listener);
+                }
+                if (null === $this->loadedObject) {
+                    throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" could not be loaded', $this->uuid ?? ''));
+                }
+            }
 
             $this->updateParent();
         }
     }
+
 
     /**
      * Updates the parent object by setting a specified property to the loaded object.
