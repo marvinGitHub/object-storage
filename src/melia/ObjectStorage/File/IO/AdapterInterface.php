@@ -38,4 +38,8 @@ interface AdapterInterface
     public function isFile(string $filename): bool;
 
     public function fileGetContents(string $filename): false|string;
+
+    public function rename(string $from, string $to, $context = null): bool;
+
+    public function moveFile(string $source, string $targetDir, ?string $fileName = null): bool;
 }

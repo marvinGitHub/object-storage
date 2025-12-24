@@ -50,7 +50,6 @@ use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
 use melia\ObjectStorage\Exception\UnsupportedTypeException;
 use melia\ObjectStorage\File\Directory;
-use melia\ObjectStorage\File\Helper as FileHelper;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
@@ -1214,14 +1213,18 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function delete(string $uuid): void
     {
-        $this->getEventDispatcher()?->dispatch(Events::BEFORE_DELETE, static fn() => new Context($uuid));
+        $eventDispatcher = $this->getEventDispatcher();
+        $lockAdapter = $this->getLockAdapter();
+        $adapter = $this->getIOAdapter();
+
+        $eventDispatcher?->dispatch(Events::BEFORE_DELETE, static fn() => new Context($uuid));
 
         try {
             if ($this->getStateHandler()?->safeModeEnabled()) {
                 throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
             }
 
-            $this->getLockAdapter()?->acquireExclusiveLock($uuid);
+            $lockAdapter?->acquireExclusiveLock($uuid);
 
             $this->removeFromCache($uuid);
 
@@ -1232,13 +1235,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $className = $this->getClassName($uuid);
             $filePath = $this->getFilePathData($uuid);
 
-            if (!$this->getIOAdapter()->unlink($filePath)) {
+            if (!$adapter->unlink($filePath)) {
                 throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
             }
 
             $filePathMetadata = $this->getFilePathMetadata($uuid);
-            if ($this->getIOAdapter()->isFile($filePathMetadata)) {
-                if (!$this->getIOAdapter()->unlink($filePathMetadata)) {
+            if ($adapter->isFile($filePathMetadata)) {
+                if (!$adapter->unlink($filePathMetadata)) {
                     throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
                 }
             }
@@ -1247,13 +1250,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->deleteStub($className, $uuid);
 
-            $this->getEventDispatcher()?->dispatch(Events::AFTER_DELETE, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::AFTER_DELETE, static fn() => new Context($uuid));
         } catch (Throwable $e) {
-            $this->getEventDispatcher()?->dispatch(Events::OBJECT_DELETION_FAILURE, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::OBJECT_DELETION_FAILURE, static fn() => new Context($uuid));
             throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
         } finally {
-            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()?->releaseLock($uuid);
+            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+                $lockAdapter?->releaseLock($uuid);
             }
         }
     }
@@ -1618,12 +1621,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function markAsCorrupted(string $uuid): void
     {
         $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
+        $adapter = $this->getIOAdapter();
 
-        if (is_file($path = $this->getFilePathMetadata($uuid))) {
-            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        if ($adapter->isFile($path = $this->getFilePathMetadata($uuid))) {
+            $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());
         }
-        if (is_file($path = $this->getFilePathData($uuid))) {
-            FileHelper::move($path, $this->getFilePathCorruptedArtifacts());
+        if ($adapter->isFile($path = $this->getFilePathData($uuid))) {
+            $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());
         }
     }
 
