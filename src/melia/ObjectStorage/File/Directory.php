@@ -14,6 +14,17 @@ class Directory
      */
     public function __construct(?string $path = null)
     {
+        $this->setPath($path);
+    }
+
+    /**
+     * Sets the value of the path property.
+     *
+     * @param string|null $path The path to be set. Can be null.
+     * @return void
+     */
+    public function setPath(?string $path): void
+    {
         $this->path = $path;
     }
 

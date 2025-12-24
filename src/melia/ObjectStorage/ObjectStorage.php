@@ -274,7 +274,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         $shard1 = $uuid[0];
         $shard2 = $uuid[1];
 
-        $path = $this->getStorageDir() . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
+        $path = $this->storageDir . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
 
         // cache the directory check to avoid repeated I/O calls
         $this->createDirectoryIfNotExist($path);
@@ -289,7 +289,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getStorageDir(): string
     {
-        return rtrim($this->storageDir, DIRECTORY_SEPARATOR);
+        return $this->storageDir;
     }
 
     /**
@@ -300,9 +300,19 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         if (isset($this->verifiedDirectories[$directory])) {
             return;
         }
-        if (false === (new Directory($directory))->createIfNotExists()) {
+
+        static $dir;
+
+        if (null === $dir) {
+            $dir = new Directory();
+        }
+
+        $dir->setPath($directory);
+
+        if (false === $dir->createIfNotExists()) {
             throw new IOException('Unable to create directory: ' . $directory);
         }
+
         $this->verifiedDirectories[$directory] = true;
     }
 
