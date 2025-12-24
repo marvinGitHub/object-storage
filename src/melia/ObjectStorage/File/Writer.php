@@ -64,7 +64,7 @@ class Writer implements WriterInterface
         }
 
         /* do not use file_put_contents() here, because it does not support atomic writes */
-        $file = $this->getIOAdapter()->fopen($filename, 'w+');
+        $file = $adapter->fopen($filename, 'w+');
 
         if (false === $file) {
             $this->createRecoveryHandler(null, $filename)();

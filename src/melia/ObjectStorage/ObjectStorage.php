@@ -416,14 +416,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             throw new Exception('Safe mode is enabled. Object cannot be stored.');
         }
 
-        $this->getEventDispatcher()?->dispatch(Events::BEFORE_STORE, static fn() => new ObjectPersistenceContext($uuid, $object));
+        $eventDispatcher = $this->getEventDispatcher();
+        $eventDispatcher?->dispatch(Events::BEFORE_STORE, static fn() => new ObjectPersistenceContext($uuid, $object));
 
         /* use metadata to check for existence, since this will already warm up the metadata cache */
         $metadata = $this->loadMetadata($uuid);
         $exists = null !== $metadata;
 
         if ($exists) {
-            $this->getEventDispatcher()?->dispatch(Events::BEFORE_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
+            $eventDispatcher?->dispatch(Events::BEFORE_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
         }
 
         // LazyLoadReference: not loaded → only return UUID
@@ -435,6 +436,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $uuid = $object->getUUID();
         }
 
+        $lockAdapter = $this->getLockAdapter();
+
         try {
             // 1) prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
             //    only generate a new UUID if none is available
@@ -444,7 +447,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $this->objectUuidMap[$object] = $uuid;
 
             // 3) no early return: ALWAYS call serializeAndStore so that updates are detected via checksum
-            $this->getLockAdapter()?->acquireExclusiveLock($uuid);
+            $lockAdapter?->acquireExclusiveLock($uuid);
 
             /* if classname change we should remove the previous stub */
             $previousClassname = $this->getClassName($uuid);
@@ -456,22 +459,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $this->serializeAndStore($object, $uuid, $ttl);
 
-            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()?->releaseLock($uuid);
+            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+                $lockAdapter?->releaseLock($uuid);
             }
 
             if ($exists) {
-                $this->getEventDispatcher()?->dispatch(Events::AFTER_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
+                $eventDispatcher?->dispatch(Events::AFTER_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
             }
 
-            $this->getEventDispatcher()?->dispatch(Events::AFTER_STORE, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::AFTER_STORE, static fn() => new Context($uuid));
 
             return $uuid;
         } catch (Throwable $e) {
-            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()?->releaseLock($uuid);
+            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+                $lockAdapter?->releaseLock($uuid);
             }
-            $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
             throw new ObjectSavingFailureException(message: sprintf('Unable to store object with uuid: %s', $uuid), previous: $e);
         }
     }
@@ -498,8 +501,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function deleteStub(string $className, string $uuid): void
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
+        $adapter = $this->getIOAdapter();
 
-        if ($this->getIOAdapter()->isFile($filePathStub) && !$this->getIOAdapter()->unlink($filePathStub)) {
+        if ($adapter->isFile($filePathStub) && !$adapter->unlink($filePathStub)) {
             throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
         }
         $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, static fn() => new StubContext($uuid, $className));
@@ -560,6 +564,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null, ?GraphBuilderContext $contextParent = null): void
     {
+        $eventDispatcher = $this->getEventDispatcher();
+
         try {
             if (!isset($this->objectUuidMap[$object])) {
                 $this->objectUuidMap[$object] = $uuid;
@@ -585,7 +591,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $exists = null !== $loadedMetadata;
 
             if (false === $exists) {
-                $this->getEventDispatcher()?->dispatch(Events::BEFORE_INITIAL_STORE, static fn() => new ObjectPersistenceContext($uuid, $object));
+                $eventDispatcher?->dispatch(Events::BEFORE_INITIAL_STORE, static fn() => new ObjectPersistenceContext($uuid, $object));
             }
 
             $context = new GraphBuilderContext($object, $metadata, $contextParent ? $contextParent->getLevel() : 1);
@@ -594,7 +600,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $serializedGraph = $this->getStrategy()?->serialize($graph, $this->maxDepth) ?? null;
 
             if (null === $serializedGraph) {
-                $this->getEventDispatcher()?->dispatch(Events::GRAPH_SERIALIZATION_FAILURE, static fn() => new Context($uuid));
+                $eventDispatcher?->dispatch(Events::GRAPH_SERIALIZATION_FAILURE, static fn() => new Context($uuid));
                 throw new SerializationFailureException('Unable serialize graph');
             }
 
@@ -624,15 +630,15 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
                 try {
                     $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $serializedGraph);
-                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
+                    $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                 } catch (Throwable $e) {
-                    $this->getEventDispatcher()?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
+                    $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
                     throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
                 }
             }
 
             if ($classNameChanged) {
-                $this->getEventDispatcher()?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
+                $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
             if ($writeMetadata) {
@@ -869,7 +875,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function load(string $uuid, bool $exclusive = false): ?object
     {
-        $this->getEventDispatcher()?->dispatch(Events::BEFORE_LOAD, static fn() => new Context($uuid));
+        $eventDispatcher = $this->getEventDispatcher();
+        $lockAdapter = $this->getLockAdapter();
+
+        $eventDispatcher?->dispatch(Events::BEFORE_LOAD, static fn() => new Context($uuid));
 
         if ($this->expired($uuid)) {
             /* do not delete an expired object since the ttl might be updated later */
@@ -878,31 +887,31 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         $cached = $this->getCache()?->get($uuid, null);
         if (null !== $cached) {
-            $this->getEventDispatcher()?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
             return $cached;
         }
 
         try {
             if ($exclusive) {
-                $this->getLockAdapter()?->acquireExclusiveLock($uuid);
+                $lockAdapter?->acquireExclusiveLock($uuid);
             } else {
-                $this->getLockAdapter()?->acquireSharedLock($uuid);
+                $lockAdapter?->acquireSharedLock($uuid);
             }
 
             $object = $this->loadFromStorage($uuid);
 
             if (!$exclusive) {
-                $this->getLockAdapter()?->releaseLock($uuid);
+                $lockAdapter?->releaseLock($uuid);
             }
 
-            $this->getEventDispatcher()?->dispatch(Events::AFTER_LOAD, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::AFTER_LOAD, static fn() => new Context($uuid));
 
             return $object;
         } catch (Throwable $e) {
-            if ($this->getLockAdapter()?->isLockedByThisProcess($uuid)) {
-                $this->getLockAdapter()?->releaseLock($uuid);
+            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+                $lockAdapter?->releaseLock($uuid);
             }
-            $this->getEventDispatcher()?->dispatch(Events::OBJECT_LOADING_FAILURE, static fn() => new Context($uuid));
+            $eventDispatcher?->dispatch(Events::OBJECT_LOADING_FAILURE, static fn() => new Context($uuid));
             throw new ObjectLoadingFailureException(message: sprintf('Unable to load object with uuid: %s', $uuid), previous: $e);
         }
     }
