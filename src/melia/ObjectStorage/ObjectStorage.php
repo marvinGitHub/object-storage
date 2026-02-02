@@ -805,7 +805,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         throw new UnsupportedKeyException('Only string and integer keys are supported.');
                     }
 
-                    $out[$k] = $this->transformValueForGraph($context, $v, array_merge($path, [$k]));
+                    $childPath = $path;
+                    $childPath[] = $k;
+
+                    $out[$k] = $this->transformValueForGraph($context, $v, $childPath);
                 } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                     $this->getLogger()?->log($e);
                 }
