@@ -183,13 +183,15 @@ class Reflection
      */
     public function getPropertyNames(): array
     {
-        $reflection = $this->getReflectionObject();
-        return array_unique(
-            array_merge(
-                array_keys(get_object_vars($this->target)),
-                array_map(fn(ReflectionProperty $property) => $property->getName(), $reflection->getProperties())
-            )
-        );
+        // public + dynamic properties currently on the object
+        $names = array_map(fn() => true, get_object_vars($this->target));
+
+        // declared properties (public/protected/private)
+        foreach ($this->getReflectionObject()->getProperties() as $property) {
+            $names[$property->getName()] = true;
+        }
+
+        return array_keys($names);
     }
 
     /**
