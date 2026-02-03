@@ -71,10 +71,10 @@ class Writer implements WriterInterface
             throw new IOException('Unable to open file for writing: ' . $filename);
         }
 
-        if (false === $adapter->rewind($file)) {
-            $this->createRecoveryHandler($file, $filename)();
-            throw new IOException('Unable to rewind file: ' . $filename);
-        }
+//        if (false === $adapter->rewind($file)) {
+//            $this->createRecoveryHandler($file, $filename)();
+//            throw new IOException('Unable to rewind file: ' . $filename);
+//        }
 
         if (false === $adapter->fwrite($file, $data ?? '')) {
             $this->createRecoveryHandler($file, $filename)();
@@ -86,15 +86,15 @@ class Writer implements WriterInterface
             throw new IOException('Unable to flush file: ' . $filename);
         }
 
-        if (false === $position = $adapter->ftell($file)) {
-            $this->createRecoveryHandler($file, $filename)();
-            throw new IOException('Unable to get file position: ' . $filename);
-        }
-
-        if (false === $adapter->ftruncate($file, $position)) {
-            $this->createRecoveryHandler($file, $filename)();
-            throw new IOException('Unable to truncate file: ' . $filename);
-        }
+//        if (false === $position = $adapter->ftell($file)) {
+//            $this->createRecoveryHandler($file, $filename)();
+//            throw new IOException('Unable to get file position: ' . $filename);
+//        }
+//
+//        if (false === $adapter->ftruncate($file, $position)) {
+//            $this->createRecoveryHandler($file, $filename)();
+//            throw new IOException('Unable to truncate file: ' . $filename);
+//        }
 
         if (false === $adapter->fclose($file)) {
             $this->createRecoveryHandler($file, $filename)();

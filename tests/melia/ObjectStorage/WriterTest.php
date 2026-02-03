@@ -21,8 +21,15 @@ class WriterTest extends TestCase
         $this->assertEquals('', $reader->read($filename));
     }
 
-    public function createEmptyFile(): void
+    public function testAtomicWriteWithTruncate()
     {
+        $filename = $this->createTemporaryFile();
+        $writer = new Writer();
 
+        $writer->atomicWrite($filename, 'ABCDEFG');
+        $this->assertStringEqualsFile($filename, 'ABCDEFG');
+
+        $writer->atomicWrite($filename, 'XYZ');
+        $this->assertStringEqualsFile($filename, 'XYZ');
     }
 }

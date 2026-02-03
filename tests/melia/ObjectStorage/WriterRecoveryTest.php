@@ -28,10 +28,10 @@ final class WriterRecoveryTest extends TestCase
             ->willReturn($handle);
 
         // rewind succeeds
-        $adapter->expects(self::once())
-            ->method('rewind')
-            ->with($handle)
-            ->willReturn(true);
+//        $adapter->expects(self::once())
+//            ->method('rewind')
+//            ->with($handle)
+//            ->willReturn(true);
 
         // fwrite fails -> triggers recovery
         $adapter->expects(self::once())
@@ -97,10 +97,10 @@ final class WriterRecoveryTest extends TestCase
             ->with($filename, 'w+')
             ->willReturn($handle);
 
-        $adapter->expects(self::once())
-            ->method('rewind')
-            ->with($handle)
-            ->willReturn(true);
+//        $adapter->expects(self::once())
+//            ->method('rewind')
+//            ->with($handle)
+//            ->willReturn(true);
 
         $adapter->expects(self::once())
             ->method('fwrite')
