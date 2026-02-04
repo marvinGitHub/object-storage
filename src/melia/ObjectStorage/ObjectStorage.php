@@ -1146,10 +1146,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $processed = [];
         foreach ($array as $key => $value) {
+            $childPath = $path;
+            $childPath[] = $key;
+
             if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, [...$path, $key]);
+                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, $childPath);
             } else if (is_array($value)) {
-                $processed[$key] = $this->processLoadedArray($metadata, $object, $value, [...$path, $key]);
+                $processed[$key] = $this->processLoadedArray($metadata, $object, $value, $childPath);
             } else {
                 $processed[$key] = $value;
             }
