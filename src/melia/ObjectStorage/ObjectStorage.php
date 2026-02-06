@@ -150,30 +150,33 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param int|float|null $ttl The time-to-live (in seconds) to set for the UUID.
      *
      * @return void
-     * @throws MetadataNotFoundException If metadata for the specified UUID cannot be loaded.
+     * @throws MetadataNotFoundException
      * @throws MetadataSavingFailureException
      */
     public function setLifetime(string $uuid, null|int|float $ttl): void
     {
-        $this->getLockAdapter()?->acquireExclusiveLock($uuid);
+        $lockAdapter = $this->getLockAdapter();
+        $lockAdapter?->acquireExclusiveLock($uuid);
 
-        $metadata = $this->loadMetadata($uuid);
-        if (null === $metadata) {
-            throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+        try {
+            $metadata = $this->loadMetadata($uuid);
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
+
+            if (null === $ttl) {
+                $timestampExpiresAt = null;
+            } else {
+                $timestampExpiresAt = microtime(true) + $ttl;
+                $timestampExpiresAt = (float)$timestampExpiresAt;
+            }
+
+            $metadata->setTimestampExpiresAt($timestampExpiresAt);
+            $this->saveMetadata($metadata);
+            $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
+        } finally {
+            $lockAdapter?->releaseLock($uuid);
         }
-
-        if (null === $ttl) {
-            $timestampExpiresAt = null;
-        } else {
-            $timestampExpiresAt = microtime(true) + $ttl;
-            $timestampExpiresAt = (float)$timestampExpiresAt;
-        }
-
-        $metadata->setTimestampExpiresAt($timestampExpiresAt);
-        $this->saveMetadata($metadata);
-        $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
-
-        $this->getLockAdapter()?->releaseLock($uuid);
     }
 
     /**
@@ -237,7 +240,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $validator($data);
         }
 
-        $data = json_decode($data, true, $this->maxDepth);
+        try {
+            $data = json_decode($data, true, $this->maxDepth, JSON_THROW_ON_ERROR);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $data = null;
+        }
 
         if (null === $data) {
             $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, static fn() => new IOContext($filename));
@@ -302,11 +310,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
         static $dir;
 
-        if (null === $dir) {
-            $dir = new Directory();
-        }
-
-        $dir->setPath($directory);
+        ($dir ??= new Directory())->setPath($directory);
 
         if (false === $dir->createIfNotExists()) {
             throw new IOException('Unable to create directory: ' . $directory);
