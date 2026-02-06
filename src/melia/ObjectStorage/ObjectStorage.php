@@ -616,7 +616,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $lifetimeChanged = $ttl !== $loadedMetadata?->getLifetime();
 
             $writeGraph = $checksumChanged || $classNameChanged;
-            $writeStub = $checksumChanged || $classNameChanged;
+            $writeStub = !$exists || $classNameChanged;
             $writeMetadata = $checksumChanged || $classNameChanged || $lifetimeChanged;
             $writeCache = $checksumChanged || $classNameChanged || $lifetimeChanged;
 
