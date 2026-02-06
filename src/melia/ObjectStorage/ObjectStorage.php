@@ -621,9 +621,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $writeCache = $checksumChanged || $classNameChanged || $lifetimeChanged;
 
             if ($writeGraph) {
-                $contextBuilderObjectPersistenceContext = function () use ($uuid, $object): ObjectPersistenceContext {
+                $contextBuilderObjectPersistenceContext = function () use ($uuid, $object, $exists): ObjectPersistenceContext {
                     try {
-                        $previousObject = $this->exists($uuid) ? $this->load($uuid) : null;
+                        $previousObject = $exists ? $this->load($uuid) : null;
                     } catch (Throwable $e) {
                         $this->getLogger()?->log($e);
                         $previousObject = null;
