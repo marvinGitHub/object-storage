@@ -329,7 +329,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function saveMetadata(Metadata $metadata): void
     {
         try {
-            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, depth: $this->maxDepth));
+            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, JSON_THROW_ON_ERROR, $this->maxDepth));
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));
