@@ -891,7 +891,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             return null;
         }
 
-        $cached = $this->getCache()?->get($uuid, null);
+        $cached = $this->getCache()?->get($uuid);
         if (null !== $cached) {
             $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
             return $cached;
@@ -1621,7 +1621,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
     /**
      * Marks the file associated with the given UUID as corrupted by moving it
-     * to the corrupted artifacts directory.
+     * to the directory for corrupted artifacts.
      *
      * @param string $uuid The unique identifier of the file to be marked as corrupted.
      *
