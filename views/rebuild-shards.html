@@ -4,7 +4,7 @@
 <form action="view.php" method="get">
     <input type="hidden" name="action" value="rebuild-shards"/>
     <input type="hidden" name="storage" value="{{ storage|url_encode }}"/>
-    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
+    <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{storage}}" role="button">Back</a>
     <input class="form-control mr-sm-2" type="number" min="0" max="32" name="depth" value="2"/>
     <input class="btn btn-primary btn-sm" type="submit" value="Rebuild"/>
 </form>
