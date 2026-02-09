@@ -126,16 +126,12 @@ foreach (array_slice($highValue, 0, 10, true) as $uuid => $obj) {
 }
 
 // 8) Random deletions: simulate churn
-$toDelete = array_slice($rootUuids, 10, 10);
+$toDelete = array_slice($rootUuids, 10, 50);
 foreach ($toDelete as $uuid) {
-    // safe operations before/after to profile existence checks
-    $storage->exists($uuid);
-    // If your storage supports explicit delete API, call it; otherwise, overwrite with tombstone-like object
-    $tombstone = new stdClass();
-    $tombstone->type = 'tombstone';
-    $tombstone->deletedAt = time();
-    $storage->store($tombstone);
+    $storage->delete($uuid);
 }
+$rootUuids = array_diff($rootUuids, $toDelete);
+$storage->clearCache();
 
 // 9) Warm-cache batch loads followed by a complex match over a known subset
 $warmSet = array_slice($rootUuids, 0, 40);
