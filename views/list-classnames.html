@@ -7,7 +7,9 @@
 
 {% if hasEntries %}
 <ul class="list-group">
-    <li class="list-group-item list-group-item-secondary"><span class="badge bg-dark">{{storage}}</span></li>
+    <li class="list-group-item list-group-item-secondary">
+        <a href="?storage=storage&action=list-classnames"> <span class="badge bg-dark">{{storage}}</span></a>
+    </li>
     {% for classname in classnames %}
     <li class="list-group-item">{{ classname }}&nbsp;<a class="btn btn-secondary btn-sm"
                                                         href="?action=list-uuids&storage={{storage}}&classname={{classname}}"
