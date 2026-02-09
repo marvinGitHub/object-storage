@@ -56,7 +56,7 @@ class ShardRebuilder
 
                 $uuid = $info->getBasename();
 
-                $targetDir = $storage->getShardedDirectory($uuid);
+                $targetDir = $storage->buildShardedDirectory($uuid);
 
                 if (!is_dir($targetDir)) {
                     if (!@mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {

@@ -276,32 +276,36 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getFilePathMetadata(string $uuid): string
     {
-        return $this->getShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+        return $this->buildShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
     }
 
     /**
-     * Builds the directory for a UUID for a given sharding depth.
-     * Depth 0 => storageDir
+     * Get the sharded directory for a UUID for a given sharding depth.
+     * Depth 0 => storageDir/shards
      *
      * @param string $uuid
      * @param int $depth
      * @return string
      */
-    protected function buildShardedDirectory(string $uuid, int $depth): string
+    protected function getShardedDirectory(string $uuid, int $depth): string
     {
-        return $this->getShardDir() . implode(DIRECTORY_SEPARATOR, str_split(substr($uuid, 0, $depth), 1));
+        if ($depth <= 0) {
+            return $this->getShardDir();
+        }
+
+        return $this->getShardDir() . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, str_split(substr($uuid, 0, $depth), 1));
     }
 
     /**
-     * Returns a sharded directory path based on the UUID prefix.
+     * Builds the sharded directory for a UUID
      *
      * @param string $uuid
      * @return string
      * @throws IOException
      */
-    public function getShardedDirectory(string $uuid): string
+    public function buildShardedDirectory(string $uuid): string
     {
-        $path = $this->buildShardedDirectory($uuid, $this->getStrategy()->getShardDepth());
+        $path = $this->getShardedDirectory($uuid, $this->getStrategy()->getShardDepth());
 
         // cache the directory check to avoid repeated I/O calls
         $this->createDirectoryIfNotExist($path);
@@ -899,7 +903,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getFilePathData(string $uuid): string
     {
-        return $this->getShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+        return $this->buildShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
     }
 
     /**
