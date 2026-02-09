@@ -4,6 +4,11 @@ namespace melia\ObjectStorage\File\IO;
 
 class RealAdapter implements AdapterInterface
 {
+    public function fileMTime(string $filename): int|false
+    {
+        return @filemtime($filename);
+    }
+
     public function fopen(string $filename, string $mode)
     {
         return fopen($filename, $mode);

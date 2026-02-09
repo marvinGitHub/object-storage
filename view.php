@@ -223,7 +223,7 @@ try {
 
                 if ($depth) {
                     $strategy = new Standard();
-                    $strategy->setShardDepth(4);
+                    $strategy->setShardDepth($depth);
                     $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
                     $storage->setStrategy($strategy);
                     $shardRebuilder = new ShardRebuilder();
