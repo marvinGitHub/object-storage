@@ -16,4 +16,6 @@ interface StrategyInterface extends AwareInterface
     public function unserialize(string $data): array;
 
     public function getMaxDepth(): int;
+
+    public function getShardDepth(): int;
 }

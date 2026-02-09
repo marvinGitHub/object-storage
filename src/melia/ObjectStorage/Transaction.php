@@ -20,6 +20,7 @@ use melia\ObjectStorage\Exception\TransactionLockException;
 use melia\ObjectStorage\Exception\TransactionNotActiveException;
 use melia\ObjectStorage\Exception\TransactionRollbackException;
 use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\Storage\StorageAwareTrait;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\Generator\AwareTrait;
 use melia\ObjectStorage\UUID\Generator\Generator;
@@ -34,10 +35,10 @@ use Throwable;
 class Transaction
 {
     use AwareTrait;
+    use StorageAwareTrait;
 
     private const TRANSACTION_FILE_SUFFIX = '.txn';
 
-    private ObjectStorage $storage;
     private string $transactionId;
     private array $operations = [];
     private array $lockedObjects = [];
@@ -49,7 +50,7 @@ class Transaction
     public function __construct(ObjectStorage $storage, float $timeout = 30.0)
     {
         $this->setGenerator(new Generator());
-        $this->storage = $storage;
+        $this->setStorage($storage);
         $this->transactionId = $this->generateTransactionId();
         $this->timeout = $timeout;
     }

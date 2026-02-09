@@ -14,6 +14,7 @@ class Standard implements StrategyInterface
 
     private bool $inheritLifetime = false;
     private int $maxDepth = 100;
+    private int $shardDepth = 2;
 
     public function enableLifetimeInheritance(): void
     {
@@ -63,5 +64,30 @@ class Standard implements StrategyInterface
             throw new InvalidMaxDepthException('Max depth must be greater than 0.');
         }
         $this->maxDepth = $maxDepth;
+    }
+
+    /**
+     * Retrieves the current shard depth.
+     *
+     * @return int The depth of the shard.
+     */
+    public function getShardDepth(): int
+    {
+        return $this->shardDepth;
+    }
+
+    /**
+     * Sets the shard depth for the current instance.
+     *
+     * @param int $shardDepth The depth value to set. Must be between 1 and 32, inclusive.
+     * @return void
+     * @throws InvalidMaxDepthException If the provided shard depth is not within the allowed range.
+     */
+    public function setShardDepth(int $shardDepth): void
+    {
+        if ($shardDepth <= 0 || $shardDepth > 32) {
+            throw new InvalidMaxDepthException('Max depth must be between 1 and 32.');
+        }
+        $this->shardDepth = $shardDepth;
     }
 }

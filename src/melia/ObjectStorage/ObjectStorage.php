@@ -280,19 +280,46 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
+     * Builds the directory for a UUID for a given sharding depth.
+     * Depth 0 => storageDir
+     *
+     * @param string $uuid
+     * @param int $depth
+     * @return string
+     */
+    protected function buildShardedDirectory(string $uuid, int $depth): string
+    {
+        if ($depth === 0) {
+            return $this->storageDir;
+        }
+
+        // Defensive: uuid indexing requires enough chars
+        if (strlen($uuid) < $depth) {
+            // If UUID is shorter than expected, just shard by the available prefix.
+            $depth = strlen($uuid);
+            if ($depth === 0) {
+                return $this->storageDir;
+            }
+        }
+
+        $parts = [];
+        for ($i = 0; $i < $depth; $i++) {
+            $parts[] = $uuid[$i];
+        }
+
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'shards' . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $parts);
+    }
+
+    /**
      * Returns a sharded directory path based on the UUID prefix.
      *
      * @param string $uuid
      * @return string
      * @throws IOException
      */
-    protected function getShardedDirectory(string $uuid): string
+    public function getShardedDirectory(string $uuid): string
     {
-        // sharding based on the first two characters: storage/a/b
-        $shard1 = $uuid[0];
-        $shard2 = $uuid[1];
-
-        $path = $this->storageDir . DIRECTORY_SEPARATOR . $shard1 . DIRECTORY_SEPARATOR . $shard2;
+        $path = $this->buildShardedDirectory($uuid, $this->getStrategy()->getShardDepth());
 
         // cache the directory check to avoid repeated I/O calls
         $this->createDirectoryIfNotExist($path);
@@ -1597,33 +1624,65 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $storageDir = $this->storage->getStorageDir();
                 $extensionLen = strlen($this->extension);
 
-                clearstatcache(true, $storageDir);
+                $depth = $this->storage->getStrategy()->getShardDepth();
 
-                // Targeted traversal of the 2-level sharded structure
-                $shard1Dirs = glob($storageDir . DIRECTORY_SEPARATOR . '?', GLOB_ONLYDIR) ?: [];
+                // In this codebase, sharded directories are stored under "<storageDir>/shards/<c1>/<c2>/..."
+                $baseDir = $depth > 0
+                    ? $storageDir . DIRECTORY_SEPARATOR . 'shards'
+                    : $storageDir;
 
-                foreach ($shard1Dirs as $shard1) {
-                    $shard2Dirs = glob($shard1 . DIRECTORY_SEPARATOR . '?', GLOB_ONLYDIR) ?: [];
+                clearstatcache(true, $baseDir);
 
-                    foreach ($shard2Dirs as $shard2) {
-                        $files = glob($shard2 . DIRECTORY_SEPARATOR . '*' . $this->extension) ?: [];
+                $iterateLeafDirs = static function (string $baseDir, int $depth): Generator {
+                    if ($depth <= 0) {
+                        yield $baseDir;
+                        return;
+                    }
 
-                        foreach ($files as $file) {
-                            $uuid = substr(basename($file), 0, -$extensionLen);
+                    $dirs = [$baseDir];
 
-                            if (null !== $this->className) {
-                                try {
-                                    if ($this->storage->getClassName($uuid) !== $this->className) {
-                                        continue;
-                                    }
-                                } catch (Throwable $e) {
-                                    $this->storage->getLogger()?->log($e);
+                    for ($level = 0; $level < $depth; $level++) {
+                        $next = [];
+
+                        foreach ($dirs as $dir) {
+                            clearstatcache(true, $dir);
+
+                            $children = glob($dir . DIRECTORY_SEPARATOR . '?', GLOB_ONLYDIR) ?: [];
+                            foreach ($children as $child) {
+                                $next[] = $child;
+                            }
+                        }
+
+                        $dirs = $next;
+
+                        if ($dirs === []) {
+                            return;
+                        }
+                    }
+
+                    foreach ($dirs as $leaf) {
+                        yield $leaf;
+                    }
+                };
+
+                foreach ($iterateLeafDirs($baseDir, $depth) as $leafDir) {
+                    $files = glob($leafDir . DIRECTORY_SEPARATOR . '*' . $this->extension) ?: [];
+
+                    foreach ($files as $file) {
+                        $uuid = substr(basename($file), 0, -$extensionLen);
+
+                        if (null !== $this->className) {
+                            try {
+                                if ($this->storage->getClassName($uuid) !== $this->className) {
                                     continue;
                                 }
+                            } catch (Throwable $e) {
+                                $this->storage->getLogger()?->log($e);
+                                continue;
                             }
-
-                            yield $uuid => $uuid;
                         }
+
+                        yield $uuid => $uuid;
                     }
                 }
             }

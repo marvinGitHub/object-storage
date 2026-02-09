@@ -3,6 +3,7 @@
 {% block body %}
 {% if exists %}
 <a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage}}" role="button">Rebuild Stubs</a>
+<a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage}}" role="button">Rebuild Shards</a>
 
 {% if hasEntries %}
 <ul class="list-group">

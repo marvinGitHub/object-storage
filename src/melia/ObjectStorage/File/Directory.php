@@ -2,6 +2,9 @@
 
 namespace melia\ObjectStorage\File;
 
+use FilesystemIterator;
+use UnexpectedValueException;
+
 class Directory
 {
     private ?string $path;
@@ -102,5 +105,20 @@ class Directory
         }
 
         return true;
+    }
+
+    /**
+     * Checks if the directory is empty.
+     *
+     * @return bool True if the directory is empty, false otherwise or if it is not readable.
+     */
+    public function isEmpty() : bool
+    {
+        try {
+            $it = new FilesystemIterator($this->path, FilesystemIterator::SKIP_DOTS);
+            return !$it->valid(); // no entries
+        } catch (UnexpectedValueException $e) {
+            return false; // unreadable / not a directory
+        }
     }
 }

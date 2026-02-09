@@ -2,6 +2,8 @@
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Strategy\Standard;
+use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
 use Monolog\Logger;
@@ -208,6 +210,33 @@ try {
             }
 
             echo $twig->render('rebuild-stubs.html', [
+                'storage' => $storageDir,
+                'success' => $success,
+            ]);
+
+            break;
+        case 'rebuild-shards':
+            $success = null;
+            try {
+                $storageDir = $_GET['storage'] ?? null;
+                $depth = $_GET['depth'] ?? null;
+
+                if ($depth) {
+                    $strategy = new Standard();
+                    $strategy->setShardDepth(4);
+                    $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
+                    $storage->setStrategy($strategy);
+                    $shardRebuilder = new ShardRebuilder();
+                    $shardRebuilder->setStorage($storage);
+                    $shardRebuilder->rebuildShards();
+                    $success = true;
+                }
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $success = false;
+            }
+
+            echo $twig->render('rebuild-shards.html', [
                 'storage' => $storageDir,
                 'success' => $success,
             ]);
