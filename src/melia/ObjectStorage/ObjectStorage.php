@@ -1633,15 +1633,12 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             public function getIterator(): Generator
             {
-                $storageDir = $this->storage->getStorageDir();
                 $extensionLen = strlen($this->extension);
 
                 $depth = $this->storage->getStrategy()->getShardDepth();
 
                 // In this codebase, sharded directories are stored under "<storageDir>/shards/<c1>/<c2>/..."
-                $baseDir = $depth > 0
-                    ? $storageDir . DIRECTORY_SEPARATOR . 'shards'
-                    : $storageDir;
+                $baseDir = $this->storage->getShardDir();
 
                 clearstatcache(true, $baseDir);
 
@@ -1678,6 +1675,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 };
 
                 foreach ($iterateLeafDirs($baseDir, $depth) as $leafDir) {
+                    clearstatcache(true, $leafDir);
+
                     $files = glob($leafDir . DIRECTORY_SEPARATOR . '*' . $this->extension) ?: [];
 
                     foreach ($files as $file) {
