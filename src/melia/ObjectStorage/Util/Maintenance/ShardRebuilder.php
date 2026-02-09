@@ -54,7 +54,7 @@ class ShardRebuilder
                     continue;
                 }
 
-                $uuid = $info->getBasename(); // <-- adjust if your file naming differs
+                $uuid = $info->getBasename();
 
                 $targetDir = $storage->getShardedDirectory($uuid);
 
@@ -71,7 +71,7 @@ class ShardRebuilder
                 }
 
                 if ($adapter->fileExists($targetPath)) {
-                    // Keep newest file (by mtime). Discard the older one.
+                    // Keep the newest file (by mtime). Discard the older one.
                     $srcMTime = $adapter->fileMTime($path);
                     $dstMTime = $adapter->fileMTime($targetPath);
 
@@ -95,11 +95,11 @@ class ShardRebuilder
                     }
                 }
 
-                if (!@rename($path, $targetPath)) {
-                    if (!@copy($path, $targetPath)) {
+                if (!$adapter->rename($path, $targetPath)) {
+                    if (!$adapter->copy($path, $targetPath)) {
                         throw new RuntimeException('Failed to move file to: ' . $targetPath);
                     }
-                    @unlink($path);
+                    $adapter->unlink($path);
                 }
 
                 $dirs[] = $info->getPath();
@@ -118,8 +118,9 @@ class ShardRebuilder
                     continue;
                 }
 
-                if (is_dir($dir) && (new Directory($dir))->isEmpty()) {
-                    @rmdir($dir);
+                $directory = new Directory($dir);
+                if ($directory->isEmpty()) {
+                    $directory->tearDown();
                 }
             }
         } finally {

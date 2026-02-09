@@ -104,6 +104,11 @@ class RealAdapter implements AdapterInterface
         return rename($from, $to, $context);
     }
 
+    public function copy(string $source, string $dest): bool
+    {
+        return copy($source, $dest);
+    }
+
     /**
      * Moves a file from a source location to a target directory.
      * Optionally, a new name for the file can be provided.
