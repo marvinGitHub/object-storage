@@ -827,7 +827,33 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
                 $metadata = $context->getMetadata();
-                $this->serializeAndStore($value, $refUuid, $this->getStrategy()?->inheritLifetime($context) ?? false ? $metadata->getLifetime() : null, $context);
+
+                $exists = $this->exists($refUuid);
+                $writeChild = true;
+
+                switch ($this->getStrategy()->getChildWritePolicy()) {
+                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_IF_NOT_EXIST:
+                        if ($exists) {
+                            $writeChild = false;
+                        }
+                        break;
+                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_NEVER:
+                        $writeChild = false;
+                        break;
+                    default:
+                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_ALWAYS:
+                        // ignore
+                        break;
+                }
+
+                if ($writeChild) {
+                    $this->serializeAndStore(
+                        $value,
+                        $refUuid,
+                        ($this->getStrategy()?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
+                        $context
+                    );
+                }
             }
 
             return [$context->getMetadata()->getReservedReferenceName() => $refUuid];

@@ -4,6 +4,7 @@ namespace melia\ObjectStorage\Strategy;
 
 use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
+use melia\ObjectStorage\Exception\InvalidChildWritePolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
@@ -16,6 +17,7 @@ class Standard implements StrategyInterface
     private bool $inheritLifetime = false;
     private int $maxDepth = 100;
     private int $shardDepth = 2;
+    private int $childWritePolicy = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
 
     public function enableLifetimeInheritance(): void
     {
@@ -92,5 +94,38 @@ class Standard implements StrategyInterface
             throw new InvalidMaxDepthException(sprintf('Shard depth must be between 1 and %u, inclusive.', $maxShardDepth));
         }
         $this->shardDepth = $shardDepth;
+    }
+
+    /**
+     * Retrieves the current child write policy.
+     *
+     * @return int The current child write policy. Possible values include:
+     *             - POLICY_CHILD_WRITE_ALWAYS
+     *             - POLICY_CHILD_WRITE_IF_NOT_EXIST
+     *             - POLICY_CHILD_WRITE_NEVER
+     */
+    public function getChildWritePolicy(): int
+    {
+        return $this->childWritePolicy;
+    }
+
+    /**
+     * Sets the child write policy for the current object.
+     *
+     * @param int $childWritePolicy The child write policy to set. Valid values are:
+     *                              - POLICY_CHILD_WRITE_ALWAYS
+     *                              - POLICY_CHILD_WRITE_IF_NOT_EXIST
+     *                              - POLICY_CHILD_WRITE_NEVER
+     *                              If an invalid value is provided, an InvalidChildWritePolicyException will be thrown.
+     *
+     * @return void
+     * @throws InvalidChildWritePolicyException
+     */
+    public function setChildWritePolicy(int $childWritePolicy): void
+    {
+        if (!in_array($childWritePolicy, [self::POLICY_CHILD_WRITE_ALWAYS, self::POLICY_CHILD_WRITE_IF_NOT_EXIST, self::POLICY_CHILD_WRITE_NEVER])) {
+            throw new InvalidChildWritePolicyException('Invalid child write policy.');
+        }
+        $this->childWritePolicy = $childWritePolicy;
     }
 }

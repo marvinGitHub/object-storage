@@ -50,8 +50,11 @@ class WriterSpy implements WriterInterface
         return array_filter($this->methodCalls, fn($call) => $call['method'] === 'atomicWrite');
     }
 
-    public function getCallsForUuid(string $uuid): array
+    public function getCallsForUuid(?string $uuid): array
     {
+        if (null === $uuid) {
+            return [];
+        }
         return array_filter($this->methodCalls, fn($call) => str_contains($call['filename'], $uuid));
     }
 
