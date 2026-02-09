@@ -99,20 +99,31 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     use MetadataCacheAwareTrait;
     use ClassRenameMapAwareTrait;
 
+    /**
+     * The default checksum algorithm used for checksum validation.
+     *
+     * @var string
+     */
     const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
 
     /**
      * The suffix used for metadata files.
+     *
+     * @var string
      */
     protected const FILE_SUFFIX_METADATA = '.metadata';
 
     /**
      * The suffix used for stub files.
+     *
+     * @var string
      */
     protected const FILE_SUFFIX_STUB = '.stub';
 
     /**
      * The suffix used for object files.
+     *
+     * @var string
      */
     protected const FILE_SUFFIX_OBJECT = '.obj';
 
@@ -241,7 +252,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $data = json_decode($data, true, $this->maxDepth, JSON_THROW_ON_ERROR);
+            $data = json_decode($data, true, $this->getStrategy()->getMaxDepth(), JSON_THROW_ON_ERROR);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             $data = null;
@@ -329,7 +340,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function saveMetadata(Metadata $metadata): void
     {
         try {
-            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, JSON_THROW_ON_ERROR, $this->maxDepth));
+            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, JSON_THROW_ON_ERROR, $this->getStrategy()->getMaxDepth()));
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));
@@ -600,7 +611,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $context = new GraphBuilderContext($object, $metadata, $contextParent ? $contextParent->getLevel() : 1);
 
             $graph = $this->createGraphAndStoreReferencedChildren($context);
-            $serializedGraph = $this->getStrategy()?->serialize($graph, $this->maxDepth) ?? null;
+            $strategy = $this->getStrategy();
+            $serializedGraph = $strategy?->serialize($graph, $strategy->getMaxDepth()) ?? null;
 
             if (null === $serializedGraph) {
                 $eventDispatcher?->dispatch(Events::GRAPH_SERIALIZATION_FAILURE, static fn() => new Context($uuid));
@@ -756,8 +768,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path): mixed
     {
-        if ($context->getLevel() > $this->maxDepth) {
-            throw new MaxDepthExceededException('Maximum depth of ' . $this->maxDepth . ' exceeded');
+        $maxDepth = $this->getStrategy()->getMaxDepth();
+        if ($context->getLevel() > $maxDepth) {
+            throw new MaxDepthExceededException(sprintf('Maximum depth of %u exceeded', $maxDepth));
         }
 
         if (is_resource($value)) {
@@ -1490,7 +1503,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      * @param CacheInterface|null $metadataCache
      * @param AdapterInterface|null $adapter
      * @param StrategyInterface|null $strategy
-     * @param int $maxDepth The maximum allowed depth for object nesting during processing. Defaults to 100.
      * @throws IOException If the storage directory cannot be created.
      */
     public function __construct(
@@ -1502,8 +1514,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         ?CacheInterface                 $cache = null,
         ?CacheInterface                 $metadataCache = null,
         ?AdapterInterface               $adapter = null,
-        ?StrategyInterface              $strategy = null,
-        private int                     $maxDepth = 100
+        ?StrategyInterface              $strategy = null
     )
     {
         $this->objectUuidMap = new WeakMap();

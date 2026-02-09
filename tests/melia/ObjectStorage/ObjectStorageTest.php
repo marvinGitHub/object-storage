@@ -22,6 +22,7 @@ use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Runtime\ClassRenameMap;
+use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use melia\ObjectStorage\UUID\Generator\Generator;
@@ -812,8 +813,10 @@ class ObjectStorageTest extends TestCase
 
     public function testMaxDepthExceeded()
     {
+        $strategy = new Standard();
+        $strategy->setMaxDepth(2);
         // Instantiate storage with a low nesting limit (e.g., 2)
-        $storage = new ObjectStorage($this->reserveRandomDirectory(), maxDepth: 2);
+        $storage = new ObjectStorage($this->reserveRandomDirectory(), strategy: $strategy);
 
         $root = new stdClass();
         $level1 = new stdClass();
