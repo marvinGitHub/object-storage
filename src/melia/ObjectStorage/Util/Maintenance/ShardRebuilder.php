@@ -25,16 +25,13 @@ class ShardRebuilder
 
         // Assumption: stored filename equals UUID (adjust if needed).
         // We only relocate files; the storage decides the correct sharded directory.
-        $root = rtrim($storage->getStorageDir(), DIRECTORY_SEPARATOR);
-        if ($root === '' || !is_dir($root)) {
-            throw new RuntimeException('Storage root directory is invalid: ' . $root);
-        }
+        $shardDir = $storage->getShardDir();
 
         $dirs = [];
 
         $it = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator(
-                $root,
+                $shardDir,
                 FilesystemIterator::SKIP_DOTS | FilesystemIterator::CURRENT_AS_FILEINFO
             ),
             RecursiveIteratorIterator::CHILD_FIRST
@@ -55,7 +52,7 @@ class ShardRebuilder
 
             $uuid = $info->getBasename(); // <-- adjust if your file naming differs
 
-            $targetDir = $this->storage->getShardedDirectory($uuid);
+            $targetDir = $storage->getShardedDirectory($uuid);
             $targetPath = rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $info->getBasename();
 
             if ($this->pathsEqual($path, $targetPath)) {
@@ -86,7 +83,7 @@ class ShardRebuilder
         foreach ($dirs as $dir) {
             $dir = rtrim($dir, DIRECTORY_SEPARATOR);
 
-            if ($this->pathsEqual($dir, $root)) {
+            if ($this->pathsEqual($dir, $shardDir)) {
                 continue;
             }
 

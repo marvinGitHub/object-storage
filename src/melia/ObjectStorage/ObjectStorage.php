@@ -289,8 +289,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function buildShardedDirectory(string $uuid, int $depth): string
     {
+        $shardDir = $this->getShardDir();
+
         if ($depth === 0) {
-            return $this->storageDir;
+            return $shardDir;
         }
 
         // Defensive: uuid indexing requires enough chars
@@ -298,7 +300,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             // If UUID is shorter than expected, just shard by the available prefix.
             $depth = strlen($uuid);
             if ($depth === 0) {
-                return $this->storageDir;
+                return $shardDir;
             }
         }
 
@@ -307,7 +309,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $parts[] = $uuid[$i];
         }
 
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'shards' . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $parts);
+        return $shardDir . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $parts);
     }
 
     /**
@@ -335,6 +337,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function getStorageDir(): string
     {
         return $this->storageDir;
+    }
+
+    /**
+     * Retrieves the directory path where shard files are stored.
+     *
+     * @return string The full path to the shard directory.
+     */
+    public function getShardDir() : string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'shards';
     }
 
     /**
