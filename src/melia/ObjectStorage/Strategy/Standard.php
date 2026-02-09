@@ -6,6 +6,7 @@ use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
+use melia\ObjectStorage\UUID\Validator;
 
 class Standard implements StrategyInterface
 {
@@ -85,8 +86,10 @@ class Standard implements StrategyInterface
      */
     public function setShardDepth(int $shardDepth): void
     {
-        if ($shardDepth <= 0 || $shardDepth > 32) {
-            throw new InvalidMaxDepthException('Max depth must be between 1 and 32.');
+        $maxShardDepth = Validator::UUID_LENGTH - 1;
+
+        if ($shardDepth <= 0 || $shardDepth > $maxShardDepth) {
+            throw new InvalidMaxDepthException(sprintf('Shard depth must be between 1 and %u, inclusive.', $maxShardDepth));
         }
         $this->shardDepth = $shardDepth;
     }
