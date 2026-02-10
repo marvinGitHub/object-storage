@@ -33,7 +33,7 @@ $shardsDir = $root . DIRECTORY_SEPARATOR . 'shards';
 function isOneCharShard(string $name): bool
 {
     // Old layout usually shards by first chars; accept hex-ish single char (adjust if you used broader charset).
-    return (bool)preg_match('/^[a-f0-9]$/i', $name);
+    return (bool)preg_match('/^[a-z0-9]$/i', $name);
 }
 
 function ensureDir(string $dir, bool $dryRun): void
