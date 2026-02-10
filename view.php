@@ -142,6 +142,8 @@ try {
                 $data = file_get_contents($storage->getFilePathData($uuid));
                 $medata = file_get_contents($storage->getFilePathMetadata($uuid));
 
+                $storage->buildShardedDirectory($uuidNew);
+
                 $dataWritten = false !== file_put_contents($storage->getFilePathData($uuidNew), $data);
                 $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuidNew), $medata);
                 $storage->createStub($storage->getClassName($uuid), $uuidNew);
