@@ -2,12 +2,14 @@
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
-use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
+use Symfony\Component\Cache\Adapter\FilesystemAdapter;
+use Symfony\Component\Cache\Psr16Cache;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
+use melia\ObjectStorage\File\Directory;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
@@ -24,6 +26,32 @@ $twig->addGlobal('baseUrl', $_SERVER['PHP_SELF']);
 
 $action = $_GET['action'] ?? $_POST['action'] ?? 'index';
 
+// PSR-16 CacheInterface implementation
+$psr16 = new Psr16Cache(new FilesystemAdapter(
+    namespace: 'object-storage-viewer',
+    defaultLifetime: 60,        // seconds (can also pass per item)
+    directory: __DIR__ . '/logs/cache'
+));
+
+$createCacheKeyShardDepth = function (string $storageDir): string {
+    return 'shard_depth_' . sha1($storageDir);
+};
+
+$buildStorage = function (string $storageDir) use ($psr16, $createCacheKeyShardDepth): ObjectStorage {
+    $storage = new ObjectStorage($storageDir);
+
+    $depth = $psr16->get($key = $createCacheKeyShardDepth($storageDir));
+
+    if ($depth === null) {
+        $depth = (new Directory($storage->getShardDir()))->getMaxDirDepth();
+        $psr16->set($key, $depth, 3600);
+    }
+
+    $storage->getStrategy()->setShardDepth($depth);
+
+    return $storage;
+};
+
 try {
     switch ($action) {
         case 'index':
@@ -34,7 +62,7 @@ try {
 
             $exists = is_dir($storageDir);
             try {
-                $classnames = $exists ? (new ObjectStorage($storageDir))->getClassNames() : [];
+                $classnames = $exists ? ($buildStorage($storageDir))->getClassNames() : [];
             } catch (IOException $e) {
                 $classnames = [];
             }
@@ -57,7 +85,7 @@ try {
 
             $storageDir = $_GET['storage'] ?? null;
             $className = $_GET['classname'] ?? null;
-            $storage = new ObjectStorage($storageDir);
+            $storage = $buildStorage($storageDir);
 
             $it = $storage->list($className);
             $total = iterator_count(new IteratorIterator($it));
@@ -87,7 +115,7 @@ try {
             $uuid = $_GET['uuid'] ?? null;
 
             try {
-                $storage = new ObjectStorage($storageDir);
+                $storage = $buildStorage($storageDir);
                 $storage->delete($uuid);
                 $success = false === $storage->exists($uuid);
             } catch (Throwable $e) {
@@ -105,7 +133,7 @@ try {
             $uuid = $_GET['uuid'] ?? null;
             $storageDir = $_GET['storage'] ?? null;
             try {
-                $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
+                $storage = $buildStorage($storageDir);
                 $exists = $storage->exists($uuid);
                 $storage->getLockAdapter()->acquireExclusiveLock($uuid);
 
@@ -135,7 +163,7 @@ try {
         case 'view-record':
             $storageDir = $_GET['storage'] ?? null;
             $uuid = $_GET['uuid'] ?? null;
-            $storage = new ObjectStorage($storageDir);
+            $storage = $buildStorage($storageDir);
 
             $exists = $storage->exists($uuid);
             $isLocked = $storage->getLockAdapter()->isLockedByOtherProcess($uuid);
@@ -173,7 +201,7 @@ try {
                 } else {
                     $storage = null;
                     try {
-                        $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
+                        $storage = $buildStorage($storageDir);
                         $storage->getLockAdapter()->acquireExclusiveLock($uuid);
                         $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
                         $metadata = $storage->loadMetadata($uuid);
@@ -200,7 +228,7 @@ try {
             break;
         case 'rebuild-stubs':
             $storageDir = $_GET['storage'] ?? null;
-            $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
+            $storage = $buildStorage($storageDir);
             $success = true;
             try {
                 $storage->rebuildStubs();
@@ -221,14 +249,17 @@ try {
                 $storageDir = $_GET['storage'] ?? null;
                 $depth = $_GET['depth'] ?? null;
 
+                $storage = $buildStorage($storageDir);
+
                 if ($depth) {
-                    $strategy = new Standard();
-                    $strategy->setShardDepth($depth);
-                    $storage = new melia\ObjectStorage\ObjectStorage($storageDir);
-                    $storage->setStrategy($strategy);
+                    $storage->getStrategy()->setShardDepth((int)$depth);
+
                     $shardRebuilder = new ShardRebuilder();
                     $shardRebuilder->setStorage($storage);
                     $shardRebuilder->rebuildShards();
+
+                    $psr16->delete($createCacheKeyShardDepth($storageDir));
+
                     $success = true;
                 }
             } catch (Throwable $e) {

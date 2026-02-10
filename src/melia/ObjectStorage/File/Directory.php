@@ -3,6 +3,8 @@
 namespace melia\ObjectStorage\File;
 
 use FilesystemIterator;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use UnexpectedValueException;
 
 class Directory
@@ -120,5 +122,33 @@ class Directory
         } catch (UnexpectedValueException $e) {
             return false; // unreadable / not a directory
         }
+    }
+
+    /**
+     * Calculates the maximum depth of directories within the specified path.
+     *
+     * @return int The maximum directory depth. Returns 0 if the path is not a valid directory.
+     */
+    public function getMaxDirDepth(): int
+    {
+        if (!is_dir($this->path)) {
+            return 0;
+        }
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        $maxDepth = 0;
+        foreach ($iterator as $entry) {
+            if (!$entry->isDir()) {
+                continue;
+            }
+
+            $maxDepth = max($maxDepth, $iterator->getDepth() + 1);
+        }
+
+        return $maxDepth;
     }
 }

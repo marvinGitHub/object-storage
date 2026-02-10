@@ -4,3 +4,4 @@ vendor
 logs
 .idea
 logs/*
+cache/*

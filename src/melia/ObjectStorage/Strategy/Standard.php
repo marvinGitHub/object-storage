@@ -14,9 +14,11 @@ class Standard implements StrategyInterface
     use AlgorithmAwareTrait;
     use GeneratorAwareTrait;
 
+    const SHARD_DEPTH_DEFAULT = 2;
+
     private bool $inheritLifetime = false;
     private int $maxDepth = 100;
-    private int $shardDepth = 2;
+    private int $shardDepth = Standard::SHARD_DEPTH_DEFAULT;
     private int $childWritePolicy = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
 
     public function enableLifetimeInheritance(): void
@@ -82,7 +84,7 @@ class Standard implements StrategyInterface
     /**
      * Sets the shard depth for the current instance.
      *
-     * @param int $shardDepth The depth value to set. Must be between 1 and 32, inclusive.
+     * @param int $shardDepth The depth value to set. Must be between 0 and 32, inclusive.
      * @return void
      * @throws InvalidMaxDepthException If the provided shard depth is not within the allowed range.
      */
@@ -91,7 +93,7 @@ class Standard implements StrategyInterface
         $maxShardDepth = Validator::UUID_LENGTH - 1;
 
         if ($shardDepth <= 0 || $shardDepth > $maxShardDepth) {
-            throw new InvalidMaxDepthException(sprintf('Shard depth must be between 1 and %u, inclusive.', $maxShardDepth));
+            throw new InvalidMaxDepthException(sprintf('Shard depth must be between 0 and %u, inclusive.', $maxShardDepth));
         }
         $this->shardDepth = $shardDepth;
     }
