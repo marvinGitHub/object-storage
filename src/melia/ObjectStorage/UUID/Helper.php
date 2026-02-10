@@ -67,4 +67,15 @@ class Helper
         }
         $object->setUUID($uuid);
     }
+
+    /**
+     * Removes all hyphens from the provided UUID string.
+     *
+     * @param string $uuid The input string containing hyphens to be removed.
+     * @return string The input string with all hyphens removed.
+     */
+    public static function removeHyphens(string $uuid): string
+    {
+        return str_replace('-', '', $uuid);
+    }
 }

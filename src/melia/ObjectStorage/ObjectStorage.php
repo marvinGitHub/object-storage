@@ -306,11 +306,22 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function getShardedDirectory(string $uuid, int $depth): string
     {
+        $base = $this->getShardDir();
+
         if ($depth <= 0) {
-            return $this->getShardDir();
+            return $base;
         }
 
-        return $this->getShardDir() . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, str_split(substr($uuid, 0, $depth), 1));
+        $uuidNoHyphens = Helper::removeHyphens($uuid);
+
+        $path = $base;
+        $limit = min($depth, strlen($uuidNoHyphens));
+
+        for ($i = 0; $i < $limit; $i++) {
+            $path .= DIRECTORY_SEPARATOR . $uuidNoHyphens[$i];
+        }
+
+        return $path;
     }
 
     /**
