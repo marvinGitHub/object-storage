@@ -260,7 +260,7 @@ try {
                     $shardRebuilder->setStorage($storage);
                     $shardRebuilder->rebuildShards();
 
-                    $psr16->delete($createCacheKeyShardDepth($storageDir));
+                    $psr16->set($key = $createCacheKeyShardDepth($storageDir), $depth, 3600);
 
                     $success = true;
                 }
