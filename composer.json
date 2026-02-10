@@ -13,6 +13,7 @@
     "uuid",
     "lazy-loading",
     "references",
+    "circular references",
     "object-graph",
     "locking",
     "concurrency",

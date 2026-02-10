@@ -11,6 +11,8 @@ A lightweight, file-based object store for PHP that persists object graphs by UU
 - Automatic class aliasing if a class is unknown at load time
 - Simple object storage viewer (view.php)
 - Directory sharding for large datasets
+- Handling of circular references
+- Event-driven lifecycle events
 
 ## Changelog
 
@@ -247,6 +249,46 @@ $storage->store($p);               // persists changes
 - Use the returned UUID to load, update, lock, or delete the object in later operations.
 
 Recommendation: implement melia\ObjectStorage\UUID\AwareInterface on your objects if you want the UUID to be assigned back onto the instance (via setUUID) and retrievable later (via getUUID).
+
+## Child Write Policy
+
+When you call `store($object)`, ObjectStorage persists the *root* object and may also persist any *child objects* it discovers while walking the object graph (i.e., referenced objects that become their own UUID-backed records). The **Child Write Policy** controls *when* those child objects are written to disk.
+
+This is useful because, depending on your use case, you may want child objects to be:
+
+- always synchronized to storage,
+- only created once and then treated as immutable records,
+- or never written automatically (manual/explicit persistence only).
+
+### Available policies
+
+The standard strategy supports three modes:
+
+- **`POLICY_CHILD_WRITE_ALWAYS`**  
+  Child objects are written every time you store the parent.  
+  Use this when the parent is the “source of truth” and you want the entire graph to stay consistent on each save.
+
+- **`POLICY_CHILD_WRITE_IF_NOT_EXIST`**  
+  Child objects are written **only if they don’t exist yet** in storage.  
+  Use this when children are meant to be created once (initial persistence) and then updated independently later (or treated as append-only).
+
+- **`POLICY_CHILD_WRITE_NEVER`**  
+  Child objects are **never** written as part of storing the parent.  
+  Use this when you want strict control: children must be stored explicitly, and `store($parent)` only updates the parent record (references still point to UUIDs).
+
+### How to configure
+
+Set the policy on the strategy you use for persistence (e.g., the “Standard” strategy). Invalid values are rejected and will throw an `InvalidChildWritePolicyException`, so you’ll know immediately if configuration is wrong.
+
+### Practical guidance
+
+- Pick **ALWAYS** for “save the whole graph” behavior (typical CRUD-style aggregates).
+- Pick **IF_NOT_EXIST** to prevent accidental overwrites of shared/reused child objects.
+- Pick **NEVER** when you treat children as separately managed entities and want to avoid hidden writes.
+
+If you’re unsure, start with **ALWAYS**, then tighten to **IF_NOT_EXIST** or **NEVER** once your domain boundaries and update flows are clear.
+
+
 ## Example Locking
 
 ```php
