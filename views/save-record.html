@@ -2,7 +2,7 @@
 
 {% block body %}
 <form>
-    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
+    <a class="btn btn-secondary btn-sm" href="?action=view-record&storage={{storage}}&uuid={{uuid}}" role="button">Back</a>
 </form>
 {% if success %}
 <div class="alert alert-success" role="alert">
