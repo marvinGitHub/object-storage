@@ -72,6 +72,20 @@ class Reflection
     }
 
     /**
+     * Retrieves a ReflectionObject instance for the current target object.
+     *
+     * @return ReflectionObject The ReflectionObject instance associated with the target object.
+     */
+    public function getReflectionObject(): ReflectionObject
+    {
+        static $cache;
+        if (null === $cache) {
+            $cache = new WeakMap();
+        }
+        return $cache[$this->target] ??= new ReflectionObject($this->target);
+    }
+
+    /**
      * Retrieves the value of a specified property name from the given object.
      *
      * @param string $propertyName The name of the property name to be accessed.
@@ -255,19 +269,5 @@ class Reflection
     public function getPropertyType(string $propertyName): ?ReflectionType
     {
         return $this->getProperty($propertyName)?->getType();
-    }
-
-    /**
-     * Retrieves a ReflectionObject instance for the current target object.
-     *
-     * @return ReflectionObject The ReflectionObject instance associated with the target object.
-     */
-    public function getReflectionObject(): ReflectionObject
-    {
-        static $cache;
-        if (null === $cache) {
-            $cache = new WeakMap();
-        }
-        return $cache[$this->target] ??= new ReflectionObject($this->target);
     }
 }

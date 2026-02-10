@@ -23,5 +23,5 @@ interface StrategyInterface extends AwareInterface
 
     public function getShardDepth(): int;
 
-    public function getChildWritePolicy() : int;
+    public function getChildWritePolicy(): int;
 }

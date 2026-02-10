@@ -54,11 +54,6 @@ class RealAdapter implements AdapterInterface
         return file_exists($filename);
     }
 
-    public function mkdir(string $dir, int $mode = 0777, bool $recursive = true): bool
-    {
-        return mkdir($dir, $mode, $recursive);
-    }
-
     public function feof($resource): bool
     {
         return feof($resource);
@@ -79,11 +74,6 @@ class RealAdapter implements AdapterInterface
         return @filesize($filename);
     }
 
-    public function isDir(string $filename): bool
-    {
-        return is_dir($filename);
-    }
-
     public function isFile(string $filename): bool
     {
         return is_file($filename);
@@ -97,11 +87,6 @@ class RealAdapter implements AdapterInterface
     public function fileGetContents(string $filename): false|string
     {
         return @file_get_contents($filename);
-    }
-
-    public function rename(string $from, string $to, $context = null): bool
-    {
-        return rename($from, $to, $context);
     }
 
     public function copy(string $source, string $dest): bool
@@ -126,5 +111,20 @@ class RealAdapter implements AdapterInterface
             $this->mkdir($targetDir, 0777, true);
         }
         return $this->rename($source, rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $fileName);
+    }
+
+    public function isDir(string $filename): bool
+    {
+        return is_dir($filename);
+    }
+
+    public function mkdir(string $dir, int $mode = 0777, bool $recursive = true): bool
+    {
+        return mkdir($dir, $mode, $recursive);
+    }
+
+    public function rename(string $from, string $to, $context = null): bool
+    {
+        return rename($from, $to, $context);
     }
 }

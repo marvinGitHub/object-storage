@@ -13,34 +13,6 @@ class Writer implements WriterInterface
     use AdapterAwareTrait;
 
     /**
-     * Creates a recovery handler for managing cleanup operations in case of a failure during a file operation.
-     * The returned closure ensures resources are properly closed and the file is deleted if necessary.
-     *
-     * @param resource|null $resource The file resource to close. Can be null if no resource needs to be closed.
-     * @param string $filename The name of the file to be deleted during recovery.
-     * @return Closure A closure that performs the recovery operations when invoked.
-     */
-    protected function createRecoveryHandler($resource, string $filename): Closure
-    {
-        $adapter = $this->getIOAdapter();
-        return static function () use ($filename, $resource, $adapter) {
-            if (is_resource($resource)) {
-                if (false === $adapter->fclose($resource)) {
-                    throw new IOException('Unable to close file: ' . $filename);
-                }
-            }
-
-            if (false === $adapter->isFile($filename)) {
-                return;
-            }
-
-            if (false === $adapter->unlink($filename)) {
-                throw new IOException('Unable to delete file during recovery: ' . $filename);
-            }
-        };
-    }
-
-    /**
      * Performs an atomic write operation to the specified file. Ensures that the file content
      * is written safely and completely, handling directory creation if needed, and managing
      * file system operations to reduce risks of data loss or corruption.
@@ -114,6 +86,34 @@ class Writer implements WriterInterface
             $this->ioAdapter = new RealAdapter();
         }
         return $this->ioAdapter;
+    }
+
+    /**
+     * Creates a recovery handler for managing cleanup operations in case of a failure during a file operation.
+     * The returned closure ensures resources are properly closed and the file is deleted if necessary.
+     *
+     * @param resource|null $resource The file resource to close. Can be null if no resource needs to be closed.
+     * @param string $filename The name of the file to be deleted during recovery.
+     * @return Closure A closure that performs the recovery operations when invoked.
+     */
+    protected function createRecoveryHandler($resource, string $filename): Closure
+    {
+        $adapter = $this->getIOAdapter();
+        return static function () use ($filename, $resource, $adapter) {
+            if (is_resource($resource)) {
+                if (false === $adapter->fclose($resource)) {
+                    throw new IOException('Unable to close file: ' . $filename);
+                }
+            }
+
+            if (false === $adapter->isFile($filename)) {
+                return;
+            }
+
+            if (false === $adapter->unlink($filename)) {
+                throw new IOException('Unable to delete file during recovery: ' . $filename);
+            }
+        };
     }
 
     /**

@@ -21,17 +21,6 @@ class Directory
     }
 
     /**
-     * Sets the value of the path property.
-     *
-     * @param string|null $path The path to be set. Can be null.
-     * @return void
-     */
-    public function setPath(?string $path): void
-    {
-        $this->path = $path;
-    }
-
-    /**
      * Retrieves the directory name from a given file path.
      *
      * @param string $path The file path from which to extract the directory name.
@@ -50,6 +39,17 @@ class Directory
     public function getPath(): ?string
     {
         return $this->path;
+    }
+
+    /**
+     * Sets the value of the path property.
+     *
+     * @param string|null $path The path to be set. Can be null.
+     * @return void
+     */
+    public function setPath(?string $path): void
+    {
+        $this->path = $path;
     }
 
     /**
@@ -112,7 +112,7 @@ class Directory
      *
      * @return bool True if the directory is empty, false otherwise or if it is not readable.
      */
-    public function isEmpty() : bool
+    public function isEmpty(): bool
     {
         try {
             $it = new FilesystemIterator($this->path, FilesystemIterator::SKIP_DOTS);

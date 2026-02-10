@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace melia\ObjectStorage\Cli\Command;
 
+use melia\ObjectStorage\Cli\Config\CliConfig;
 use melia\ObjectStorage\Cli\DI\Container;
 use melia\ObjectStorage\Cli\Style\Styles;
+use melia\ObjectStorage\Exception\InvalidMaxDepthException;
+use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\Strategy\Standard;
+use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -28,10 +33,29 @@ abstract class BaseCommand extends Command
         $this->io = Styles::io($input, $output);
     }
 
+    /**
+     * @throws IOException
+     * @throws InvalidMaxDepthException
+     */
     protected function withStorage(InputInterface $input, callable $fn)
     {
         $dir = (string)$input->getOption('dir');
         $storage = Container::makeStorage($dir);
+
+        // Apply CLI-only per-dir configuration (central config file, not inside the storage dir)
+        $config = new CliConfig();
+        $configuredDepth = $config->getShardDepthForDir($dir);
+
+        if ($configuredDepth !== null) {
+            $strategy = $storage->getStrategy();
+
+            if ($strategy instanceof Standard) {
+                $strategy->setShardDepth($configuredDepth);
+            } else {
+                throw new RuntimeException('Configured shard depth cannot be applied: unsupported strategy instance.');
+            }
+        }
+
         return $fn($storage, $dir);
     }
 

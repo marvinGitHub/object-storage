@@ -280,23 +280,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Get the sharded directory for a UUID for a given sharding depth.
-     * Depth 0 => storageDir/shards
-     *
-     * @param string $uuid
-     * @param int $depth
-     * @return string
-     */
-    protected function getShardedDirectory(string $uuid, int $depth): string
-    {
-        if ($depth <= 0) {
-            return $this->getShardDir();
-        }
-
-        return $this->getShardDir() . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, str_split(substr($uuid, 0, $depth), 1));
-    }
-
-    /**
      * Builds the sharded directory for a UUID
      *
      * @param string $uuid
@@ -314,13 +297,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Retrieves the directory of the storage.
+     * Get the sharded directory for a UUID for a given sharding depth.
+     * Depth 0 => storageDir/shards
      *
-     * @return string The storage directory path as a string.
+     * @param string $uuid
+     * @param int $depth
+     * @return string
      */
-    public function getStorageDir(): string
+    protected function getShardedDirectory(string $uuid, int $depth): string
     {
-        return $this->storageDir;
+        if ($depth <= 0) {
+            return $this->getShardDir();
+        }
+
+        return $this->getShardDir() . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, str_split(substr($uuid, 0, $depth), 1));
     }
 
     /**
@@ -577,6 +567,16 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function getStubDirectory(): string
     {
         return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
+    }
+
+    /**
+     * Retrieves the directory of the storage.
+     *
+     * @return string The storage directory path as a string.
+     */
+    public function getStorageDir(): string
+    {
+        return $this->storageDir;
     }
 
     /**
@@ -886,29 +886,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * Retrieves the lifetime of the metadata associated with the specified UUID.
-     *
-     * @param string $uuid The unique identifier used to load the metadata.
-     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
-     */
-    public function getLifetime(string $uuid): ?float
-    {
-        return $this->loadMetadata($uuid)?->getLifetime();
-    }
-
-    /**
-     * Generates a checksum for the given data using the specified hashing algorithm.
-     *
-     * @param string $data The input data for which the checksum is to be generated.
-     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
-     * @return string The generated checksum as a hashed string.
-     */
-    protected static function generateChecksum(string $data, string $algorithm): string
-    {
-        return hash($algorithm, $data);
-    }
-
-    /**
      * Checks if a file exists for a specific UUID.
      *
      * @param string $uuid The UUID to check if the associated file exists.
@@ -930,6 +907,29 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function getFilePathData(string $uuid): string
     {
         return $this->buildShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+    }
+
+    /**
+     * Retrieves the lifetime of the metadata associated with the specified UUID.
+     *
+     * @param string $uuid The unique identifier used to load the metadata.
+     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
+     */
+    public function getLifetime(string $uuid): ?float
+    {
+        return $this->loadMetadata($uuid)?->getLifetime();
+    }
+
+    /**
+     * Generates a checksum for the given data using the specified hashing algorithm.
+     *
+     * @param string $data The input data for which the checksum is to be generated.
+     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
+     * @return string The generated checksum as a hashed string.
+     */
+    protected static function generateChecksum(string $data, string $algorithm): string
+    {
+        return hash($algorithm, $data);
     }
 
     /**
