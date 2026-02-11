@@ -306,6 +306,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function getShardedDirectory(string $uuid, int $depth): string
     {
+        static $cache = [];
+
+        $cacheKey = $depth . ':' . $uuid;
+        if (isset($cache[$cacheKey])) {
+            return $cache[$cacheKey];
+        }
+
         $base = $this->getShardDir();
 
         if ($depth <= 0) {
@@ -321,7 +328,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             $path .= DIRECTORY_SEPARATOR . $uuidNoHyphens[$i];
         }
 
-        return $path;
+        return $cache[$cacheKey] = $path;
     }
 
     /**
