@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace melia\ObjectStorage\Cli\Command;
 
+use melia\ObjectStorage\ObjectStorage;
 use RuntimeException;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -18,7 +19,7 @@ final class RebuildStubsCommand extends BaseCommand
     {
         $this->initIO($input, $output);
 
-        return $this->withStorage($input, function ($storage, string $dir): int {
+        return $this->withStorage($input, function (ObjectStorage $storage, string $dir): int {
             try {
                 $this->io->writeln(sprintf('<info>Rebuilding stubs in %s…</info>', $dir));
 

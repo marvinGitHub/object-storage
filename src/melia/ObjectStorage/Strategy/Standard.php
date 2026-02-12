@@ -8,7 +8,6 @@ use melia\ObjectStorage\Exception\InvalidChildWritePolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
-use const Dom\VALIDATION_ERR;
 
 class Standard implements StrategyInterface
 {

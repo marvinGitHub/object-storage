@@ -21,6 +21,7 @@ use melia\ObjectStorage\Exception\TransactionNotActiveException;
 use melia\ObjectStorage\Exception\TransactionRollbackException;
 use melia\ObjectStorage\File\Writer;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
+use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\Generator\AwareTrait;
 use melia\ObjectStorage\UUID\Generator\Generator;
@@ -56,6 +57,16 @@ class Transaction
     }
 
     /**
+     * Retrieves the current object storage.
+     *
+     * @return ObjectStorage|null The current instance of object storage, or null if not initialized.
+     */
+    public function getStorage(): ?ObjectStorage
+    {
+        return $this->storage;
+    }
+
+    /**
      * Generates a unique transaction ID.
      *
      * @return string A unique transaction ID composed of a prefix, a unique identifier, and the process ID.
@@ -76,7 +87,7 @@ class Transaction
             throw new TransactionAlreadyActiveException('Transaction is already active');
         }
 
-        if ($this->storage->getStateHandler()?->safeModeEnabled()) {
+        if ($this->getStorage()->getStateHandler()?->safeModeEnabled()) {
             throw new TransactionException('Cannot start transaction in safe mode');
         }
 
@@ -110,7 +121,7 @@ class Transaction
      */
     public function getTransactionLogPath(): string
     {
-        return $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . DIRECTORY_SEPARATOR . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
+        return $this->getStorage()->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . DIRECTORY_SEPARATOR . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
     }
 
     /**
@@ -168,11 +179,11 @@ class Transaction
     {
         switch ($operation['type']) {
             case 'store':
-                $this->storage->store($operation['object'], $operation['uuid']);
+                $this->getStorage()->store($operation['object'], $operation['uuid']);
                 break;
 
             case 'delete':
-                $this->storage->delete($operation['uuid']);
+                $this->getStorage()->delete($operation['uuid']);
                 break;
 
             default:
@@ -195,7 +206,7 @@ class Transaction
 
         // Create a backup of an existing object (if exists)
         $backup = null;
-        if ($this->storage->exists($uuid)) {
+        if ($this->getStorage()->exists($uuid)) {
             $backup = $this->createBackup($uuid);
         }
 
@@ -225,7 +236,7 @@ class Transaction
         }
 
         try {
-            $this->storage->getLockAdapter()->acquireExclusiveLock($uuid, $this->timeout);
+            $this->getStorage()->getLockAdapter()->acquireExclusiveLock($uuid, $this->timeout);
             $this->lockedObjects[] = $uuid;
         } catch (Throwable $e) {
             throw new TransactionLockException("Could not lock object {$uuid}: " . $e->getMessage(), 0, $e);
@@ -239,11 +250,11 @@ class Transaction
      */
     private function createBackup(string $uuid): ?array
     {
-        if (!$this->storage->exists($uuid)) {
+        if (!$this->getStorage()->exists($uuid)) {
             return null;
         }
 
-        $object = $this->storage->load($uuid);
+        $object = $this->getStorage()->load($uuid);
         if (null === $object) {
             return null;
         }
@@ -276,7 +287,7 @@ class Transaction
         }
 
         // Normal load operation
-        return $this->storage->load($uuid);
+        return $this->getStorage()->load($uuid);
     }
 
     /**
@@ -339,7 +350,7 @@ class Transaction
         $pendingStore = $this->findPendingOperation('store', $uuid);
         if (null === $pendingStore) {
             // No pending store: ensure it exists in storage, otherwise this is truly missing
-            if (!$this->storage->exists($uuid)) {
+            if (!$this->getStorage()->exists($uuid)) {
                 throw new ObjectNotFoundException("Object with UUID {$uuid} not found");
             }
         }
@@ -390,11 +401,11 @@ class Transaction
     {
         foreach ($this->lockedObjects as $uuid) {
             try {
-                if ($this->storage->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                    $this->storage->getLockAdapter()->releaseLock($uuid);
+                if ($this->getStorage()->getLockAdapter()->isLockedByThisProcess($uuid)) {
+                    $this->getStorage()->getLockAdapter()->releaseLock($uuid);
                 }
             } catch (Throwable $e) {
-                $this->storage->getLogger()?->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
+                $this->getStorage()->getLogger()?->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
             }
         }
         $this->lockedObjects = [];
@@ -425,7 +436,7 @@ class Transaction
             return true;
 
         } catch (Throwable $e) {
-            $this->storage->getStateHandler()?->enableSafeMode();
+            $this->getStorage()->getStateHandler()?->enableSafeMode();
             throw new TransactionRollbackException('Transaction rollback failed, enable safe mode. Reason: ' . $e->getMessage(), 0, $e);
         }
     }
@@ -447,7 +458,7 @@ class Transaction
                             $this->restoreBackup($operation['uuid'], $operation['backup']);
                         } else {
                             // Delete an object (was newly created)
-                            $this->storage->delete($operation['uuid']);
+                            $this->getStorage()->delete($operation['uuid']);
                         }
                         break;
 
@@ -460,7 +471,7 @@ class Transaction
                 }
             } catch (Throwable $e) {
                 // Log rollback errors, but continue
-                $this->storage->getLogger()?->log(new Exception(message: sprintf("Rollback operation failed for %s", $operation['uuid']), previous: $e));
+                $this->getStorage()->getLogger()?->log(new Exception(message: sprintf("Rollback operation failed for %s", $operation['uuid']), previous: $e));
             }
         }
     }
@@ -473,7 +484,7 @@ class Transaction
     private function restoreBackup(string $uuid, array $backup): void
     {
         if ($backup && isset($backup['object'])) {
-            $this->storage->store($backup['object'], $uuid);
+            $this->getStorage()->store($backup['object'], $uuid);
         }
     }
 
@@ -486,7 +497,7 @@ class Transaction
             try {
                 $this->rollback();
             } catch (Exception $e) {
-                $this->storage->getLogger()?->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
+                $this->getStorage()->getLogger()?->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
             }
         }
     }

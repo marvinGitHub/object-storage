@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace melia\ObjectStorage\Cli\Command;
 
+use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use RuntimeException;
 use Symfony\Component\Console\Input\InputInterface;
@@ -19,7 +20,7 @@ final class RebuildShardsCommand extends BaseCommand
     {
         $this->initIO($input, $output);
 
-        return $this->withStorage($input, function ($storage, string $dir) use ($input): int {
+        return $this->withStorage($input, function (ObjectStorage $storage, string $dir): int {
             try {
                 $this->io->writeln(sprintf('<info>Rebuilding shards in %s…</info>', $dir));
 
