@@ -688,9 +688,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $this->createStub($className, $uuid);
             }
         } finally {
-            if (isset($this->processingStack[$object])) {
-                unset($this->processingStack[$object]);
-            }
+            unset($this->processingStack[$object]);
         }
     }
 
