@@ -276,7 +276,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getFilePathMetadata(string $uuid): string
     {
-        return $this->buildShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_METADATA;
+        return $this->buildShardedDirectory($uuid) . $uuid . static::FILE_SUFFIX_METADATA;
     }
 
     /**
@@ -306,29 +306,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function getShardedDirectory(string $uuid, int $depth): string
     {
-        static $cache = [];
-
-        $cacheKey = $depth . ':' . $uuid;
-        if (isset($cache[$cacheKey])) {
-            return $cache[$cacheKey];
-        }
-
-        $base = $this->getShardDir();
-
-        if ($depth <= 0) {
-            return $base;
-        }
-
-        $uuidNoHyphens = Helper::removeHyphens($uuid);
-
-        $path = $base;
-        $limit = min($depth, strlen($uuidNoHyphens));
-
-        for ($i = 0; $i < $limit; $i++) {
-            $path .= DIRECTORY_SEPARATOR . $uuidNoHyphens[$i];
-        }
-
-        return $cache[$cacheKey] = $path;
+        $uuid = Helper::removeHyphens($uuid);
+        return $this->getShardDir() . DIRECTORY_SEPARATOR . chunk_split(substr($uuid, 0, min($depth, 32)), 1, DIRECTORY_SEPARATOR);
     }
 
     /**
@@ -924,7 +903,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getFilePathData(string $uuid): string
     {
-        return $this->buildShardedDirectory($uuid) . DIRECTORY_SEPARATOR . $uuid . static::FILE_SUFFIX_OBJECT;
+        return $this->buildShardedDirectory($uuid) . $uuid . static::FILE_SUFFIX_OBJECT;
     }
 
     /**
