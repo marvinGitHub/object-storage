@@ -54,4 +54,9 @@ class HelperTest extends TestCase
         // this should not override
         $this->assertEquals($someUUID, $someObject->uuid);
     }
+
+    public function testRemoveHyphens(): void
+    {
+        $this->assertEquals('7a0d5e9c164b4c4a92393fec16997afe', Helper::removeHyphens('7a0d5e9c-164b-4c4a-9239-3fec16997afe'));
+    }
 }
