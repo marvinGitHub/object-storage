@@ -79,9 +79,7 @@ class Reflection
     public function getReflectionObject(): ReflectionObject
     {
         static $cache;
-        if (null === $cache) {
-            $cache = new WeakMap();
-        }
+        $cache ??= new WeakMap();
         return $cache[$this->target] ??= new ReflectionObject($this->target);
     }
 
@@ -227,9 +225,7 @@ class Reflection
     public function getCachedPropertyType(object $object, string $propertyName): ?ReflectionType
     {
         static $classPropertyTypeCache;
-        if (null === $classPropertyTypeCache) {
-            $classPropertyTypeCache = new WeakMap();
-        }
+        $classPropertyTypeCache ??= new WeakMap();
 
         // Only cache if it's a declared property on the class
         $core = static::getReflectionClass($object::class);
