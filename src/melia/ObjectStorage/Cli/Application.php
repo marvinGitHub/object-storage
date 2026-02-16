@@ -10,6 +10,7 @@ use melia\ObjectStorage\Cli\Command\DeleteCommand;
 use melia\ObjectStorage\Cli\Command\GetCommand;
 use melia\ObjectStorage\Cli\Command\LifetimeCommand;
 use melia\ObjectStorage\Cli\Command\ListCommand;
+use melia\ObjectStorage\Cli\Command\PurgeExpiredCommand;
 use melia\ObjectStorage\Cli\Command\PutCommand;
 use melia\ObjectStorage\Cli\Command\RebuildShardsCommand;
 use melia\ObjectStorage\Cli\Command\RebuildStubsCommand;
@@ -35,7 +36,8 @@ final class Application extends SymfonyApplication
             new LifetimeCommand(),
             new RebuildShardsCommand(),
             new RebuildStubsCommand(),
-            new ConfigureShardDepthCommand()
+            new ConfigureShardDepthCommand(),
+            new PurgeExpiredCommand()
         ]);
 
         // Global styles can be further customized in individual commands via Styles

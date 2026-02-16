@@ -38,9 +38,6 @@ final class LifetimeCommand extends BaseCommand
             try {
                 if ($setOpt !== null) {
                     $ttl = (int)$setOpt;
-                    if ($ttl < 0) {
-                        return $this->failure('TTL must be >= 0', 1);
-                    }
 
                     if ($ttl === 0) {
                         // remove expiration
@@ -71,7 +68,7 @@ final class LifetimeCommand extends BaseCommand
                         'uuid' => $uuid,
                         'expiresAt' => $expiresAt,     // unix timestamp or null
                         'ttl' => $ttl,                 // seconds remaining, may be negative if expired, or null if no expiration
-                        'expired' => $ttl !== null ? $ttl <= 0 : false,
+                        'expired' => $ttl !== null && $ttl <= 0,
                     ], $flags));
                     return 0;
                 }
