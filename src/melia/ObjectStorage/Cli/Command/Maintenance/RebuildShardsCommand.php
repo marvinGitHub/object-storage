@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace melia\ObjectStorage\Cli\Command;
+namespace melia\ObjectStorage\Cli\Command\Maintenance;
 
+use melia\ObjectStorage\Cli\Command\BaseCommand;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use RuntimeException;

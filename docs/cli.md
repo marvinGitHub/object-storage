@@ -23,6 +23,11 @@ Commands:
 - check
 - stats
 - safemode
+- ttl
+- maintenance:rebuild-stubs
+- maintenance:rebuild-shards
+- config:set-shard-depth
+- maintenance:purge-expired
 
 ## Commands
 1. list

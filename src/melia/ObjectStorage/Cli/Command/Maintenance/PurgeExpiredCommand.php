@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace melia\ObjectStorage\Cli\Command;
+namespace melia\ObjectStorage\Cli\Command\Maintenance;
 
+use melia\ObjectStorage\Cli\Command\BaseCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -11,7 +12,7 @@ use Throwable;
 
 final class PurgeExpiredCommand extends BaseCommand
 {
-    protected static $defaultName = 'purge-expired';
+    protected static $defaultName = 'maintenance:purge-expired';
 
     protected function configure(): void
     {
