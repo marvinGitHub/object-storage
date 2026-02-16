@@ -276,6 +276,10 @@ The standard strategy supports three modes:
   Child objects are **never** written as part of storing the parent.  
   Use this when you want strict control: children must be stored explicitly, and `store($parent)` only updates the parent record (references still point to UUIDs).
 
+- **`POLICY_CHILD_WRITE_CALLBACK`**  
+  Child objects are written based on a custom callback function.  
+  Use this when you need fine-grained control over when child objects are written, such as when implementing complex business logic or handling specific edge cases.
+
 ### How to configure
 
 Set the policy on the strategy you use for persistence (e.g., the “Standard” strategy). Invalid values are rejected and will throw an `InvalidChildWritePolicyException`, so you’ll know immediately if configuration is wrong.
@@ -285,6 +289,7 @@ Set the policy on the strategy you use for persistence (e.g., the “Standard”
 - Pick **ALWAYS** for “save the whole graph” behavior (typical CRUD-style aggregates).
 - Pick **IF_NOT_EXIST** to prevent accidental overwrites of shared/reused child objects.
 - Pick **NEVER** when you treat children as separately managed entities and want to avoid hidden writes.
+- Pick **CALLBACK** when you need more control over when child objects are written.
 
 If you’re unsure, start with **ALWAYS**, then tighten to **IF_NOT_EXIST** or **NEVER** once your domain boundaries and update flows are clear.
 

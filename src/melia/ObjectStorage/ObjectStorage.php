@@ -826,7 +826,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $exists = $this->exists($refUuid);
                 $writeChild = true;
 
-                switch ($this->getStrategy()->getChildWritePolicy()) {
+                $strategy = $this->getStrategy();
+
+                switch ($strategy->getChildWritePolicy()) {
                     case Strategy\StrategyInterface::POLICY_CHILD_WRITE_IF_NOT_EXIST:
                         if ($exists) {
                             $writeChild = false;
@@ -834,6 +836,14 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         break;
                     case Strategy\StrategyInterface::POLICY_CHILD_WRITE_NEVER:
                         $writeChild = false;
+                        break;
+                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_CALLBACK:
+                        try {
+                            $writeChild = $strategy->shouldWriteChild($context, $value, $refUuid, $exists, $path);
+                        } catch (Throwable $e) {
+                            $this->getLogger()?->log($e);
+                            $writeChild = false; // fail-closed; change to true if you prefer fail-open
+                        }
                         break;
                     default:
                     case Strategy\StrategyInterface::POLICY_CHILD_WRITE_ALWAYS:

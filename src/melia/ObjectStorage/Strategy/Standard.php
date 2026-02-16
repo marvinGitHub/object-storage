@@ -125,9 +125,28 @@ class Standard implements StrategyInterface
      */
     public function setChildWritePolicy(int $childWritePolicy): void
     {
-        if (!in_array($childWritePolicy, [self::POLICY_CHILD_WRITE_ALWAYS, self::POLICY_CHILD_WRITE_IF_NOT_EXIST, self::POLICY_CHILD_WRITE_NEVER])) {
+        if (!in_array($childWritePolicy, [self::POLICY_CHILD_WRITE_ALWAYS, self::POLICY_CHILD_WRITE_IF_NOT_EXIST, self::POLICY_CHILD_WRITE_NEVER, self::POLICY_CHILD_WRITE_CALLBACK])) {
             throw new InvalidChildWritePolicyException('Invalid child write policy.');
         }
         $this->childWritePolicy = $childWritePolicy;
+    }
+
+    /**
+     * Determines whether a child node should be written to the graph structure.
+     *
+     * @param GraphBuilderContext $context The context of the graph-building operation.
+     * @param object $child The child object being evaluated.
+     * @param string $childUuid The unique identifier of the child object.
+     * @param bool $childExists Indicates whether the child already exists in the graph.
+     * @param array $path The path in the graph hierarchy for the child object.
+     *
+     * @return bool Returns true if the child should be written; false otherwise.
+     */
+    public function shouldWriteChild(GraphBuilderContext $context, object $child, string $childUuid, bool $childExists, array $path): bool
+    {
+        if ($childExists) {
+            return false;
+        }
+        return true;
     }
 }

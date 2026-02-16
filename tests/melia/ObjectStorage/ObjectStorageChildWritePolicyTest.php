@@ -3,7 +3,9 @@
 namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\InvalidChildWritePolicyException;
+use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Strategy\StrategyInterface;
+use melia\ObjectStorage\Context\GraphBuilderContext;
 
 class ObjectStorageChildWritePolicyTest extends TestCase
 {
@@ -95,5 +97,36 @@ class ObjectStorageChildWritePolicyTest extends TestCase
         $this->storage->clearCache();
         $reloadedChild = $this->storage->load($childUuid);
         $this->assertSame(12345, $reloadedChild->value);
+    }
+
+    public function testChildWritePolicyCallback()
+    {
+        // Arrange
+        $strategy = new class extends Standard
+        {
+            public function shouldWriteChild(GraphBuilderContext $context, object $child, string $childUuid, bool $childExists, array $path): bool
+            {
+                if ($child instanceof ChildObject) {
+                    return $child->title === 'Peter';
+                }
+                return false;
+            }
+        };
+        $strategy->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_CALLBACK);
+        $this->storage->setStrategy($strategy);
+
+        $child = new ChildObject('Child', 10);
+        $parent = new ParentObject('Parent', $child);
+
+        $child2 = new ChildObject('Peter', 20);
+        $parent2 = new ParentObject('Parent 2', $child2);
+
+
+        $this->storage->store($parent);
+        $this->assertNull($child->getUUID());
+
+        $this->storage->store($parent2);
+        $this->assertNotNull($child2->getUUID());
+        $this->assertGreaterThan(0, count($this->writerSpy->getCallsForUuid($child2->getUUID())));
     }
 }
