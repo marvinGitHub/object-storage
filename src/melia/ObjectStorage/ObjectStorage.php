@@ -786,7 +786,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     protected function transformValueForGraph(GraphBuilderContext $context, mixed $value, array $path): mixed
     {
-        $maxDepth = $this->getStrategy()->getMaxDepth();
+        $strategy = $this->getStrategy();
+
+        $maxDepth = $strategy->getMaxDepth();
         if ($context->getLevel() > $maxDepth) {
             throw new MaxDepthExceededException(sprintf('Maximum depth of %u exceeded', $maxDepth));
         }
@@ -825,8 +827,6 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
                 $exists = $this->exists($refUuid);
                 $writeChild = true;
-
-                $strategy = $this->getStrategy();
 
                 switch ($strategy->getChildWritePolicy()) {
                     case Strategy\StrategyInterface::POLICY_CHILD_WRITE_IF_NOT_EXIST:
