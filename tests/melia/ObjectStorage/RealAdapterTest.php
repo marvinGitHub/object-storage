@@ -31,4 +31,48 @@ class RealAdapterTest extends TestCase
         $this->assertFileExists($filenameNew);
         $this->assertFalse(file_exists($filename));
     }
+
+    public function testRenameFile()
+    {
+        $adapter = new RealAdapter();
+
+        $dir = $this->reserveRandomDirectory();
+        $from = $dir . '/from.txt';
+        $to = $dir . '/to.txt';
+
+        file_put_contents($from, 'hello');
+
+        $this->assertFileExists($from);
+        $this->assertFileDoesNotExist($to);
+
+        $result = $adapter->rename($from, $to);
+
+        $this->assertTrue($result);
+        $this->assertFileDoesNotExist($from);
+        $this->assertFileExists($to);
+        $this->assertSame('hello', file_get_contents($to));
+    }
+
+    public function testRenameFileDoesNotFailWhenTargetAlreadyExists()
+    {
+        $adapter = new RealAdapter();
+
+        $dir = $this->reserveRandomDirectory();
+        $from = $dir . '/from.txt';
+        $to = $dir . '/to.txt';
+
+        file_put_contents($from, 'source');
+        file_put_contents($to, 'target');
+
+        $this->assertFileExists($from);
+        $this->assertFileExists($to);
+
+        $result = $adapter->rename($from, $to);
+
+        $this->assertTrue($result);
+
+        $this->assertFileDoesNotExist($from);
+        $this->assertFileExists($to);
+        $this->assertSame('source', file_get_contents($to));
+    }
 }

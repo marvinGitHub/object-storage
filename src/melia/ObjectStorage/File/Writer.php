@@ -12,6 +12,8 @@ class Writer implements WriterInterface
 {
     use AdapterAwareTrait;
 
+    const SUFFIX_STAGING = '.tmp';
+
     /**
      * Performs an atomic write operation to the specified file. Ensures that the file content
      * is written safely and completely, handling directory creation if needed, and managing
@@ -30,47 +32,28 @@ class Writer implements WriterInterface
             $directory->createIfNotExists();
         }
 
+        $data = $data ?? '';
+
         $adapter = $this->getIOAdapter();
         if (null === $adapter) {
             throw new IOException('No adapter has been set');
         }
 
-        /* do not use file_put_contents() here, because it does not support atomic writes */
-        $file = $adapter->fopen($filename, 'w+');
+        // Use a unique staging path to avoid cross-process contention on "<file>.tmp"
+        // Keep it in the same directory so rename stays atomic (same filesystem).
+        $stagingPath = $filename . static::SUFFIX_STAGING . '.' . getmypid() . '.' . bin2hex(random_bytes(8));
 
-        if (false === $file) {
-            $this->createRecoveryHandler(null, $filename)();
-            throw new IOException('Unable to open file for writing: ' . $filename);
+        // No LOCK_EX needed: a staging file is unique per call
+        $bytesWritten = $adapter->filePutContents($stagingPath, $data);
+
+        if (false === $bytesWritten || $bytesWritten !== strlen($data)) {
+            $this->createRecoveryHandler($stagingPath)();
+            throw new IOException('Failed to write to file: ' . $filename);
         }
 
-//        if (false === $adapter->rewind($file)) {
-//            $this->createRecoveryHandler($file, $filename)();
-//            throw new IOException('Unable to rewind file: ' . $filename);
-//        }
-
-        if (false === $adapter->fwrite($file, $data ?? '')) {
-            $this->createRecoveryHandler($file, $filename)();
-            throw new IOException('Unable to write to file: ' . $filename);
-        }
-
-        if (false === $adapter->fflush($file)) {
-            $this->createRecoveryHandler($file, $filename)();
-            throw new IOException('Unable to flush file: ' . $filename);
-        }
-
-//        if (false === $position = $adapter->ftell($file)) {
-//            $this->createRecoveryHandler($file, $filename)();
-//            throw new IOException('Unable to get file position: ' . $filename);
-//        }
-//
-//        if (false === $adapter->ftruncate($file, $position)) {
-//            $this->createRecoveryHandler($file, $filename)();
-//            throw new IOException('Unable to truncate file: ' . $filename);
-//        }
-
-        if (false === $adapter->fclose($file)) {
-            $this->createRecoveryHandler($file, $filename)();
-            throw new IOException('Unable to close file: ' . $filename);
+        if (false === $adapter->rename($stagingPath, $filename)) {
+            $this->createRecoveryHandler($stagingPath)();
+            throw new IOException('Failed to rename file: ' . $stagingPath);
         }
     }
 
@@ -92,20 +75,13 @@ class Writer implements WriterInterface
      * Creates a recovery handler for managing cleanup operations in case of a failure during a file operation.
      * The returned closure ensures resources are properly closed and the file is deleted if necessary.
      *
-     * @param resource|null $resource The file resource to close. Can be null if no resource needs to be closed.
      * @param string $filename The name of the file to be deleted during recovery.
      * @return Closure A closure that performs the recovery operations when invoked.
      */
-    protected function createRecoveryHandler($resource, string $filename): Closure
+    protected function createRecoveryHandler(string $filename): Closure
     {
         $adapter = $this->getIOAdapter();
-        return static function () use ($filename, $resource, $adapter) {
-            if (is_resource($resource)) {
-                if (false === $adapter->fclose($resource)) {
-                    throw new IOException('Unable to close file: ' . $filename);
-                }
-            }
-
+        return static function () use ($filename, $adapter) {
             if (false === $adapter->isFile($filename)) {
                 return;
             }

@@ -125,6 +125,20 @@ class RealAdapter implements AdapterInterface
 
     public function rename(string $from, string $to, $context = null): bool
     {
-        return rename($from, $to, $context);
+        $result = rename($from, $to, $context);
+
+        // ensure rename is atomic and overrides the file if it already exists
+        if (false === $result) {
+            if ($this->fileExists($to)) {
+                $this->unlink($to);
+            }
+            $result = rename($from, $to, $context);
+        }
+        return $result;
+    }
+
+    public function filePutContents(string $filename, string $data, int $flags = 0, $context = null): int|bool
+    {
+        return file_put_contents($filename, $data, $flags, $context);
     }
 }

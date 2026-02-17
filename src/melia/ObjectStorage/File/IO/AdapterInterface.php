@@ -42,4 +42,6 @@ interface AdapterInterface
     public function rename(string $from, string $to, $context = null): bool;
 
     public function moveFile(string $source, string $targetDir, ?string $fileName = null): bool;
+
+    public function filePutContents(string $filename, string $data, int $flags = 0, $context = null): int|bool;
 }
