@@ -4,6 +4,7 @@ namespace melia\ObjectStorage\UUID\Generator;
 
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use Throwable;
+use melia\ObjectStorage\UUID\Cache;
 
 class Generator implements GeneratorInterface
 {
@@ -26,6 +27,10 @@ class Generator implements GeneratorInterface
             } while (isset($generated[$uuid]));
 
             $generated[$uuid] = true;
+
+            /* we assume that generated uuids are valid */
+            Cache::markUuidAsValidated($uuid);
+
             return $uuid;
         } catch (Throwable $e) {
             throw new GenerationFailureException('Unable to generate UUID: ' . $e->getMessage(), 0, $e);

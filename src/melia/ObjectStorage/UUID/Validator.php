@@ -11,14 +11,13 @@ class Validator
 
     public static function validate(string $uuid): bool
     {
-        static $validated = [];
-
-        if (isset($validated[$uuid])) {
-            return $validated[$uuid];
+        $validity = Cache::getUuidValidity($uuid);
+        if (null !== $validity) {
+            return $validity;
         }
 
         $valid = 1 === preg_match(Validator::REGEX_UUID_VALIDATION, $uuid);
-        $validated[$uuid] = $valid;
+        Cache::setUuidValidity($uuid, $valid);
 
         return $valid;
     }
