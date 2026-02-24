@@ -66,6 +66,8 @@
   },
   "require": {
     "php": ">=8.0",
+    "ext-json": "*",
+    "ext-memcache": "*",
     "symfony/console": "^6.0",
     "psr/simple-cache": "^3.0"
   },

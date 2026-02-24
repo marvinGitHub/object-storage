@@ -14,9 +14,6 @@ use Throwable;
 
 class FileSystem extends LockAdapterAbstract
 {
-    const TYPE_SHARED = 0;
-    const TYPE_EXCLUSIVE = 1;
-
     use LoggerAwareTrait;
     use WriterAwareTrait;
     use AdapterAwareTrait;
@@ -54,7 +51,7 @@ class FileSystem extends LockAdapterAbstract
      */
     public function acquireSharedLock(string $uuid, int|float $timeout = 10): void
     {
-        $this->lock($uuid, static::TYPE_SHARED, $timeout);
+        $this->lock($uuid, static::LOCK_TYPE_SHARED, $timeout);
         $this->getEventDispatcher()?->dispatch(Events::SHARED_LOCK_ACQUIRED, fn() => new Context($uuid));
     }
 
@@ -74,23 +71,19 @@ class FileSystem extends LockAdapterAbstract
             throw new LockException('Safe mode is enabled. Object cannot be locked.');
         }
 
-        if ($type === static::TYPE_SHARED && $this->hasActiveSharedLock($uuid)) {
+        if ($type === static::LOCK_TYPE_SHARED && $this->hasActiveSharedLock($uuid)) {
             return;
         }
 
-        if ($type === static::TYPE_EXCLUSIVE && $this->hasActiveExclusiveLock($uuid)) {
+        if ($type === static::LOCK_TYPE_EXCLUSIVE && $this->hasActiveExclusiveLock($uuid)) {
             return;
-        }
-
-        if ($this->isLockedByOtherProcess($uuid)) {
-            throw new LockException(sprintf('Lock already acquired from other process for uuid %s', $uuid));
         }
 
         $lockFile = $this->getLockFilePath($uuid);
         $startTime = microtime(true);
         $lockType = match ($type) {
-            static::TYPE_SHARED => LOCK_SH,
-            static::TYPE_EXCLUSIVE => LOCK_EX,
+            static::LOCK_TYPE_SHARED => LOCK_SH,
+            static::LOCK_TYPE_EXCLUSIVE => LOCK_EX,
             default => throw new LockException('Invalid lock type'),
         };
 
@@ -102,16 +95,16 @@ class FileSystem extends LockAdapterAbstract
 
         while (!$adapter->flock($handle, $lockType | LOCK_NB)) {
             if (microtime(true) - $startTime > $timeout) {
-                fclose($handle);
-                throw new LockException(sprintf('Timeout while waiting for lock: %s (%s)', $uuid, ($type === static::TYPE_SHARED ? 'shared' : 'exclusive')));
+                $adapter->fclose($handle);
+                throw new LockException(sprintf('Timeout while waiting for lock: %s (%s)', $uuid, ($type === static::LOCK_TYPE_SHARED ? 'shared' : 'exclusive')));
             }
             usleep(100000); // 100ms
         }
 
         $this->activeLocks[$uuid] = [
             'handle' => $handle,
-            'shared' => $type === static::TYPE_SHARED,
-            'exclusive' => $type === static::TYPE_EXCLUSIVE,
+            'shared' => $type === static::LOCK_TYPE_SHARED,
+            'exclusive' => $type === static::LOCK_TYPE_EXCLUSIVE,
         ];
     }
 
@@ -179,7 +172,7 @@ class FileSystem extends LockAdapterAbstract
      */
     public function acquireExclusiveLock(string $uuid, int|float $timeout = 10): void
     {
-        $this->lock($uuid, static::TYPE_EXCLUSIVE, $timeout);
+        $this->lock($uuid, static::LOCK_TYPE_EXCLUSIVE, $timeout);
         $this->getEventDispatcher()?->dispatch(Events::EXCLUSIVE_LOCK_ACQUIRED, fn() => new Context($uuid));
     }
 

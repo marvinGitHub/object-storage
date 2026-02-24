@@ -9,7 +9,8 @@ interface LockAdapterInterface
      */
     const LOCK_TIMEOUT_DEFAULT = 10;
 
-    public function acquireSharedLock(string $uuid, int|float $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT);
+	const LOCK_TYPE_SHARED = 0;
+	const LOCK_TYPE_EXCLUSIVE = 1;
 
     public function acquireExclusiveLock(string $uuid, int|float $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT);
 
