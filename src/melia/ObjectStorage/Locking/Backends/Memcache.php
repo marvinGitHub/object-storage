@@ -12,7 +12,7 @@ class Memcache extends LockAdapterAbstract
     private string $processId;
     private array $activeLocks = [];
 
-    public function __construct(Cache $memcache)
+    public function __construct(Cache $memcache, private string $prefix = 'lock:')
     {
         $this->memcache = $memcache;
         $this->processId = uniqid(gethostname() . '_', true);
@@ -28,7 +28,7 @@ class Memcache extends LockAdapterAbstract
             $lockData = $this->memcache->get($key);
 
             if ($lockData === false) {
-                // No lock exists, create shared lock
+                // No lock exists, create a shared lock
                 $newLockData = [
                     'type' => self::LOCK_TYPE_SHARED,
                     'holders' => [$this->processId => time()],
@@ -75,7 +75,7 @@ class Memcache extends LockAdapterAbstract
                 'time' => time(),
             ];
 
-            // Try to acquire exclusive lock (only works if key doesn't exist)
+            // Try to acquire exclusive lock (only works if the key doesn't exist)
             if ($this->memcache->add($key, $lockData, 0)) {
                 $this->activeLocks[$uuid] = self::LOCK_TYPE_EXCLUSIVE;
                 return true;
@@ -183,6 +183,6 @@ class Memcache extends LockAdapterAbstract
 
     private function getLockKey(string $uuid): string
     {
-        return 'lock:' . $uuid;
+        return $this->prefix . $uuid;
     }
 }
