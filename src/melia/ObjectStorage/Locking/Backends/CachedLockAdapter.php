@@ -3,21 +3,26 @@
 namespace melia\ObjectStorage\Locking\Backends;
 
 use melia\ObjectStorage\Exception\LockException;
-use Memcache as Cache;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
+use Psr\SimpleCache\InvalidArgumentException;
+use Symfony\Component\Cache\Psr16Cache as Cache;
 
-class Memcache extends LockAdapterAbstract
+class CachedLockAdapter extends LockAdapterAbstract
 {
-    private Cache $memcache;
+    private Cache $cache;
     private string $processId;
     private array $activeLocks = [];
 
-    public function __construct(Cache $memcache, private string $prefix = 'lock:')
+    public function __construct(Cache $cache, private string $prefix = 'lock:')
     {
-        $this->memcache = $memcache;
+        $this->cache = $cache;
         $this->processId = uniqid(gethostname() . '_', true);
     }
 
+    /**
+     * @throws InvalidArgumentException
+     * @throws LockException
+     */
     public function acquireSharedLock(string $uuid, float|int $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT): bool
     {
         $key = $this->getLockKey($uuid);
@@ -25,24 +30,25 @@ class Memcache extends LockAdapterAbstract
         $timeoutSeconds = $timeout;
 
         while (true) {
-            $lockData = $this->memcache->get($key);
+            $lockData = $this->cache->get($key);
 
-            if ($lockData === false) {
+            if (empty($lockData)) {
                 // No lock exists, create a shared lock
                 $newLockData = [
                     'type' => self::LOCK_TYPE_SHARED,
                     'holders' => [$this->processId => time()],
                 ];
 
-                if ($this->memcache->add($key, $newLockData, 0)) {
+                if ($this->cache->set($key, $newLockData) !== false) {
                     $this->activeLocks[$uuid] = self::LOCK_TYPE_SHARED;
                     return true;
+
                 }
             } elseif ($lockData['type'] === self::LOCK_TYPE_SHARED) {
                 // Shared lock exists, add this process
                 $lockData['holders'][$this->processId] = time();
 
-                if ($this->memcache->replace($key, $lockData, 0)) {
+                if ($this->cache->set($key, $lockData) !== false) {
                     $this->activeLocks[$uuid] = self::LOCK_TYPE_SHARED;
                     return true;
                 }
@@ -69,16 +75,20 @@ class Memcache extends LockAdapterAbstract
         $timeoutSeconds = $timeout;
 
         while (true) {
-            $lockData = [
-                'type' => self::LOCK_TYPE_EXCLUSIVE,
-                'holder' => $this->processId,
-                'time' => time(),
-            ];
+            $lockData = $this->cache->get($key);
 
-            // Try to acquire exclusive lock (only works if the key doesn't exist)
-            if ($this->memcache->add($key, $lockData, 0)) {
-                $this->activeLocks[$uuid] = self::LOCK_TYPE_EXCLUSIVE;
-                return true;
+            if (empty($lockData)) {
+                $lockData = [
+                    'type' => self::LOCK_TYPE_EXCLUSIVE,
+                    'holder' => $this->processId,
+                    'time' => time(),
+                ];
+
+                // Try to acquire exclusive lock (only works if the key doesn't exist)
+                if ($this->cache->set($key, $lockData) !== false) {
+                    $this->activeLocks[$uuid] = self::LOCK_TYPE_EXCLUSIVE;
+                    return true;
+                }
             }
 
             // Check timeout
@@ -92,12 +102,15 @@ class Memcache extends LockAdapterAbstract
         }
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public function releaseLock(string $uuid): void
     {
         $key = $this->getLockKey($uuid);
-        $lockData = $this->memcache->get($key);
+        $lockData = $this->cache->get($key);
 
-        if ($lockData === false) {
+        if (empty($lockData)) {
             unset($this->activeLocks[$uuid]);
             return;
         }
@@ -105,7 +118,7 @@ class Memcache extends LockAdapterAbstract
         if ($lockData['type'] === self::LOCK_TYPE_EXCLUSIVE) {
             // Release exclusive lock
             if (isset($lockData['holder']) && $lockData['holder'] === $this->processId) {
-                $this->memcache->delete($key);
+                $this->cache->delete($key);
             }
         } elseif ($lockData['type'] === self::LOCK_TYPE_SHARED) {
             // Remove this process from shared lock holders
@@ -113,9 +126,9 @@ class Memcache extends LockAdapterAbstract
                 unset($lockData['holders'][$this->processId]);
 
                 if (empty($lockData['holders'])) {
-                    $this->memcache->delete($key);
+                    $this->cache->delete($key);
                 } else {
-                    $this->memcache->replace($key, $lockData, 0);
+                    $this->cache->set($key, $lockData);
                 }
             }
         }
@@ -130,9 +143,9 @@ class Memcache extends LockAdapterAbstract
         }
 
         $key = $this->getLockKey($uuid);
-        $lockData = $this->memcache->get($key);
+        $lockData = $this->cache->get($key);
 
-        if ($lockData === false) {
+        if (empty($lockData)) {
             return false;
         }
 
@@ -157,6 +170,9 @@ class Memcache extends LockAdapterAbstract
         return isset($this->activeLocks[$uuid]);
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
     public function releaseActiveLocks(): void
     {
         foreach (array_keys($this->activeLocks) as $uuid) {

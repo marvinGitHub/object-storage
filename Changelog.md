@@ -2,10 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.0.4] - Support for Memcache Locking
+## [0.0.4] - Support for Cached Locking (Psr16 Cache)
 
 ### Added
-- Memcache Locking Backend see melia\ObjectStorage\Locking\Backends\Memcache
+- Cached Locking Backend see melia\ObjectStorage\Locking\Backends\CachedLockingAdapter
 
 ## [0.0.3] - Support for Sharding Depth
 

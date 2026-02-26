@@ -8,12 +8,14 @@ use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Locking\Backends\FileSystem;
-use melia\ObjectStorage\Locking\Backends\Memcache as Cache;
+use melia\ObjectStorage\Locking\Backends\CachedLockAdapter;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Logger\LoggerInterface;
-use Memcache;
+use Memcached;
 use stdClass;
+use Symfony\Component\Cache\Adapter\MemcachedAdapter;
+use Symfony\Component\Cache\Psr16Cache;
 use Throwable;
 use Xhgui\Profiler\Profiler;
 
@@ -60,10 +62,10 @@ $configurations = [
         $state = new StateHandler($dir);
         $state->setEventDispatcher($eventDispatcher);
 
-        $memcache = new Memcache();
-        $memcache->connect('localhost', 11211);
+        $memcached = new Memcached();
+        $memcached->addServer('localhost', 11211);
 
-        $lock = new Cache($memcache);
+        $lock = new CachedLockAdapter(new Psr16Cache(new MemcachedAdapter($memcached)));
         $lock->setStateHandler($state);
         $lock->setEventDispatcher($eventDispatcher);
 

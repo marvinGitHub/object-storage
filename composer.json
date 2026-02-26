@@ -67,9 +67,10 @@
   "require": {
     "php": ">=8.0",
     "ext-json": "*",
-    "ext-memcache": "*",
+    "ext-memcached": "*",
     "symfony/console": "^6.0",
-    "psr/simple-cache": "^3.0"
+    "psr/simple-cache": "^3.0",
+    "symfony/cache": "^6.0"
   },
   "require-dev": {
     "ext-xdebug": "*",
@@ -78,7 +79,6 @@
     "fakerphp/faker": "^1.24",
     "phpstan/phpstan": "^2.1",
     "perftools/php-profiler": "^1.2",
-    "monolog/monolog": "^2.10",
-    "symfony/cache": "^6.0"
+    "monolog/monolog": "^2.10"
   }
 }
