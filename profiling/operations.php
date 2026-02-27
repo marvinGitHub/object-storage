@@ -14,6 +14,7 @@ use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use Memcached;
+use Psr\SimpleCache\CacheInterface;
 use stdClass;
 use Symfony\Component\Cache\Adapter\ApcuAdapter;
 use Symfony\Component\Cache\Adapter\MemcachedAdapter;
@@ -27,6 +28,8 @@ $configurations = [];
 $memcached = new Memcached();
 $memcached->addServer('localhost', 11211);
 
+$memcachedAdapter = new MemcachedAdapter($memcached);
+
 $logger = new class implements LoggerInterface {
     public function log(Throwable|string $error): void
     {
@@ -39,7 +42,7 @@ $eventDispatcher = new Dispatcher();
 $lockAdapterApcu = new CachedLockAdapter(new Psr16Cache(new ApcuAdapter()));
 $lockAdapterApcu->setEventDispatcher($eventDispatcher);
 
-$lockAdapterMemcached = new CachedLockAdapter(new Psr16Cache(new MemcachedAdapter($memcached)));
+$lockAdapterMemcached = new CachedLockAdapter(new Psr16Cache($memcachedAdapter));
 $lockAdapterMemcached->setEventDispatcher($eventDispatcher);
 
 $lockAdapterFileSystem = new FileSystem();
@@ -52,34 +55,44 @@ $lockAdapters = [
     'lock-adapter-filesystem' => $lockAdapterFileSystem,
 ];
 
+$objectCaches = [
+    'object-cache-apcu' => new Psr16Cache(new ApcuAdapter()),
+    'object-cache-in-memory' => new InMemoryCache(),
+    'object-cache-memcached' => new Psr16Cache($memcachedAdapter),
+];
+
 /**
- * @var string $lockAdapterName
- * @var LockAdapterAbstract $lockAdapter
+ * @var string $objectCacheName
+ * @var CacheInterface $objectCache
  */
-foreach ($lockAdapters as $lockAdapterName => $lockAdapter) {
-    $configName = sprintf('%s', $lockAdapterName);
+foreach ($objectCaches as $objectCacheName => $objectCache) {
+    /**
+     * @var string $lockAdapterName
+     * @var LockAdapterAbstract $lockAdapter
+     */
+    foreach ($lockAdapters as $lockAdapterName => $lockAdapter) {
+        $configName = sprintf('%s.%s', $objectCacheName, $lockAdapterName);
 
-    $configurations[$configName] = static function (string $dir) use ($lockAdapter, $eventDispatcher, $logger) {
-        if ($lockAdapter instanceof FileSystem) {
-            $lockAdapter->setLockDir($dir);
-        }
+        $configurations[$configName] = static function (string $dir) use ($lockAdapter, $eventDispatcher, $logger, $objectCache) {
+            if ($lockAdapter instanceof FileSystem) {
+                $lockAdapter->setLockDir($dir);
+            }
 
-        $state = new StateHandler($dir);
-        $state->setEventDispatcher($eventDispatcher);
+            $state = new StateHandler($dir);
+            $state->setEventDispatcher($eventDispatcher);
 
-        $lockAdapter->setStateHandler($state);
+            $lockAdapter->setStateHandler($state);
 
-        $cache = new InMemoryCache();
-
-        return new ObjectStorage(
-            $dir,
-            $logger,
-            $lockAdapter,
-            $state,
-            $eventDispatcher,
-            $cache
-        );
-    };
+            return new ObjectStorage(
+                $dir,
+                $logger,
+                $lockAdapter,
+                $state,
+                $eventDispatcher,
+                $objectCache
+            );
+        };
+    }
 }
 
 // Select configuration to profile (can be changed or passed as CLI argument)
