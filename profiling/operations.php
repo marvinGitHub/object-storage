@@ -6,6 +6,7 @@ require_once __DIR__ . '/../vendor/autoload.php';
 
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\File\Directory;
+use melia\ObjectStorage\Locking\Backends\LockAdapterAbstract;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Locking\Backends\FileSystem;
 use melia\ObjectStorage\Locking\Backends\CachedLockAdapter;
@@ -14,73 +15,72 @@ use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use Memcached;
 use stdClass;
+use Symfony\Component\Cache\Adapter\ApcuAdapter;
 use Symfony\Component\Cache\Adapter\MemcachedAdapter;
 use Symfony\Component\Cache\Psr16Cache;
 use Throwable;
 use Xhgui\Profiler\Profiler;
 
 // Define configurations to profile
-$configurations = [
-    'filesystem-lock' => function (string $dir) {
-        $logger = new class implements LoggerInterface {
-            public function log(Throwable|string $error): void
-            {
-                // No-op logger
-            }
-        };
+$configurations = [];
 
-        $eventDispatcher = new Dispatcher();
-        $state = new StateHandler($dir);
-        $state->setEventDispatcher($eventDispatcher);
+$memcached = new Memcached();
+$memcached->addServer('localhost', 11211);
 
-        $lock = new FileSystem($dir);
-        $lock->setStateHandler($state);
-        $lock->setLogger($logger);
-        $lock->setEventDispatcher($eventDispatcher);
+$logger = new class implements LoggerInterface {
+    public function log(Throwable|string $error): void
+    {
+        // No-op logger
+    }
+};
 
-        $cache = new InMemoryCache();
+$eventDispatcher = new Dispatcher();
 
-        return new ObjectStorage(
-            $dir,
-            $logger,
-            $lock,
-            $state,
-            $eventDispatcher,
-            $cache
-        );
-    },
+$lockAdapterApcu = new CachedLockAdapter(new Psr16Cache(new ApcuAdapter()));
+$lockAdapterApcu->setEventDispatcher($eventDispatcher);
 
-    'memcache-lock' => function (string $dir) {
-        $logger = new class implements LoggerInterface {
-            public function log(Throwable|string $error): void
-            {
-                // No-op logger
-            }
-        };
+$lockAdapterMemcached = new CachedLockAdapter(new Psr16Cache(new MemcachedAdapter($memcached)));
+$lockAdapterMemcached->setEventDispatcher($eventDispatcher);
 
-        $eventDispatcher = new Dispatcher();
-        $state = new StateHandler($dir);
-        $state->setEventDispatcher($eventDispatcher);
+$lockAdapterFileSystem = new FileSystem();
+$lockAdapterFileSystem->setEventDispatcher($eventDispatcher);
+$lockAdapterFileSystem->setLogger($logger);
 
-        $memcached = new Memcached();
-        $memcached->addServer('localhost', 11211);
-
-        $lock = new CachedLockAdapter(new Psr16Cache(new MemcachedAdapter($memcached)));
-        $lock->setStateHandler($state);
-        $lock->setEventDispatcher($eventDispatcher);
-
-        $cache = new InMemoryCache();
-
-        return new ObjectStorage(
-            $dir,
-            $logger,
-            $lock,
-            $state,
-            $eventDispatcher,
-            $cache
-        );
-    },
+$lockAdapters = [
+    #'lock-adapter-apcu' => $lockAdapterApcu,
+    'lock-adapter-memcached' => $lockAdapterMemcached,
+    'lock-adapter-filesystem' => $lockAdapterFileSystem,
 ];
+
+/**
+ * @var string $lockAdapterName
+ * @var LockAdapterAbstract $lockAdapter
+ */
+foreach ($lockAdapters as $lockAdapterName => $lockAdapter) {
+    $configName = sprintf('%s', $lockAdapterName);
+
+    $configurations[$configName] = static function (string $dir) use ($lockAdapter, $eventDispatcher, $logger) {
+        if ($lockAdapter instanceof FileSystem) {
+            $lockAdapter->setLockDir($dir);
+        }
+
+        $state = new StateHandler($dir);
+        $state->setEventDispatcher($eventDispatcher);
+
+        $lockAdapter->setStateHandler($state);
+
+        $cache = new InMemoryCache();
+
+        return new ObjectStorage(
+            $dir,
+            $logger,
+            $lockAdapter,
+            $state,
+            $eventDispatcher,
+            $cache
+        );
+    };
+}
 
 // Select configuration to profile (can be changed or passed as CLI argument)
 $configName = $argv[1] ?? 'all';
@@ -285,6 +285,10 @@ foreach ($configurationsToRun as $currentConfig) {
 
     // Finish and save profile
     $data = $profiler->disable();
+    if (isset($data['meta']['url'])) {
+        $data['meta']['url'] .= sprintf(' (%s)', $currentConfig);
+    }
+
     $profiler->save($data);
 
     echo "Profiling complete for $currentConfig. Results saved.\n";

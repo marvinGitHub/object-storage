@@ -30,9 +30,11 @@ class FileSystem extends LockAdapterAbstract
 
     private string $lockDir;
 
-    public function __construct(string $lockDir)
+    public function __construct(?string $lockDir = null)
     {
-        $this->setLockDir($lockDir);
+        if (null !== $lockDir) {
+            $this->setLockDir($lockDir);
+        }
         $this->setIOAdapter(new RealAdapter());
     }
 
