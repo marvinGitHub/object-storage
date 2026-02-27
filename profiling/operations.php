@@ -15,9 +15,11 @@ use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use Memcached;
 use Psr\SimpleCache\CacheInterface;
+use Redis;
 use stdClass;
 use Symfony\Component\Cache\Adapter\ApcuAdapter;
 use Symfony\Component\Cache\Adapter\MemcachedAdapter;
+use Symfony\Component\Cache\Adapter\RedisAdapter;
 use Symfony\Component\Cache\Psr16Cache;
 use Throwable;
 use Xhgui\Profiler\Profiler;
@@ -27,8 +29,11 @@ $configurations = [];
 
 $memcached = new Memcached();
 $memcached->addServer('localhost', 11211);
-
 $memcachedAdapter = new MemcachedAdapter($memcached);
+
+$redis = new Redis();
+$redis->connect('localhost', 6379);
+$redisAdapter = new RedisAdapter($redis);
 
 $logger = new class implements LoggerInterface {
     public function log(Throwable|string $error): void
@@ -45,6 +50,9 @@ $lockAdapterApcu->setEventDispatcher($eventDispatcher);
 $lockAdapterMemcached = new CachedLockAdapter(new Psr16Cache($memcachedAdapter));
 $lockAdapterMemcached->setEventDispatcher($eventDispatcher);
 
+$lockAdapterRedis = new CachedLockAdapter(new Psr16Cache($redisAdapter));
+$lockAdapterRedis->setEventDispatcher($eventDispatcher);
+
 $lockAdapterFileSystem = new FileSystem();
 $lockAdapterFileSystem->setEventDispatcher($eventDispatcher);
 $lockAdapterFileSystem->setLogger($logger);
@@ -53,12 +61,14 @@ $lockAdapters = [
     #'lock-adapter-apcu' => $lockAdapterApcu,
     'lock-adapter-memcached' => $lockAdapterMemcached,
     'lock-adapter-filesystem' => $lockAdapterFileSystem,
+    'lock-adapter-redis' => $lockAdapterRedis,
 ];
 
 $objectCaches = [
     'object-cache-apcu' => new Psr16Cache(new ApcuAdapter()),
     'object-cache-in-memory' => new InMemoryCache(),
     'object-cache-memcached' => new Psr16Cache($memcachedAdapter),
+    'object-cache-redis' => new Psr16Cache($redisAdapter),
 ];
 
 /**

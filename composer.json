@@ -68,6 +68,7 @@
     "php": ">=8.0",
     "ext-json": "*",
     "ext-memcached": "*",
+    "ext-redis": "*",
     "symfony/console": "^6.0",
     "psr/simple-cache": "^3.0",
     "symfony/cache": "^6.0"
