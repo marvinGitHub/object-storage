@@ -42,12 +42,16 @@ class Dispatcher implements DispatcherInterface
      */
     public function removeListener(string $event, callable $listener): void
     {
-        if (!isset($this->listeners[$event])) return;
+        if (!isset($this->listeners[$event])) {
+            return;
+        }
         $this->listeners[$event] = array_values(array_filter(
             $this->listeners[$event],
-            fn($l) => $l !== $listener
+            static fn($l) => $l !== $listener
         ));
-        if (!$this->listeners[$event]) unset($this->listeners[$event]);
+        if (!$this->listeners[$event]) {
+            unset($this->listeners[$event]);
+        }
     }
 
     /**

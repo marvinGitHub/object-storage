@@ -58,7 +58,7 @@ $lockAdapterFileSystem->setEventDispatcher($eventDispatcher);
 $lockAdapterFileSystem->setLogger($logger);
 
 $lockAdapters = [
-    #'lock-adapter-apcu' => $lockAdapterApcu,
+    'lock-adapter-apcu' => $lockAdapterApcu,
     'lock-adapter-memcached' => $lockAdapterMemcached,
     'lock-adapter-filesystem' => $lockAdapterFileSystem,
     'lock-adapter-redis' => $lockAdapterRedis,

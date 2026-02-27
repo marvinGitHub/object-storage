@@ -9,7 +9,7 @@ use Symfony\Component\Cache\Psr16Cache;
 use melia\ObjectStorage\Locking\Backends\CachedLockAdapter;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 
-final class CachedLockAdapterTest extends LockAdapterTestCase
+final class MemcachedLockAdapterTest extends LockAdapterTestCase
 {
     private ?Psr16Cache $cache = null;
     private ?Memcached $memcached = null;

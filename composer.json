@@ -69,6 +69,7 @@
     "ext-json": "*",
     "ext-memcached": "*",
     "ext-redis": "*",
+    "ext-apcu": "*",
     "symfony/console": "^6.0",
     "psr/simple-cache": "^3.0",
     "symfony/cache": "^6.0"

@@ -4,7 +4,12 @@ namespace melia\ObjectStorage\UUID;
 
 class Cache
 {
-    static array $validated = [];
+    private static array $validated = [];
+
+    public static function hasUuidBeenValidated(string $uuid): bool
+    {
+        return isset(self::$validated[$uuid]);
+    }
 
     public static function markUuidAsValidated(string $uuid): void
     {

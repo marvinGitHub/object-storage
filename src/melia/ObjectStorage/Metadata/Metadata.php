@@ -10,8 +10,8 @@ use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 
 class Metadata implements JsonSerializable
 {
-    const RESERVED_REFERENCE_NAME_DEFAULT = '__reference';
-    const VERSION = 1;
+    public const RESERVED_REFERENCE_NAME_DEFAULT = '__reference';
+    public const VERSION = 1;
 
     use AwareTrait;
     use AlgorithmAwareTrait;
@@ -29,9 +29,9 @@ class Metadata implements JsonSerializable
     /**
      * @throws InvalidUUIDException
      */
-    public static function createFromArray(array $data): Metadata
+    public static function createFromArray(array $data): self
     {
-        $metadata = new Metadata();
+        $metadata = new self();
         if (array_key_exists('className', $data)) {
             $metadata->setClassName($data['className']);
         }
@@ -46,11 +46,9 @@ class Metadata implements JsonSerializable
         }
         if (array_key_exists('checksumAlgorithm', $data)) {
             $metadata->setChecksumAlgorithm($data['checksumAlgorithm']);
-        } else {
+        } else if (32 === strlen($metadata->getChecksum())) {
             /* backwards compatibility */
-            if (32 === strlen($metadata->getChecksum())) {
-                $metadata->setChecksumAlgorithm('md5');
-            }
+            $metadata->setChecksumAlgorithm('md5');
         }
         if (array_key_exists('timestampExpiresAt', $data)) {
             $metadata->setTimestampExpiresAt($data['timestampExpiresAt']);
@@ -213,12 +211,12 @@ class Metadata implements JsonSerializable
         return [
             'className' => $this->className ?? '',
             'timestampCreation' => $this->timestampCreation ?? microtime(true),
-            'version' => $this->version ?? Metadata::VERSION,
+            'version' => $this->version ?? self::VERSION,
             'checksum' => $this->checksum ?? '',
             'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
             'uuid' => $this->uuid ?? '',
-            'reservedReferenceName' => $this->reservedReferenceName ?? Metadata::RESERVED_REFERENCE_NAME_DEFAULT,
+            'reservedReferenceName' => $this->reservedReferenceName ?? self::RESERVED_REFERENCE_NAME_DEFAULT,
         ];
     }
 }
