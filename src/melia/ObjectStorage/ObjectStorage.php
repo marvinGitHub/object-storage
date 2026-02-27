@@ -1308,10 +1308,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
             }
 
-            if (null === $adapter) {
-                throw new ObjectDeletionFailureException('IO adapter is not configured.');
-            }
-
             $lockAdapter?->acquireExclusiveLock($uuid);
 
             $this->removeFromCache($uuid);
@@ -1356,9 +1352,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     {
         try {
             $adapter = $this->getIOAdapter();
-            if (null === $adapter) {
-                throw new StubSavingFailureException('IO adapter is not configured.');
-            }
 
             $pathname = $this->getFilePathStub($className, $uuid);
             if ($adapter->isFile($pathname)) {
@@ -1462,9 +1455,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     public function getMemoryConsumption(string $uuid): int
     {
         $adapter = $this->getIOAdapter();
-        if (null === $adapter) {
-            throw new MemoryConsumptionDetectionFailureException('IO adapter is not configured.');
-        }
 
         try {
             if (false === $fileSizeData = $adapter->fileSize($path = $this->getFilePathData($uuid))) {
@@ -1516,18 +1506,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * Retrieves a list of all available UUIDs by extracting keys from the stored files.
      *
      * @return Traversable Returns a traversable of UUIDs
-     * @throws StubIteratorCreationFailureException
      */
     public function list(?string $className = null): Traversable
     {
-        if (null !== $className) {
-            $adapter = $this->getIOAdapter();
-            if (null === $adapter) {
-                throw new StubIteratorCreationFailureException('IO adapter is not configured.');
-            }
-            if ($adapter->isDir($pathClassStubs = $this->getClassStubDirectory($className))) {
-                return $this->createStubIterator($pathClassStubs);
-            }
+        if ((null !== $className) && $this->getIOAdapter()->isDir($pathClassStubs = $this->getClassStubDirectory($className))) {
+            return $this->createStubIterator($pathClassStubs);
         }
 
         return $this->createObjectIterator($className);
