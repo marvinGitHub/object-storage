@@ -9,9 +9,9 @@ trait AdapterAwareTrait
     /**
      * Retrieves the current adapter instance.
      *
-     * @return AdapterInterface|null The adapter instance if set, null otherwise.
+     * @return AdapterInterface The adapter instance if set, null otherwise.
      */
-    public function getIOAdapter(): ?AdapterInterface
+    public function getIOAdapter(): AdapterInterface
     {
         return $this->ioAdapter ?? new RealAdapter();
     }

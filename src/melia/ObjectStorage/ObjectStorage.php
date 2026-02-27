@@ -107,7 +107,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *
      * @var string
      */
-    const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
+    public const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
 
     /**
      * The suffix used for metadata files.
@@ -243,11 +243,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected function loadFromJsonFile(string $filename, ?callable $validator = null): ?array
     {
         try {
-            $reader = $this->getReader();
-            if (null === $reader) {
-                throw new IOException('Reader is not configured');
-            }
-            $data = $reader->read($filename);
+            $data = $this->getReader()->read($filename);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($filename));
@@ -533,10 +529,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
         $adapter = $this->getIOAdapter();
-
-        if (null === $adapter) {
-            throw new StubDeletionFailureException('IO adapter is not configured');
-        }
 
         if ($adapter->isFile($filePathStub) && !$adapter->unlink($filePathStub)) {
             throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
@@ -907,16 +899,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @param string $uuid The UUID to check if the associated file exists.
      * @return bool True if the file exists, false otherwise.
      * @throws ObjectExistenceEvaluationFailureException
-     * @throws IOException
      */
     public function exists(string $uuid): bool
     {
-        $adapter = $this->getIOAdapter();
-        if (null === $adapter) {
-            throw new ObjectExistenceEvaluationFailureException('IO adapter is not configured');
-        }
         try {
-            return $adapter->isFile($this->getFilePathData($uuid));
+            return $this->getIOAdapter()->isFile($this->getFilePathData($uuid));
         } catch (Throwable $e) {
             throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
         }
@@ -1505,6 +1492,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @return void
      * @throws StubSavingFailureException
      * @throws IOException
+     * @throws StubIteratorCreationFailureException
      */
     public function rebuildStubs(): void
     {
@@ -1775,10 +1763,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     {
         $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
         $adapter = $this->getIOAdapter();
-
-        if (null === $adapter) {
-            throw new IOException('IO adapter is not configured.');
-        }
 
         if ($adapter->isFile($path = $this->getFilePathMetadata($uuid))) {
             $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());

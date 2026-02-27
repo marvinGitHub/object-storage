@@ -6,7 +6,7 @@ trait ReaderAwareTrait
 {
     protected ?ReaderInterface $reader = null;
 
-    public function getReader(): ?ReaderInterface
+    public function getReader(): ReaderInterface
     {
         return $this->reader ?? new Reader();
     }

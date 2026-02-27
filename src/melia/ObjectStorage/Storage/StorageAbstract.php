@@ -126,7 +126,7 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
      */
     protected function getSelection(?array $subSet = null): iterable
     {
-        return $subSet ? array_unique(array_filter([...array_values($subSet), ...array_keys($subSet)], function ($uuid) {
+        return $subSet ? array_unique(array_filter([...array_values($subSet), ...array_keys($subSet)], static function ($uuid) {
             return is_string($uuid) && Validator::validate($uuid);
         })) : $this->list();
     }
