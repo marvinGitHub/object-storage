@@ -48,7 +48,6 @@ use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\StubDeletionFailureException;
-use melia\ObjectStorage\Exception\StubIteratorCreationFailureException;
 use melia\ObjectStorage\Exception\StubSavingFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
