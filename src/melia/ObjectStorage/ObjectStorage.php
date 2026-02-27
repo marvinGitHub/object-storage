@@ -28,16 +28,19 @@ use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
+use melia\ObjectStorage\Exception\ClassnameRegistrationFailureException;
 use melia\ObjectStorage\Exception\ClosureSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\MaxDepthExceededException;
+use melia\ObjectStorage\Exception\MemoryConsumptionDetectionFailureException;
 use melia\ObjectStorage\Exception\MetadataNotFoundException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
+use melia\ObjectStorage\Exception\ObjectExistenceEvaluationFailureException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
@@ -45,6 +48,7 @@ use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\StubDeletionFailureException;
+use melia\ObjectStorage\Exception\StubIteratorCreationFailureException;
 use melia\ObjectStorage\Exception\StubSavingFailureException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Exception\UnsupportedKeyException;
@@ -66,7 +70,6 @@ use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
-use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
 use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Strategy\StrategyInterface;
@@ -89,7 +92,7 @@ use WeakMap;
  * Handles serialization, metadata processing, and nested structures.
  * Supports handling circular references, maximum nesting levels, and in-memory caching.
  */
-class ObjectStorage extends StorageAbstract implements StorageInterface, StorageMemoryConsumptionInterface
+class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionInterface
 {
     use AdapterAwareTrait;
     use WriterAwareTrait;
@@ -240,7 +243,11 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function loadFromJsonFile(string $filename, ?callable $validator = null): ?array
     {
         try {
-            $data = $this->getReader()->read($filename);
+            $reader = $this->getReader();
+            if (null === $reader) {
+                throw new IOException('Reader is not configured');
+            }
+            $data = $reader->read($filename);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($filename));
@@ -252,7 +259,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         try {
-            $data = json_decode($data, true, $this->getStrategy()->getMaxDepth(), JSON_THROW_ON_ERROR);
+            $data = json_decode($data, true, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH, JSON_THROW_ON_ERROR);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             $data = null;
@@ -288,7 +295,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function buildShardedDirectory(string $uuid): string
     {
-        $path = $this->getShardedDirectory($uuid, $this->getStrategy()->getShardDepth());
+        $path = $this->getShardedDirectory($uuid, $this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH);
 
         // cache the directory check to avoid repeated I/O calls
         $this->createDirectoryIfNotExist($path);
@@ -350,7 +357,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     protected function saveMetadata(Metadata $metadata): void
     {
         try {
-            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, JSON_THROW_ON_ERROR, $this->getStrategy()->getMaxDepth()));
+            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, JSON_THROW_ON_ERROR, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH));
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));
@@ -511,7 +518,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      */
     public function getClassName(string $uuid): ?string
     {
-        return $this->loadMetadata($uuid)?->getClassName() ?? null;
+        return $this->loadMetadata($uuid)?->getClassName();
     }
 
     /**
@@ -526,6 +533,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $filePathStub = $this->getFilePathStub($className, $uuid);
         $adapter = $this->getIOAdapter();
+
+        if (null === $adapter) {
+            throw new StubDeletionFailureException('IO adapter is not configured');
+        }
 
         if ($adapter->isFile($filePathStub) && !$adapter->unlink($filePathStub)) {
             throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
@@ -632,7 +643,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $graph = $this->createGraphAndStoreReferencedChildren($context);
             $strategy = $this->getStrategy();
-            $serializedGraph = $strategy?->serialize($graph, $strategy->getMaxDepth()) ?? null;
+            $serializedGraph = $strategy?->serialize($graph, $strategy?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
 
             if (null === $serializedGraph) {
                 $eventDispatcher?->dispatch(Events::GRAPH_SERIALIZATION_FAILURE, static fn() => new Context($uuid));
@@ -641,9 +652,9 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
 
             $metadata->setChecksum(static::generateChecksum($serializedGraph, $metadata->getChecksumAlgorithm()));
 
-            $previousClassname = $loadedMetadata?->getClassName() ?? null;
+            $previousClassname = $loadedMetadata?->getClassName();
 
-            $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum() ?? null);
+            $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum());
             $classNameChanged = null !== $previousClassname && $metadata->getClassName() !== $previousClassname;
             $lifetimeChanged = $ttl !== $loadedMetadata?->getLifetime();
 
@@ -742,7 +753,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         // pre-scan property names to avoid reserved reference name collision
         $reserved = $context->getMetadata()->getReservedReferenceName();
         while (array_key_exists($reserved, $properties)) {
-            $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
+            $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT, true);
         }
         $context->getMetadata()->setReservedReferenceName($reserved);
 
@@ -788,7 +799,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $strategy = $this->getStrategy();
 
-        $maxDepth = $strategy->getMaxDepth();
+        $maxDepth = $strategy?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH;
         if ($context->getLevel() > $maxDepth) {
             throw new MaxDepthExceededException(sprintf('Maximum depth of %u exceeded', $maxDepth));
         }
@@ -828,7 +839,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 $exists = $this->exists($refUuid);
                 $writeChild = true;
 
-                switch ($strategy->getChildWritePolicy()) {
+                switch ($strategy?->getChildWritePolicy() ?? StrategyInterface::DEFAULT_POLICY_CHILD_WRITE) {
                     case Strategy\StrategyInterface::POLICY_CHILD_WRITE_IF_NOT_EXIST:
                         if ($exists) {
                             $writeChild = false;
@@ -839,7 +850,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                         break;
                     case Strategy\StrategyInterface::POLICY_CHILD_WRITE_CALLBACK:
                         try {
-                            $writeChild = $strategy->shouldWriteChild($context, $value, $refUuid, $exists, $path);
+                            $writeChild = $strategy?->shouldWriteChild($context, $value, $refUuid, $exists, $path) ?? false;
                         } catch (Throwable $e) {
                             $this->getLogger()?->log($e);
                             $writeChild = false; // fail-closed; change to true if you prefer fail-open
@@ -895,11 +906,20 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
      *
      * @param string $uuid The UUID to check if the associated file exists.
      * @return bool True if the file exists, false otherwise.
+     * @throws ObjectExistenceEvaluationFailureException
      * @throws IOException
      */
     public function exists(string $uuid): bool
     {
-        return $this->getIOAdapter()->isFile($this->getFilePathData($uuid));
+        $adapter = $this->getIOAdapter();
+        if (null === $adapter) {
+            throw new ObjectExistenceEvaluationFailureException('IO adapter is not configured');
+        }
+        try {
+            return $adapter->isFile($this->getFilePathData($uuid));
+        } catch (Throwable $e) {
+            throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
+        }
     }
 
     /**
@@ -1301,6 +1321,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
                 throw new ObjectDeletionFailureException('Safe mode is enabled. Object cannot be deleted.');
             }
 
+            if (null === $adapter) {
+                throw new ObjectDeletionFailureException('IO adapter is not configured.');
+            }
+
             $lockAdapter?->acquireExclusiveLock($uuid);
 
             $this->removeFromCache($uuid);
@@ -1317,10 +1341,8 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             }
 
             $filePathMetadata = $this->getFilePathMetadata($uuid);
-            if ($adapter->isFile($filePathMetadata)) {
-                if (!$adapter->unlink($filePathMetadata)) {
-                    throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
-                }
+            if ($adapter->isFile($filePathMetadata) && !$adapter->unlink($filePathMetadata)) {
+                throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
             }
 
             $this->getMetadataCache()?->delete($uuid);
@@ -1346,8 +1368,13 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     public function createStub(string $className, string $uuid): void
     {
         try {
+            $adapter = $this->getIOAdapter();
+            if (null === $adapter) {
+                throw new StubSavingFailureException('IO adapter is not configured.');
+            }
+
             $pathname = $this->getFilePathStub($className, $uuid);
-            if ($this->getIOAdapter()->isFile($pathname)) {
+            if ($adapter->isFile($pathname)) {
                 return;
             }
 
@@ -1365,19 +1392,23 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * @throws SerializationFailureException
      * @throws SafeModeActivationFailedException
-     * @throws IOException
+     * @throws ClassnameRegistrationFailureException
      */
     protected function registerClassname(string $className): void
     {
         $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
 
         if (!isset($registeredClassnames[$className])) {
-            $this->registeredClassNamesCache[$className] = $className;
-            $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->getWriter()->atomicWrite(
-                $this->getFilePathClassnames(),
-                json_encode($this->registeredClassNamesCache)
-            );
+            try {
+                $this->registeredClassNamesCache[$className] = $className;
+                $this->createDirectoryIfNotExist($this->getStubDirectory());
+                $this->getWriter()->atomicWrite(
+                    $this->getFilePathClassnames(),
+                    json_encode($this->registeredClassNamesCache, JSON_THROW_ON_ERROR)
+                );
+            } catch (Throwable $e) {
+                throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
+            }
         }
     }
 
@@ -1392,7 +1423,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
         }
 
         $filenameClassnames = $this->getFilePathClassnames();
-        if ($this->getIOAdapter()->isFile($filenameClassnames)) {
+        if ($this->getIOAdapter()?->isFile($filenameClassnames)) {
             $this->registeredClassNamesCache = $this->loadFromJsonFile($filenameClassnames) ?? [];
         } else {
             $this->registeredClassNamesCache = [];
@@ -1439,23 +1470,32 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     }
 
     /**
-     * @throws IOException
+     * @throws MemoryConsumptionDetectionFailureException
      */
     public function getMemoryConsumption(string $uuid): int
     {
-        if (false === $fileSizeData = $this->getIOAdapter()->fileSize($path = $this->getFilePathData($uuid))) {
-            throw new IOException('Unable to determine file size for file ' . $path);
+        $adapter = $this->getIOAdapter();
+        if (null === $adapter) {
+            throw new MemoryConsumptionDetectionFailureException('IO adapter is not configured.');
         }
 
-        if (false === $fileSizeMetadata = $this->getIOAdapter()->fileSize($path = $this->getFilePathMetadata($uuid))) {
-            throw new IOException('Unable to determine file size for file ' . $path);
-        }
+        try {
+            if (false === $fileSizeData = $adapter->fileSize($path = $this->getFilePathData($uuid))) {
+                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
+            }
 
-        if (false === $fileSizeStub = $this->getIOAdapter()->fileSize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
-            throw new IOException('Unable to determine file size for file ' . $path);
-        }
+            if (false === $fileSizeMetadata = $adapter->fileSize($path = $this->getFilePathMetadata($uuid))) {
+                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
+            }
 
-        return $fileSizeData + $fileSizeMetadata + $fileSizeStub;
+            if (false === $fileSizeStub = $adapter->fileSize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
+                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
+            }
+
+            return $fileSizeData + $fileSizeMetadata + $fileSizeStub;
+        } catch (Throwable $e) {
+            throw new MemoryConsumptionDetectionFailureException(message: 'Unable to determine memory consumption for uuid: ' . $uuid, previous: $e);
+        }
     }
 
     /**
@@ -1487,12 +1527,19 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     /**
      * Retrieves a list of all available UUIDs by extracting keys from the stored files.
      *
-     * @return Traversable  Returns a traversable of UUIDs
+     * @return Traversable Returns a traversable of UUIDs
+     * @throws StubIteratorCreationFailureException
      */
     public function list(?string $className = null): Traversable
     {
-        if (null !== $className && $this->getIOAdapter()->isDir($pathClassStubs = $this->getClassStubDirectory($className))) {
-            return $this->createStubIterator($pathClassStubs);
+        if (null !== $className) {
+            $adapter = $this->getIOAdapter();
+            if (null === $adapter) {
+                throw new StubIteratorCreationFailureException('IO adapter is not configured.');
+            }
+            if ($adapter->isDir($pathClassStubs = $this->getClassStubDirectory($className))) {
+                return $this->createStubIterator($pathClassStubs);
+            }
         }
 
         return $this->createObjectIterator($className);
@@ -1650,7 +1697,7 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
             {
                 $extensionLen = strlen($this->extension);
 
-                $depth = $this->storage->getStrategy()->getShardDepth();
+                $depth = $this->storage->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH;
 
                 // In this codebase, sharded directories are stored under "<storageDir>/shards/<c1>/<c2>/..."
                 $baseDir = $this->storage->getShardDir();
@@ -1728,6 +1775,10 @@ class ObjectStorage extends StorageAbstract implements StorageInterface, Storage
     {
         $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
         $adapter = $this->getIOAdapter();
+
+        if (null === $adapter) {
+            throw new IOException('IO adapter is not configured.');
+        }
 
         if ($adapter->isFile($path = $this->getFilePathMetadata($uuid))) {
             $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());

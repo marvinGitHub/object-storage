@@ -184,7 +184,6 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
      * @param object|array $current The current object or array
      * @param string $segment The property name or array key
      * @return object|array|null The next level object/array or null if not found
-     * @throws ReflectionException
      */
     private function getNextLevel(object|array $current, string $segment): object|array|null
     {
@@ -211,8 +210,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
     public function __isset(string $name): bool
     {
         $this->loadIfNeeded();
-        $reflection = new Reflection($this->loadedObject);
-        return $reflection->initialized($name);
+        return (new Reflection($this->loadedObject))->initialized($name);
     }
 
     /**
@@ -277,7 +275,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
      *
      * @return array An associative array containing the serialized properties of the object.
      */
-    public function __serialize()
+    public function __serialize(): array
     {
         return [
             'uuid' => $this->uuid,
@@ -294,7 +292,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
      *
      * @return void
      */
-    public function __unserialize(array $data)
+    public function __unserialize(array $data): void
     {
         try {
             if ($data['root']) {
