@@ -67,9 +67,6 @@
   "require": {
     "php": ">=8.0",
     "ext-json": "*",
-    "ext-memcached": "*",
-    "ext-redis": "*",
-    "ext-apcu": "*",
     "symfony/console": "^6.0",
     "psr/simple-cache": "^3.0",
     "symfony/cache": "^6.0"
@@ -82,5 +79,10 @@
     "phpstan/phpstan": "^2.1",
     "perftools/php-profiler": "^1.2",
     "monolog/monolog": "^2.10"
+  },
+  "suggest": {
+    "ext-memcached": "For caching operations",
+    "ext-redis": "For caching operations",
+    "ext-apcu": "For caching operations"
   }
 }
