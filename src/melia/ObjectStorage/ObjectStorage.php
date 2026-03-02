@@ -1481,7 +1481,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @return void
      * @throws StubSavingFailureException
      * @throws IOException
-     * @throws StubIteratorCreationFailureException
      */
     public function rebuildStubs(): void
     {
