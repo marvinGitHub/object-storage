@@ -231,13 +231,13 @@ class Transaction
      */
     private function lockObject(string $uuid): void
     {
-        if (in_array($uuid, $this->lockedObjects)) {
+        if (isset($this->lockedObjects[$uuid])) {
             return; // Already locked
         }
 
         try {
             $this->getStorage()->getLockAdapter()->acquireExclusiveLock($uuid, $this->timeout);
-            $this->lockedObjects[] = $uuid;
+            $this->lockedObjects[$uuid] = $uuid;
         } catch (Throwable $e) {
             throw new TransactionLockException("Could not lock object {$uuid}: " . $e->getMessage(), 0, $e);
         }
@@ -317,7 +317,7 @@ class Transaction
             'transaction_id' => $this->transactionId,
             'start_time' => microtime(true),
             'status' => $this->isCommitted ? 'committed' : ($this->isRolledBack ? 'rolled_back' : 'active'),
-            'operations' => array_map(function ($operation) {
+            'operations' => array_map(static function ($operation) {
                 return [
                     'type' => $operation['type'],
                     'uuid' => $operation['uuid'],
@@ -358,7 +358,7 @@ class Transaction
         // Lock object for transaction
         $this->lockObject($uuid);
 
-        // Create backup only if the object actually exists in storage.
+        // Create a backup only if the object actually exists in storage.
         // If it's only pending in this transaction, there is nothing to back up.
         $backup = null;
         if (null === $pendingStore) {
