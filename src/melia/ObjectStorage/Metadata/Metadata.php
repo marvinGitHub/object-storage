@@ -23,7 +23,6 @@ class Metadata implements JsonSerializable
 
     private null|float $timestampExpiresAt = null;
 
-    private array $references = [];
     private string $reservedReferenceName = Metadata::RESERVED_REFERENCE_NAME_DEFAULT;
 
     /**
