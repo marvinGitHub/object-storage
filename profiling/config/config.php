@@ -19,7 +19,7 @@ return [
         'saveAll' => false,
     ],
     'save.handler.upload' => [
-        'url' => 'https://172.16.50.10:7777/xhgui/webroot/run/import',
+        'url' => 'https://playground.localvm:7777/xhgui/webroot/run/import',
         // The timeout option is in seconds and defaults to 3 if unspecified.
         'timeout' => 3,
         // the token must match 'upload.token' config in XHGui
@@ -30,7 +30,7 @@ return [
     'save.handler.file' => [
         'filename' => sys_get_temp_dir() . '/xhgui.data.jsonl',
     ],
-    'profiler.enable' => function () {
+    'profiler.enable' => static function () {
         return true;
     },
     'profiler.flags' => [
@@ -39,7 +39,7 @@ return [
     ],
     'profiler.options' => [],
     'profiler.exclude-env' => [],
-    'profiler.simple_url' => function ($url) {
+    'profiler.simple_url' => static function ($url) {
         return preg_replace('/=\d+/', '', $url);
     },
     'profiler.replace_url' => null,
