@@ -316,6 +316,8 @@ foreach ($configurationsToRun as $currentConfig) {
 
     echo "Profiling complete for $currentConfig. Results saved.\n";
 
+    $directory->tearDown();
+
     // Cleanup
     unset($storage, $directory);
 
