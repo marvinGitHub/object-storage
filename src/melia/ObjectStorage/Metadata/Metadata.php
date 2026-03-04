@@ -21,9 +21,9 @@ class Metadata implements JsonSerializable
     private int $version;
     private string $checksum;
 
-    private null|float $timestampExpiresAt = null;
+    private ?float $timestampExpiresAt = null;
 
-    private string $reservedReferenceName = Metadata::RESERVED_REFERENCE_NAME_DEFAULT;
+    private ?string $reservedReferenceName;
 
     /**
      * @throws InvalidUUIDException
@@ -31,33 +31,41 @@ class Metadata implements JsonSerializable
     public static function createFromArray(array $data): self
     {
         $metadata = new self();
-        if (array_key_exists('className', $data)) {
+
+        if (isset($data['className'])) {
             $metadata->setClassName($data['className']);
         }
-        if (array_key_exists('timestampCreation', $data)) {
+
+        if (isset($data['timestampCreation'])) {
             $metadata->setTimestampCreation($data['timestampCreation']);
         }
-        if (array_key_exists('version', $data)) {
+
+        if (isset($data['version'])) {
             $metadata->setVersion($data['version']);
         }
-        if (array_key_exists('checksum', $data)) {
+
+        if (isset($data['checksum'])) {
             $metadata->setChecksum($data['checksum']);
         }
-        if (array_key_exists('checksumAlgorithm', $data)) {
+
+        if (isset($data['checksumAlgorithm'])) {
             $metadata->setChecksumAlgorithm($data['checksumAlgorithm']);
-        } else if (32 === strlen($metadata->getChecksum())) {
+        } elseif (32 === strlen($metadata->getChecksum())) {
             /* backwards compatibility */
             $metadata->setChecksumAlgorithm('md5');
         }
-        if (array_key_exists('timestampExpiresAt', $data)) {
-            $metadata->setTimestampExpiresAt($data['timestampExpiresAt']);
-        }
-        if (array_key_exists('uuid', $data)) {
+
+        $timestampExpiresAt = $data['timestampExpiresAt'] ?? null;
+        $metadata->setTimestampExpiresAt($timestampExpiresAt);
+
+        if (isset($data['uuid'])) {
             $metadata->setUuid($data['uuid']);
         }
-        if (array_key_exists('reservedReferenceName', $data)) {
+
+        if (isset($data['reservedReferenceName'])) {
             $metadata->setReservedReferenceName($data['reservedReferenceName']);
         }
+
         return $metadata;
     }
 
@@ -186,7 +194,7 @@ class Metadata implements JsonSerializable
      */
     public function getReservedReferenceName(): string
     {
-        return $this->reservedReferenceName;
+        return $this->reservedReferenceName ?? static::RESERVED_REFERENCE_NAME_DEFAULT;
     }
 
     /**
@@ -215,7 +223,7 @@ class Metadata implements JsonSerializable
             'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
             'uuid' => $this->uuid ?? '',
-            'reservedReferenceName' => $this->reservedReferenceName ?? self::RESERVED_REFERENCE_NAME_DEFAULT,
+            'reservedReferenceName' => $this->getReservedReferenceName(),
         ];
     }
 }
