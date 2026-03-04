@@ -819,13 +819,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $value = $value->getObject();
             }
 
+            $metadata = $context->getMetadata();
             $refUuid = Helper::getAssigned($value) ?? $this->objectUuidMap[$value] ?? $this->getNextAvailableUuid();
 
             $this->objectUuidMap[$value] = $refUuid;
 
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
-                $metadata = $context->getMetadata();
 
                 $exists = $this->exists($refUuid);
                 $writeChild = true;
@@ -857,13 +857,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $this->serializeAndStore(
                         $value,
                         $refUuid,
-                        ($this->getStrategy()?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
+                        ($strategy?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
                         $context
                     );
                 }
             }
 
-            return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
+            return [$metadata->getReservedReferenceName() => $refUuid];
         }
 
         if (is_iterable($value)) {
