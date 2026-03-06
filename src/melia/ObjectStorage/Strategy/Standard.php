@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\Strategy;
 
+use JsonException;
 use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Exception\InvalidChildWritePolicyException;
@@ -14,11 +15,9 @@ class Standard implements StrategyInterface
     use AlgorithmAwareTrait;
     use GeneratorAwareTrait;
 
-    const SHARD_DEPTH_DEFAULT = 2;
-
     private bool $inheritLifetime = false;
-    private int $maxDepth = 100;
-    private int $shardDepth = Standard::SHARD_DEPTH_DEFAULT;
+    private int $maxDepth = self::DEFAULT_MAX_DEPTH;
+    private int $shardDepth = self::DEFAULT_SHARD_DEPTH;
     private int $childWritePolicy = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
 
     public function enableLifetimeInheritance(): void
@@ -36,14 +35,20 @@ class Standard implements StrategyInterface
         return $this->inheritLifetime;
     }
 
+    /**
+     * @throws JsonException
+     */
     public function serialize(array $graph, int $depth): ?string
     {
-        return json_encode(value: $graph, depth: $depth) ?: null;
+        return json_encode($graph, JSON_THROW_ON_ERROR | $depth, $depth) ?: null;
     }
 
+    /**
+     * @throws JsonException
+     */
     public function unserialize(string $data): array
     {
-        return json_decode(json: $data, associative: true) ?: [];
+        return json_decode($data, true, 512, JSON_THROW_ON_ERROR) ?: [];
     }
 
     /**
@@ -125,7 +130,7 @@ class Standard implements StrategyInterface
      */
     public function setChildWritePolicy(int $childWritePolicy): void
     {
-        if (!in_array($childWritePolicy, [self::POLICY_CHILD_WRITE_ALWAYS, self::POLICY_CHILD_WRITE_IF_NOT_EXIST, self::POLICY_CHILD_WRITE_NEVER, self::POLICY_CHILD_WRITE_CALLBACK])) {
+        if (!in_array($childWritePolicy, [self::POLICY_CHILD_WRITE_ALWAYS, self::POLICY_CHILD_WRITE_IF_NOT_EXIST, self::POLICY_CHILD_WRITE_NEVER, self::POLICY_CHILD_WRITE_CALLBACK], true)) {
             throw new InvalidChildWritePolicyException('Invalid child write policy.');
         }
         $this->childWritePolicy = $childWritePolicy;

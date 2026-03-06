@@ -195,19 +195,18 @@ class Reflection
      */
     public function getPropertyNames(): array
     {
-        $names = [];
+        static $cache = [];
 
-        // public + dynamic properties currently on the object (note: foreach is fast then array_map in this case)
-        foreach (get_object_vars($this->target) as $k => $_) {
-            $names[$k] = true;
-        }
+        // cache property names of the class
+        $cache[$classname = $this->target::class] ??= (static function () use ($classname) {
+            $properties = [];
+            foreach (static::getReflectionClass($classname)->getProperties() as $property) {
+                $properties[$property->getName()] = true;
+            }
+            return $properties;
+        })();
 
-        // declared properties (public/protected/private)
-        foreach ($this->getReflectionObject()->getProperties() as $property) {
-            $names[$property->getName()] = true;
-        }
-
-        return array_keys($names);
+        return array_keys($cache[$this->target::class] + get_object_vars($this->target));
     }
 
     /**
