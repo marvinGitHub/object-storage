@@ -7,14 +7,14 @@ use melia\ObjectStorage\UUID\Generator\AwareInterface;
 
 interface StrategyInterface extends AwareInterface
 {
-    const POLICY_CHILD_WRITE_ALWAYS = 1;
-    const POLICY_CHILD_WRITE_NEVER = 2;
-    const POLICY_CHILD_WRITE_IF_NOT_EXIST = 3;
-    const POLICY_CHILD_WRITE_CALLBACK = 4;
+    public const POLICY_CHILD_WRITE_ALWAYS = 1;
+    public const POLICY_CHILD_WRITE_NEVER = 2;
+    public const POLICY_CHILD_WRITE_IF_NOT_EXIST = 3;
+    public const POLICY_CHILD_WRITE_CALLBACK = 4;
 
-    const DEFAULT_MAX_DEPTH = 512;
-    const DEFAULT_SHARD_DEPTH = 2;
-    const DEFAULT_POLICY_CHILD_WRITE = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
+    public const DEFAULT_MAX_DEPTH = 512;
+    public const DEFAULT_SHARD_DEPTH = 2;
+    public const DEFAULT_POLICY_CHILD_WRITE = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
 
     public function inheritLifetime(?GraphBuilderContext $context = null): bool;
 
