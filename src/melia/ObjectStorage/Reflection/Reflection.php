@@ -226,24 +226,16 @@ class Reflection
         static $classPropertyTypeCache;
         $classPropertyTypeCache ??= new WeakMap();
 
-        // Only cache if it's a declared property on the class
         $core = static::getReflectionClass($object::class);
+
         if (!$core->hasProperty($propertyName)) {
-            // dynamic property: do not cache
             return $this->getPropertyType($propertyName);
         }
 
-        $bucket = $classPropertyTypeCache[$core] ??= [];
+        $classPropertyTypeCache[$core] ??= [];
 
-        if (array_key_exists($propertyName, $bucket)) {
-            return $bucket[$propertyName];
-        }
-
-        $type = $this->getPropertyType($propertyName);
-        $bucket[$propertyName] = $type;
-        $classPropertyTypeCache[$core] = $bucket;
-
-        return $type;
+        return $classPropertyTypeCache[$core][$propertyName] ?? ($classPropertyTypeCache[$core][$propertyName]
+            = $this->getPropertyType($propertyName));
     }
 
     /**
