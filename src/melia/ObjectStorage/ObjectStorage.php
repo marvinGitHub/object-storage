@@ -322,6 +322,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     /**
      * @param string $directory
      * @return void
+     * @throws IOException
      * @link Directory::createIfNotExists
      */
     protected function createDirectoryIfNotExist(string $directory): void
