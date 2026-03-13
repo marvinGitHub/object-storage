@@ -65,6 +65,11 @@ class CachedLockAdapter extends LockAdapterAbstract
         }
     }
 
+    private function getLockKey(string $uuid): string
+    {
+        return $this->prefix . $uuid;
+    }
+
     /**
      * @throws LockException
      */
@@ -100,40 +105,6 @@ class CachedLockAdapter extends LockAdapterAbstract
 
             usleep(10000); // Wait 10ms before retry
         }
-    }
-
-    /**
-     * @throws InvalidArgumentException
-     */
-    public function releaseLock(string $uuid): void
-    {
-        $key = $this->getLockKey($uuid);
-        $lockData = $this->cache->get($key);
-
-        if (empty($lockData)) {
-            unset($this->activeLocks[$uuid]);
-            return;
-        }
-
-        if ($lockData['type'] === self::LOCK_TYPE_EXCLUSIVE) {
-            // Release exclusive lock
-            if (isset($lockData['holder']) && $lockData['holder'] === $this->processId) {
-                $this->cache->delete($key);
-            }
-        } elseif ($lockData['type'] === self::LOCK_TYPE_SHARED) {
-            // Remove this process from shared lock holders
-            if (isset($lockData['holders'][$this->processId])) {
-                unset($lockData['holders'][$this->processId]);
-
-                if (empty($lockData['holders'])) {
-                    $this->cache->delete($key);
-                } else {
-                    $this->cache->set($key, $lockData);
-                }
-            }
-        }
-
-        unset($this->activeLocks[$uuid]);
     }
 
     public function isLockedByOtherProcess(?string $uuid): bool
@@ -180,6 +151,40 @@ class CachedLockAdapter extends LockAdapterAbstract
         }
     }
 
+    /**
+     * @throws InvalidArgumentException
+     */
+    public function releaseLock(string $uuid): void
+    {
+        $key = $this->getLockKey($uuid);
+        $lockData = $this->cache->get($key);
+
+        if (empty($lockData)) {
+            unset($this->activeLocks[$uuid]);
+            return;
+        }
+
+        if ($lockData['type'] === self::LOCK_TYPE_EXCLUSIVE) {
+            // Release exclusive lock
+            if (isset($lockData['holder']) && $lockData['holder'] === $this->processId) {
+                $this->cache->delete($key);
+            }
+        } elseif ($lockData['type'] === self::LOCK_TYPE_SHARED) {
+            // Remove this process from shared lock holders
+            if (isset($lockData['holders'][$this->processId])) {
+                unset($lockData['holders'][$this->processId]);
+
+                if (empty($lockData['holders'])) {
+                    $this->cache->delete($key);
+                } else {
+                    $this->cache->set($key, $lockData);
+                }
+            }
+        }
+
+        unset($this->activeLocks[$uuid]);
+    }
+
     public function getActiveLocks(): array
     {
         return array_keys($this->activeLocks);
@@ -195,10 +200,5 @@ class CachedLockAdapter extends LockAdapterAbstract
     {
         return isset($this->activeLocks[$uuid]) &&
             $this->activeLocks[$uuid] === self::LOCK_TYPE_EXCLUSIVE;
-    }
-
-    private function getLockKey(string $uuid): string
-    {
-        return $this->prefix . $uuid;
     }
 }

@@ -35,17 +35,17 @@ interface StrategyInterface extends AwareInterface
      *
      * Only used when getChildWritePolicy() === POLICY_CHILD_WRITE_CALLBACK.
      *
-     * @param GraphBuilderContext $context     Current graph builder context (parent + metadata + level)
-     * @param object             $child       The referenced child object (already resolved from LazyLoadReference if applicable)
-     * @param string             $childUuid   UUID assigned to the child (existing or newly generated)
-     * @param bool               $childExists Whether the child already exists in storage
-     * @param array              $path        Path within the object graph where the child reference was found
+     * @param GraphBuilderContext $context Current graph builder context (parent + metadata + level)
+     * @param object $child The referenced child object (already resolved from LazyLoadReference if applicable)
+     * @param string $childUuid UUID assigned to the child (existing or newly generated)
+     * @param bool $childExists Whether the child already exists in storage
+     * @param array $path Path within the object graph where the child reference was found
      */
     public function shouldWriteChild(
         GraphBuilderContext $context,
-        object $child,
-        string $childUuid,
-        bool $childExists,
-        array $path
+        object              $child,
+        string              $childUuid,
+        bool                $childExists,
+        array               $path
     ): bool;
 }

@@ -75,4 +75,12 @@ class RealAdapterTest extends TestCase
         $this->assertFileExists($to);
         $this->assertSame('source', file_get_contents($to));
     }
+
+    public function testTempnam()
+    {
+        $adapter = new RealAdapter();
+        $this->assertNotFalse($path = $adapter->tempnam(sys_get_temp_dir(), 'test'));
+        $this->assertFileExists($path);
+        $this->assertTrue(is_file($path));
+    }
 }

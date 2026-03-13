@@ -12,7 +12,7 @@ class Writer implements WriterInterface
 {
     use AdapterAwareTrait;
 
-    const SUFFIX_STAGING = '.tmp';
+    public const SUFFIX_STAGING = '.tmp';
 
     /**
      * Performs an atomic write operation to the specified file. Ensures that the file content
@@ -27,17 +27,16 @@ class Writer implements WriterInterface
      */
     public function atomicWrite(string $filename, ?string $data = null, bool $createDirectoryIfNotExist = false): void
     {
-        if ($createDirectoryIfNotExist) {
-            $directory = new Directory(Directory::getDirectoryName($filename));
-            $directory->createIfNotExists();
-        }
-
-        $data = $data ?? '';
-
         $adapter = $this->getIOAdapter();
         if (null === $adapter) {
             throw new IOException('No adapter has been set');
         }
+
+        if ($createDirectoryIfNotExist) {
+            Directory::createIfNotExists($adapter, Directory::getDirectoryName($filename));
+        }
+
+        $data = $data ?? '';
 
         // Use a unique staging path to avoid cross-process contention on "<file>.tmp"
         // Keep it in the same directory so rename stays atomic (same filesystem).

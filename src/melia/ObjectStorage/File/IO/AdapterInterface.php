@@ -44,4 +44,6 @@ interface AdapterInterface
     public function moveFile(string $source, string $targetDir, ?string $fileName = null): bool;
 
     public function filePutContents(string $filename, string $data, int $flags = 0, $context = null): int|bool;
+
+    public function tempnam(string $directory, string $prefix): bool|string;
 }

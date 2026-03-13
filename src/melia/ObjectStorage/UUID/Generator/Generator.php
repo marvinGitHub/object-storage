@@ -2,9 +2,9 @@
 
 namespace melia\ObjectStorage\UUID\Generator;
 
+use melia\ObjectStorage\UUID\Cache;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use Throwable;
-use melia\ObjectStorage\UUID\Cache;
 
 class Generator implements GeneratorInterface
 {

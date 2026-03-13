@@ -3,6 +3,10 @@
 namespace melia\ObjectStorage\File;
 
 use FilesystemIterator;
+use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\File\Directory\Registry;
+use melia\ObjectStorage\File\IO\AdapterAwareTrait;
+use melia\ObjectStorage\File\IO\AdapterInterface;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use UnexpectedValueException;
@@ -10,6 +14,8 @@ use UnexpectedValueException;
 class Directory
 {
     private ?string $path;
+    use AdapterAwareTrait;
+
 
     /**
      * Constructor to initialize the object with an optional path.
@@ -78,35 +84,52 @@ class Directory
      * Reserves a temporary directory with a random name in the system's temporary directory.
      *
      * @return bool Returns true if the temporary directory was successfully created or reserved, false otherwise.
+     * @throws IOException
      */
     public function reserveRandomTemporaryDirectory(): bool
     {
-        $path = tempnam(sys_get_temp_dir(), static::class);
+        $adapter = $this->getIOAdapter();
+        $path = $adapter->tempnam(sys_get_temp_dir(), static::class);
 
-        if (file_exists($path)) {
-            unlink($path);
+        if ($adapter->isFile($path)) {
+            $adapter->unlink($path);
         }
 
         $this->path = $path;
-        return $this->createIfNotExists();
+        return static::createIfNotExists($adapter, $path);
     }
 
     /**
-     * Creates a directory at the specified path if it does not already exist.
+     * Ensures that a directory exists at the specified path. If the directory does not exist, it attempts to create it.
      *
+     * @param AdapterInterface $adapter The adapter used to check for and create directories.
+     * @param string|null $path The path of the directory to check or create. Can be null.
      * @return bool Returns true if the directory exists or was successfully created, false otherwise.
+     * @throws IOException If the directory cannot be created.
      */
-    public function createIfNotExists(): bool
+    public static function createIfNotExists(AdapterInterface $adapter, ?string $path): bool
     {
-        if (null === $this->path) {
+        if (null === $path) {
             return false;
         }
 
-        if (false === is_dir($this->path)) {
-            return mkdir($this->path, 0777, true);
+        $registry = Registry::getInstance();
+        if ($registry->isVerified($path)) {
+            return true;
         }
 
-        return true;
+        $exists = $adapter->isDir($path) || (static function () use ($adapter, $path): bool {
+                if (false === ($adapter->mkdir($path) || $adapter->isDir($path))) {
+                    throw new IOException(sprintf('Unable to create directory: %s', $path));
+                }
+                return true;
+            })();
+
+        if ($exists) {
+            $registry->markAsVerified($path);
+        }
+
+        return $exists;
     }
 
     /**
@@ -131,7 +154,7 @@ class Directory
      */
     public function getMaxDirDepth(): int
     {
-        if (!is_dir($this->path)) {
+        if (!$this->getIOAdapter()->isDir($this->path)) {
             return 0;
         }
 

@@ -137,9 +137,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     /** @var array<string>|null */
     protected ?array $registeredClassNamesCache = null;
 
-    /** @var array<string, bool> */
-    protected array $verifiedDirectories = [];
-
     /**
      * Sets the expiration date and time for the specified UUID. If no expiration is provided,
      * the lifetime will be unset or considered indefinite.
@@ -323,23 +320,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * @throws IOException
+     * @param string $directory
+     * @return void
+     * @link Directory::createIfNotExists
      */
     protected function createDirectoryIfNotExist(string $directory): void
     {
-        if (isset($this->verifiedDirectories[$directory])) {
-            return;
-        }
-
-        static $dir;
-
-        ($dir ??= new Directory())->setPath($directory);
-
-        if (false === $dir->createIfNotExists()) {
-            throw new IOException('Unable to create directory: ' . $directory);
-        }
-
-        $this->verifiedDirectories[$directory] = true;
+        Directory::createIfNotExists($this->getIOAdapter(), $directory);
     }
 
     /**

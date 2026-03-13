@@ -21,7 +21,6 @@ use melia\ObjectStorage\Exception\TransactionNotActiveException;
 use melia\ObjectStorage\Exception\TransactionRollbackException;
 use melia\ObjectStorage\File\Writer;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
-use melia\ObjectStorage\Storage\StorageInterface;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\Generator\AwareTrait;
 use melia\ObjectStorage\UUID\Generator\Generator;
@@ -57,16 +56,6 @@ class Transaction
     }
 
     /**
-     * Retrieves the current object storage.
-     *
-     * @return ObjectStorage|null The current instance of object storage, or null if not initialized.
-     */
-    public function getStorage(): ?ObjectStorage
-    {
-        return $this->storage;
-    }
-
-    /**
      * Generates a unique transaction ID.
      *
      * @return string A unique transaction ID composed of a prefix, a unique identifier, and the process ID.
@@ -95,6 +84,16 @@ class Transaction
         $this->createTransactionLog();
 
         return $this;
+    }
+
+    /**
+     * Retrieves the current object storage.
+     *
+     * @return ObjectStorage|null The current instance of object storage, or null if not initialized.
+     */
+    public function getStorage(): ?ObjectStorage
+    {
+        return $this->storage;
     }
 
     /**

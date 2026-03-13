@@ -133,6 +133,18 @@ class FileSystem extends LockAdapterAbstract
     }
 
     /**
+     * Generates the full file path for a lock file associated with a given unique identifier.
+     * The path includes the storage directory, the UUID, and a predefined lock file suffix.
+     *
+     * @param string $uuid A unique identifier used to generate the lock file path.
+     * @return string Returns the full file path for the lock file.
+     */
+    private function getLockFilePath(string $uuid): string
+    {
+        return $this->lockDir . DIRECTORY_SEPARATOR . $uuid . self::FILE_SUFFIX_LOCK;
+    }
+
+    /**
      * Checks if the lock is held by a process other than the current one.
      *
      * @param string|null $uuid The unique identifier for the lock, or null if no identifier is provided.
@@ -155,18 +167,6 @@ class FileSystem extends LockAdapterAbstract
             return false;
         }
         return isset($this->activeLocks[$uuid]);
-    }
-
-    /**
-     * Generates the full file path for a lock file associated with a given unique identifier.
-     * The path includes the storage directory, the UUID, and a predefined lock file suffix.
-     *
-     * @param string $uuid A unique identifier used to generate the lock file path.
-     * @return string Returns the full file path for the lock file.
-     */
-    private function getLockFilePath(string $uuid): string
-    {
-        return $this->lockDir . DIRECTORY_SEPARATOR . $uuid . self::FILE_SUFFIX_LOCK;
     }
 
     /**

@@ -188,6 +188,25 @@ class Metadata implements JsonSerializable
     }
 
     /**
+     * Prepares data for JSON serialization.
+     *
+     * @return array An associative array containing the object's properties to be serialized.
+     */
+    public function jsonSerialize(): array
+    {
+        return [
+            'className' => $this->className ?? '',
+            'timestampCreation' => $this->timestampCreation ?? microtime(true),
+            'version' => $this->version ?? self::VERSION,
+            'checksum' => $this->checksum ?? '',
+            'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
+            'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
+            'uuid' => $this->uuid ?? '',
+            'reservedReferenceName' => $this->getReservedReferenceName(),
+        ];
+    }
+
+    /**
      * Retrieves the reserved reference name.
      *
      * @return string The reserved reference name associated with this instance.
@@ -206,24 +225,5 @@ class Metadata implements JsonSerializable
     public function setReservedReferenceName(string $reservedReferenceName): void
     {
         $this->reservedReferenceName = $reservedReferenceName;
-    }
-
-    /**
-     * Prepares data for JSON serialization.
-     *
-     * @return array An associative array containing the object's properties to be serialized.
-     */
-    public function jsonSerialize(): array
-    {
-        return [
-            'className' => $this->className ?? '',
-            'timestampCreation' => $this->timestampCreation ?? microtime(true),
-            'version' => $this->version ?? self::VERSION,
-            'checksum' => $this->checksum ?? '',
-            'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
-            'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
-            'uuid' => $this->uuid ?? '',
-            'reservedReferenceName' => $this->getReservedReferenceName(),
-        ];
     }
 }

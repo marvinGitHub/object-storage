@@ -210,6 +210,15 @@ class Reflection
     }
 
     /**
+     * @throws ReflectionException
+     */
+    public static function getReflectionClass(string $className): ReflectionClass
+    {
+        static $cache = [];
+        return $cache[$className] ??= new ReflectionClass($className);
+    }
+
+    /**
      * Retrieves and caches the property type of a given property within an object.
      *
      * If the property is declared within the class of the given object, its type is cached
@@ -236,15 +245,6 @@ class Reflection
 
         return $classPropertyTypeCache[$core][$propertyName] ?? ($classPropertyTypeCache[$core][$propertyName]
             = $this->getPropertyType($propertyName));
-    }
-
-    /**
-     * @throws ReflectionException
-     */
-    public static function getReflectionClass(string $className): ReflectionClass
-    {
-        static $cache = [];
-        return $cache[$className] ??= new ReflectionClass($className);
     }
 
     /**

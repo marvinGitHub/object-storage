@@ -44,16 +44,6 @@ class RealAdapter implements AdapterInterface
         return fclose($resource);
     }
 
-    public function unlink(string $filename): bool
-    {
-        return unlink($filename);
-    }
-
-    public function fileExists(string $filename): bool
-    {
-        return file_exists($filename);
-    }
-
     public function feof($resource): bool
     {
         return feof($resource);
@@ -137,8 +127,23 @@ class RealAdapter implements AdapterInterface
         return $result;
     }
 
+    public function fileExists(string $filename): bool
+    {
+        return file_exists($filename);
+    }
+
+    public function unlink(string $filename): bool
+    {
+        return unlink($filename);
+    }
+
     public function filePutContents(string $filename, string $data, int $flags = 0, $context = null): int|bool
     {
         return file_put_contents($filename, $data, $flags, $context);
+    }
+
+    public function tempnam(string $directory, string $prefix): bool|string
+    {
+        return tempnam($directory, $prefix);
     }
 }
