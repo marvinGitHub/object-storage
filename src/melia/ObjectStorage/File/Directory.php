@@ -118,18 +118,12 @@ class Directory
             return true;
         }
 
-        $exists = $adapter->isDir($path) || (static function () use ($adapter, $path): bool {
-                if (false === ($adapter->mkdir($path) || $adapter->isDir($path))) {
-                    throw new IOException(sprintf('Unable to create directory: %s', $path));
-                }
-                return true;
-            })();
-
-        if ($exists) {
+        if ($adapter->isDir($path) || $adapter->mkdir($path)) {
             $registry->markAsVerified($path);
+            return true;
         }
 
-        return $exists;
+        throw new IOException(sprintf('Unable to create directory: %s', $path));
     }
 
     /**
