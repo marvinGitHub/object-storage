@@ -48,7 +48,7 @@ class Reflection
      */
     public function set(string $propertyName, mixed $value): void
     {
-        $property = $this->getProperty($propertyName);
+        $property = static::getProperty($this->target, $propertyName);
 
         if (null === $property) {
             $this->target->{$propertyName} = $value;
@@ -65,10 +65,10 @@ class Reflection
      *
      * @return ReflectionProperty|null The ReflectionProperty object representing the specified property of the target object.
      */
-    public function getProperty(string $propertyName): ?ReflectionProperty
+    public static function getProperty(object $object, string $propertyName): ?ReflectionProperty
     {
-        $reflection = $this->getReflectionObject();
-        return $reflection->hasProperty($propertyName) ? $reflection->getProperty($propertyName) : null;
+        $reflectionObject = static::getReflectionObject($object);
+        return $reflectionObject->hasProperty($propertyName) ? $reflectionObject->getProperty($propertyName) : null;
     }
 
     /**
@@ -76,11 +76,11 @@ class Reflection
      *
      * @return ReflectionObject The ReflectionObject instance associated with the target object.
      */
-    public function getReflectionObject(): ReflectionObject
+    public static function getReflectionObject(object $object): ReflectionObject
     {
         static $cache;
         $cache ??= new WeakMap();
-        return $cache[$this->target] ??= new ReflectionObject($this->target);
+        return $cache[$object] ??= new ReflectionObject($object);
     }
 
     /**
@@ -91,7 +91,11 @@ class Reflection
      */
     public function get(string $propertyName): mixed
     {
-        $property = $this->getProperty($propertyName);
+        if (isset($this->target->{$propertyName})) {
+            return $this->target->{$propertyName};
+        }
+
+        $property = static::getProperty($this->target, $propertyName);
         if (null === $property) {
             return null;
         }
@@ -114,7 +118,7 @@ class Reflection
             return true;
         }
 
-        $property = $this->getProperty($propertyName);
+        $property = static::getProperty($this->target, $propertyName);
         if (null === $property) {
             return false;
         }
@@ -178,7 +182,7 @@ class Reflection
             return true;
         }
 
-        $property = $this->getProperty($propertyName);
+        $property = static::getProperty($this->target, $propertyName);
         if (null === $property) {
             return false;
         }
@@ -206,7 +210,7 @@ class Reflection
             return $properties;
         })();
 
-        return array_keys($cache[$this->target::class] + get_object_vars($this->target));
+        return array_keys($cache[$classname] + get_object_vars($this->target));
     }
 
     /**
@@ -219,42 +223,14 @@ class Reflection
     }
 
     /**
-     * Retrieves and caches the property type of a given property within an object.
+     * Determines and retrieves the type of specified property from the given object.
      *
-     * If the property is declared within the class of the given object, its type is cached
-     * for later calls to improve performance. If the property is dynamic, its type
-     * is resolved without caching.
-     *
-     * @param object $object The object containing the property.
-     * @param string $propertyName The name of the property whose type is being retrieved.
-     * @return ReflectionType|null The type of the property, or null if the type could not be determined.
-     * @throws ReflectionException
-     */
-    public function getCachedPropertyType(object $object, string $propertyName): ?ReflectionType
-    {
-        static $classPropertyTypeCache;
-        $classPropertyTypeCache ??= new WeakMap();
-
-        $core = static::getReflectionClass($object::class);
-
-        if (!$core->hasProperty($propertyName)) {
-            return $this->getPropertyType($propertyName);
-        }
-
-        $classPropertyTypeCache[$core] ??= [];
-
-        return $classPropertyTypeCache[$core][$propertyName] ?? ($classPropertyTypeCache[$core][$propertyName]
-            = $this->getPropertyType($propertyName));
-    }
-
-    /**
-     * Retrieves the type of the specified property of the target object using reflection.
-     *
+     * @param object $object The object whose property type is to be determined.
      * @param string $propertyName The name of the property whose type is to be retrieved.
-     * @return ReflectionType|null The type of the property as a ReflectionType object, or null if the property does not exist or does not have a type.
+     * @return ReflectionType|null The ReflectionType of the specified property, or null if the property does not exist or its type cannot be resolved.
      */
-    public function getPropertyType(string $propertyName): ?ReflectionType
+    public static function getPropertyType(object $object, string $propertyName): ?ReflectionType
     {
-        return $this->getProperty($propertyName)?->getType();
+        return static::getProperty($object, $propertyName)?->getType();
     }
 }

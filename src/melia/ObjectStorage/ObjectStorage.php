@@ -1103,7 +1103,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {
-            $type = $reflection->getCachedPropertyType($object, $propertyName);
+            $type = Reflection::getPropertyType($object, $propertyName);
 
             if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
                 $refUUID = $value[$metadata->getReservedReferenceName()];

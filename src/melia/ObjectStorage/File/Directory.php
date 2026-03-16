@@ -161,15 +161,19 @@ class Directory
         }
     }
 
-    /**
-     * Calculates the maximum depth of directories within the specified path.
-     *
-     * @return int The maximum directory depth. Returns 0 if the path is not a valid directory.
-     */
-    public function getMaxDirDepth(): int
+	/**
+	 * Calculates and returns the maximum directory depth of the specified path.
+	 *
+	 * This method iterates through all directories within the given path
+	 * to determine the deepest level of nested directories.
+	 * If the path is not a valid directory, it will return null.
+	 *
+	 * @return int|null The maximum depth of the directories, or null if the path is not a valid directory.
+	 */
+	public function getMaxDirDepth(): ?int
     {
         if (!$this->getIOAdapter()->isDir($this->path)) {
-            return 0;
+            return null;
         }
 
         $iterator = new RecursiveIteratorIterator(

@@ -174,4 +174,22 @@ class ReflectionTest extends TestCase
             $names
         );
     }
+
+    public function testGetPropertyTypeReturnsDeclaredTypeAndNullForDynamicProperties(): void
+    {
+        $obj = new TestObject();
+        $obj->dynamicProp = 'value';
+
+        $declaredType = Reflection::getPropertyType($obj, 'somePublicAttributeWhichDefaultsToNull');
+        $dynamicType = Reflection::getPropertyType($obj, 'dynamicProp');
+        $missingType = Reflection::getPropertyType($obj, 'doesNotExist');
+
+        $this->assertInstanceOf(\ReflectionNamedType::class, $declaredType);
+        $this->assertSame('string', $declaredType->getName());
+        $this->assertTrue($declaredType->allowsNull());
+
+        $this->assertNull($dynamicType);
+        $this->assertNull($missingType);
+    }
+
 }
