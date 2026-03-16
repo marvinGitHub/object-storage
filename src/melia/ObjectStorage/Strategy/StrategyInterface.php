@@ -30,6 +30,8 @@ interface StrategyInterface extends AwareInterface
 
     public function getChildWritePolicy(): int;
 
+    public function checksumValidationEnabled(): bool;
+
     /**
      * Decide whether a referenced child object should be written when encountered during graph building.
      *

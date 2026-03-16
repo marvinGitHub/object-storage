@@ -719,6 +719,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         if (null === $properties) {
             $properties = [];
             foreach ($reflection->getPropertyNames() as $propertyName) {
+                if ($reflection->isReadonly($propertyName)) {
+                    continue;
+                }
                 if (false === $reflection->initialized($propertyName)) {
                     continue;
                 }
@@ -1023,7 +1026,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         try {
-            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), static function (string $data) use ($metadata) {
+            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), function (string $data) use ($metadata) {
+                if (false === $this->getStrategy()->checksumValidationEnabled()) {
+                    return;
+                }
+
                 $checksum = static::generateChecksum($data, $metadata->getChecksumAlgorithm());
 
                 if ($metadata->getChecksum() !== $checksum) {
@@ -1103,6 +1110,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {
+            /* dont process readonly properties */
+            $property = Reflection::getProperty($object, $propertyName);
+            if ($property->isReadOnly()) {
+                continue;
+            }
+
             $type = Reflection::getPropertyType($object, $propertyName);
 
             if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {

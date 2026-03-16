@@ -171,6 +171,17 @@ class Reflection
     }
 
     /**
+     * Checks if the specified property is read-only.
+     *
+     * @param string $propertyName The name of the property to be checked.
+     * @return bool True if the property is read-only, otherwise false.
+     */
+    public function isReadonly(string $propertyName): bool
+    {
+        return static::getProperty($this->target, $propertyName)?->isReadOnly() ?? false;
+    }
+
+    /**
      * Checks if a specified property exists and is initialized in the given object.
      *
      * @param string $propertyName The name of the property to check.

@@ -871,17 +871,43 @@ class ObjectStorageTest extends TestCase
         $this->assertEquals('bar', $loaded->child->foo);
     }
 
-    public function testStaticPropertiesArePersisted()
+    public function testReadonlyAttributesAreNotPersisted(): void
     {
         $object = new TestObject();
-        $this->assertNull($object::$somePublicStaticAttributeWhichDefaultsToNull);
-
-        $object::$somePublicStaticAttributeWhichDefaultsToNull = 'foo';
+        $this->assertSame(
+            'test',
+            $object->somePublicReadonlyAttribute,
+            'Sanity check failed: constructor should initialize readonly property.'
+        );
 
         $uuid = $this->storage->store($object);
         $this->storage->clearCache();
 
+        $path = $this->storage->getFilePathData($uuid);
+        $json = file_get_contents($path);
+
+        $this->assertNotFalse($json, 'Stored object data should be readable.');
+
+        $data = json_decode($json, true);
+        $this->assertIsArray($data, 'Stored object data should be valid JSON.');
+
+        $this->assertArrayNotHasKey(
+            'somePublicReadonlyAttribute',
+            $data,
+            'Readonly properties must not be persisted.'
+        );
+
+        // Simulate tampered storage data: even if a readonly value is injected into persisted payload,
+        // loading must keep the constructor-initialized value.
+        $data['somePublicReadonlyAttribute'] = 'modified';
+        $written = file_put_contents($path, json_encode($data));
+
+        $this->assertNotFalse($written, 'Tampered object data should be writable for the test setup.');
+
+        $this->storage->getStrategy()->disableChecksumValidation();
         $loaded = $this->storage->load($uuid);
-        $this->assertEquals('foo', $loaded::$somePublicStaticAttributeWhichDefaultsToNull);
+
+        $reflection = new Reflection($loaded);
+        $this->assertFalse($reflection->initialized('somePublicReadonlyAttribute'), 'Readonly property should not be initialized.');
     }
 }

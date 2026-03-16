@@ -65,7 +65,7 @@
     ]
   },
   "require": {
-    "php": ">=8.0",
+    "php": ">=8.5",
     "ext-json": "*",
     "symfony/console": "^6.0",
     "psr/simple-cache": "^3.0",

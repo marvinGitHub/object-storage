@@ -20,6 +20,8 @@ class Standard implements StrategyInterface
     private int $shardDepth = self::DEFAULT_SHARD_DEPTH;
     private int $childWritePolicy = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
 
+    private bool $checksumValidation = true;
+
     public function enableLifetimeInheritance(): void
     {
         $this->inheritLifetime = true;
@@ -153,5 +155,20 @@ class Standard implements StrategyInterface
             return false;
         }
         return true;
+    }
+
+    public function checksumValidationEnabled(): bool
+    {
+        return $this->checksumValidation;
+    }
+
+    public function enableChecksumValidation(): void
+    {
+        $this->checksumValidation = true;
+    }
+
+    public function disableChecksumValidation(): void
+    {
+        $this->checksumValidation = false;
     }
 }
