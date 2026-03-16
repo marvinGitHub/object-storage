@@ -829,7 +829,7 @@ class ObjectStorageTest extends TestCase
 
         try {
             $storage->store($root);
-        }catch (Exception $e) {
+        } catch (Exception $e) {
             $this->assertInstanceOf(MaxDepthExceededException::class, $e->getPrevious());
         }
 
@@ -869,5 +869,19 @@ class ObjectStorageTest extends TestCase
         $this->assertInstanceOf(stdClass::class, $loaded->child);
         $this->assertNotInstanceOf(LazyLoadReference::class, $loaded->child);
         $this->assertEquals('bar', $loaded->child->foo);
+    }
+
+    public function testStaticPropertiesArePersisted()
+    {
+        $object = new TestObject();
+        $this->assertNull($object::$somePublicStaticAttributeWhichDefaultsToNull);
+
+        $object::$somePublicStaticAttributeWhichDefaultsToNull = 'foo';
+
+        $uuid = $this->storage->store($object);
+        $this->storage->clearCache();
+
+        $loaded = $this->storage->load($uuid);
+        $this->assertEquals('foo', $loaded::$somePublicStaticAttributeWhichDefaultsToNull);
     }
 }
