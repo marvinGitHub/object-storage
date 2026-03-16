@@ -9,6 +9,7 @@ use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use Throwable;
 use UnexpectedValueException;
 
 class Directory
@@ -77,7 +78,13 @@ class Directory
 
         $exitCode = null;
         exec(command: sprintf('rm -rf %s', escapeshellarg($this->path)), result_code: $exitCode);
-        return $exitCode === 0;
+
+        if ($exitCode === 0) {
+            Registry::getInstance()->markAsNotVerified($this->path);
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -89,14 +96,27 @@ class Directory
     public function reserveRandomTemporaryDirectory(): bool
     {
         $adapter = $this->getIOAdapter();
-        $path = $adapter->tempnam(sys_get_temp_dir(), static::class);
 
-        if ($adapter->isFile($path)) {
-            $adapter->unlink($path);
+        $retries = 10;
+        do {
+            try {
+                $path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . uniqid(static::class, true);
+
+                /* don't use self::createIfNotExists since we want to ensure that a new directory is created */
+                $success = $adapter->mkdir($path);
+            } catch (Throwable $e) {
+                $success = false;
+            }
+            $retries--;
+        } while ($retries > 0 && false === $success);
+
+        if (false === $success) {
+            throw new IOException('Unable to create temporary directory');
         }
 
         $this->path = $path;
-        return static::createIfNotExists($adapter, $path);
+        Registry::getInstance()->markAsVerified($path);
+        return true;
     }
 
     /**

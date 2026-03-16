@@ -31,4 +31,9 @@ class Registry
     {
         $this->verifiedDirectories[$directory] = true;
     }
+
+    public function markAsNotVerified(string $directory): void
+    {
+        $this->verifiedDirectories[$directory] = false;
+    }
 }
