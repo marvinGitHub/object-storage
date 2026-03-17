@@ -294,20 +294,6 @@ This is useful because, depending on your use case, you may want child objects t
   Static properties are persisted based on a custom callback decision.
   Use this when you need fine-grained control, for example to allow only specific classes or property names.
 
-### How to configure
-
-Set the policy on the strategy you use for persistence (e.g., the “Standard” strategy). Invalid values are rejected and will throw an `InvalidChildWritePolicyException`, so you’ll know immediately if configuration is wrong.
-
-### Practical guidance
-
-- Pick **ALWAYS** for “save the whole graph” behavior (typical CRUD-style aggregates).
-- Pick **IF_NOT_EXIST** to prevent accidental overwrites of shared/reused child objects.
-- Pick **NEVER** when you treat children as separately managed entities and want to avoid hidden writes.
-- Pick **CALLBACK** when you need more control over when child objects are written.
-
-If you’re unsure, start with **ALWAYS**, then tighten to **IF_NOT_EXIST** or **NEVER** once your domain boundaries and update flows are clear.
-
-
 ## Example Locking
 
 ```php
