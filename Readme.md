@@ -262,23 +262,37 @@ This is useful because, depending on your use case, you may want child objects t
 
 ### Available policies
 
-The standard strategy supports three modes:
+#### Child write policy
 
-- **`POLICY_CHILD_WRITE_ALWAYS`**  
+- **`ChildWrite::ALWAYS`**  
   Child objects are written every time you store the parent.  
   Use this when the parent is the “source of truth” and you want the entire graph to stay consistent on each save.
 
-- **`POLICY_CHILD_WRITE_IF_NOT_EXIST`**  
+- **`ChildWrite::IF_NOT_EXIST`**  
   Child objects are written **only if they don’t exist yet** in storage.  
   Use this when children are meant to be created once (initial persistence) and then updated independently later (or treated as append-only).
 
-- **`POLICY_CHILD_WRITE_NEVER`**  
+- **`ChildWrite::NEVER`**  
   Child objects are **never** written as part of storing the parent.  
   Use this when you want strict control: children must be stored explicitly, and `store($parent)` only updates the parent record (references still point to UUIDs).
 
-- **`POLICY_CHILD_WRITE_CALLBACK`**  
+- **`ChildWrite::CALLBACK`**  
   Child objects are written based on a custom callback function.  
   Use this when you need fine-grained control over when child objects are written, such as when implementing complex business logic or handling specific edge cases.
+
+#### Static property policy
+
+- **`StaticProperty::NEVER`**
+  Static properties are never persisted.
+  This is the safest default and avoids accidentally storing global/shared runtime state.
+
+- **`StaticProperty::ALWAYS`**
+  Static properties are always considered for persistence.
+  Use this only when static state is intentionally part of your stored model.
+
+- **`StaticProperty::CALLBACK`**
+  Static properties are persisted based on a custom callback decision.
+  Use this when you need fine-grained control, for example to allow only specific classes or property names.
 
 ### How to configure
 

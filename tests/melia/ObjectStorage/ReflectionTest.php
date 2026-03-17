@@ -154,7 +154,9 @@ class ReflectionTest extends TestCase
                 'somePrivateAttribute',
                 'someNullablePrivateAttribute',
                 'someAttributeWithoutDefaultValue',
-                'dynamicProp'
+                'dynamicProp',
+                'somePublicReadonlyAttribute',
+                'somePublicStaticAttributeWhichDefaultsToNull'
             ],
             $names
         );

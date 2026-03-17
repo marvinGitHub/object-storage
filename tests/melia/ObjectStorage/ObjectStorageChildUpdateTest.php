@@ -3,6 +3,7 @@
 namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\LazyLoadReference;
+use melia\ObjectStorage\Strategy\Policy\ChildWrite;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 use stdClass;
@@ -474,7 +475,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->writerSpy->clearMethodCalls();
 
         // Store parent - loaded lazy references should be processed
-        $this->storage->getStrategy()->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_ALWAYS);
+        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::ALWAYS);
         $this->storage->store($loadedParent, $parentUuid);
 
         $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
@@ -502,7 +503,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $parent->nonLoadedChild = $child2;
         $parent->modifiedChild = $child3;
 
-        $this->storage->getStrategy()->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_ALWAYS);
+        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::ALWAYS);
 
         // Store all objects
         $parentUuid = $this->storage->store($parent);

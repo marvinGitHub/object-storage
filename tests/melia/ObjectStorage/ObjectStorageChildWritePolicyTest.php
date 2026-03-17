@@ -2,7 +2,8 @@
 
 namespace Tests\melia\ObjectStorage;
 
-use melia\ObjectStorage\Exception\InvalidChildWritePolicyException;
+use melia\ObjectStorage\Exception\InvalidPolicyException;
+use melia\ObjectStorage\Strategy\Policy\ChildWrite;
 use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\Context\GraphBuilderContext;
@@ -11,14 +12,14 @@ class ObjectStorageChildWritePolicyTest extends TestCase
 {
     public function testSetChildWritePolicyRejectsInvalidValue(): void
     {
-        $this->expectException(InvalidChildWritePolicyException::class);
-        $this->storage->getStrategy()->setChildWritePolicy(999999);
+        $this->expectException(InvalidPolicyException::class);
+        $this->storage->getStrategy()->setPolicyChildWrite(999999);
     }
 
     public function testPolicyNeverDoesNotWriteChildWhenStoringParent(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_NEVER);
+        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::NEVER);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -33,7 +34,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
         $child->value = 11;
         $this->storage->store($parent, $parentUuid);
 
-        // Assert: parent store must not cascade-write the child under POLICY_CHILD_WRITE_NEVER
+        // Assert: parent store must not cascade-write the child under ChildWrite::NEVER
         $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
         $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
 
@@ -44,7 +45,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
     public function testPolicyIfNotExistWritesChildOnlyWhenChildIsMissing(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_IF_NOT_EXIST);
+        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::IF_NOT_EXIST);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -71,7 +72,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
     public function testPolicyAlwaysCascadesAndWritesModifiedChildWhenStoringParent(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_ALWAYS);
+        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::ALWAYS);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -112,7 +113,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
                 return false;
             }
         };
-        $strategy->setChildWritePolicy(StrategyInterface::POLICY_CHILD_WRITE_CALLBACK);
+        $strategy->setPolicyChildWrite(ChildWrite::CALLBACK);
         $this->storage->setStrategy($strategy);
 
         $child = new ChildObject('Child', 10);

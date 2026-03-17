@@ -5,8 +5,10 @@ namespace melia\ObjectStorage\Strategy;
 use JsonException;
 use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
-use melia\ObjectStorage\Exception\InvalidChildWritePolicyException;
+use melia\ObjectStorage\Exception\InvalidPolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
+use melia\ObjectStorage\Strategy\Policy\ChildWrite;
+use melia\ObjectStorage\Strategy\Policy\StaticProperty;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
 
@@ -18,7 +20,8 @@ class Standard implements StrategyInterface
     private bool $inheritLifetime = false;
     private int $maxDepth = self::DEFAULT_MAX_DEPTH;
     private int $shardDepth = self::DEFAULT_SHARD_DEPTH;
-    private int $childWritePolicy = self::POLICY_CHILD_WRITE_IF_NOT_EXIST;
+    private int $policyChildWrite = ChildWrite::IF_NOT_EXIST;
+    private int $policyStaticProperty = StaticProperty::NEVER;
 
     private bool $checksumValidation = true;
 
@@ -109,33 +112,33 @@ class Standard implements StrategyInterface
      * Retrieves the current child write policy.
      *
      * @return int The current child write policy. Possible values include:
-     *             - POLICY_CHILD_WRITE_ALWAYS
-     *             - POLICY_CHILD_WRITE_IF_NOT_EXIST
-     *             - POLICY_CHILD_WRITE_NEVER
+     *             - ChildWrite::ALWAYS
+     *             - ChildWrite::IF_NOT_EXIST
+     *             - ChildWrite::NEVER
      */
-    public function getChildWritePolicy(): int
+    public function getPolicyChildWrite(): int
     {
-        return $this->childWritePolicy;
+        return $this->policyChildWrite;
     }
 
     /**
      * Sets the child write policy for the current object.
      *
-     * @param int $childWritePolicy The child write policy to set. Valid values are:
-     *                              - POLICY_CHILD_WRITE_ALWAYS
-     *                              - POLICY_CHILD_WRITE_IF_NOT_EXIST
-     *                              - POLICY_CHILD_WRITE_NEVER
+     * @param int $policyChildWrite The child write policy to set. Valid values are:
+     *                              - ChildWrite::ALWAYS
+     *                              - ChildWrite::IF_NOT_EXIST
+     *                              - ChildWrite::NEVER
      *                              If an invalid value is provided, an InvalidChildWritePolicyException will be thrown.
      *
      * @return void
-     * @throws InvalidChildWritePolicyException
+     * @throws InvalidPolicyException
      */
-    public function setChildWritePolicy(int $childWritePolicy): void
+    public function setPolicyChildWrite(int $policyChildWrite): void
     {
-        if (!in_array($childWritePolicy, [self::POLICY_CHILD_WRITE_ALWAYS, self::POLICY_CHILD_WRITE_IF_NOT_EXIST, self::POLICY_CHILD_WRITE_NEVER, self::POLICY_CHILD_WRITE_CALLBACK], true)) {
-            throw new InvalidChildWritePolicyException('Invalid child write policy.');
+        if (!in_array($policyChildWrite, [ChildWrite::ALWAYS, ChildWrite::IF_NOT_EXIST, ChildWrite::NEVER, ChildWrite::CALLBACK], true)) {
+            throw new InvalidPolicyException('Invalid child write policy.');
         }
-        $this->childWritePolicy = $childWritePolicy;
+        $this->policyChildWrite = $policyChildWrite;
     }
 
     /**
@@ -170,5 +173,35 @@ class Standard implements StrategyInterface
     public function disableChecksumValidation(): void
     {
         $this->checksumValidation = false;
+    }
+
+    public function getPolicyStaticProperty(): int
+    {
+        return $this->policyStaticProperty;
+    }
+
+    /**
+     * Sets the child write policy for the current object.
+     *
+     * @param int $policyStaticProperty The child write policy to set. Valid values are:
+     *                              - ChildWrite::ALWAYS
+     *                              - ChildWrite::IF_NOT_EXIST
+     *                              - ChildWrite::NEVER
+     *                              If an invalid value is provided, an InvalidChildWritePolicyException will be thrown.
+     *
+     * @return void
+     * @throws InvalidPolicyException
+     */
+    public function setPolicyStaticProperty(int $policyStaticProperty): void
+    {
+        if (!in_array($policyStaticProperty, [StaticProperty::NEVER, StaticProperty::CALLBACK, StaticProperty::ALWAYS], true)) {
+            throw new InvalidPolicyException('Invalid static property policy.');
+        }
+        $this->policyStaticProperty = $policyStaticProperty;
+    }
+
+    public function shouldPersistStaticProperty(string $className, string $propertyName, mixed $value): bool
+    {
+        return false;
     }
 }

@@ -70,6 +70,8 @@ use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
+use melia\ObjectStorage\Strategy\Policy\ChildWrite;
+use melia\ObjectStorage\Strategy\Policy\StaticProperty;
 use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
@@ -821,16 +823,16 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $exists = $this->exists($refUuid);
                 $writeChild = true;
 
-                switch ($strategy?->getChildWritePolicy() ?? StrategyInterface::DEFAULT_POLICY_CHILD_WRITE) {
-                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_IF_NOT_EXIST:
+                switch ($strategy?->getPolicyChildWrite() ?? StrategyInterface::DEFAULT_POLICY_CHILD_WRITE) {
+                    case ChildWrite::IF_NOT_EXIST:
                         if ($exists) {
                             $writeChild = false;
                         }
                         break;
-                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_NEVER:
+                    case ChildWrite::NEVER:
                         $writeChild = false;
                         break;
-                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_CALLBACK:
+                    case ChildWrite::CALLBACK:
                         try {
                             $writeChild = $strategy?->shouldWriteChild($context, $value, $refUuid, $exists, $path) ?? false;
                         } catch (Throwable $e) {
@@ -839,7 +841,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                         }
                         break;
                     default:
-                    case Strategy\StrategyInterface::POLICY_CHILD_WRITE_ALWAYS:
+                    case ChildWrite::ALWAYS:
                         // ignore
                         break;
                 }
@@ -1027,7 +1029,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         try {
             $data = $this->loadFromJsonFile($this->getFilePathData($uuid), function (string $data) use ($metadata) {
-                if (false === $this->getStrategy()->checksumValidationEnabled()) {
+                if (false === $this->getStrategy()?->checksumValidationEnabled()) {
                     return;
                 }
 
@@ -1106,13 +1108,26 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected function processLoadedData(object $object, array $data, Metadata $metadata): object
     {
         $className = $metadata->getClassName();
-
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {
             /* dont process readonly properties */
             if ($reflection->isReadonly($propertyName)) {
                 continue;
+            }
+
+            /* process static properties */
+            if ($reflection->isStatic($propertyName)) {
+                $strategy = $this->getStrategy();
+                switch ($strategy?->getPolicyStaticProperty()) {
+                    case StaticProperty::NEVER:
+                        continue 2;
+                    case StaticProperty::CALLBACK:
+                        if (true !== $strategy->shouldPersistStaticProperty($className, $propertyName, $value)) {
+                            continue 2;
+                        }
+                        break;
+                }
             }
 
             $type = Reflection::getPropertyType($object, $propertyName);

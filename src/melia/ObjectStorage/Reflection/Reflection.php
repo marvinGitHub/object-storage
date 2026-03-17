@@ -182,6 +182,17 @@ class Reflection
     }
 
     /**
+     * Checks whether a specified property is static.
+     *
+     * @param string $propertyName The name of the property to be checked.
+     * @return bool True if the property is static, false otherwise.
+     */
+    public function isStatic(string $propertyName) : bool
+    {
+        return static::getProperty($this->target, $propertyName)?->isStatic() ?? false;
+    }
+
+    /**
      * Checks if a specified property exists and is initialized in the given object.
      *
      * @param string $propertyName The name of the property to check.
