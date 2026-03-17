@@ -1112,7 +1112,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         foreach ($data as $propertyName => $value) {
             /* dont process readonly properties */
             $property = Reflection::getProperty($object, $propertyName);
-            if ($property->isReadOnly()) {
+            if ($property?->isReadOnly()) {
                 continue;
             }
 
