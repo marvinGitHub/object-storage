@@ -1122,13 +1122,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 continue;
             }
 
+            $finalValue = $value;
             $type = Reflection::getPropertyType($object, $propertyName);
 
             if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
                 $refUUID = $value[$metadata->getReservedReferenceName()];
                 if (false === Validator::validate($refUUID)) {
                     /* reference UUID is not valid, so we just set the property to the value */
-                    $reflection->set($propertyName, [$metadata->getReservedReferenceName() => $refUUID]);
+                    $finalValue = [$metadata->getReservedReferenceName() => $refUUID];
                 } else {
                     $reference = new LazyLoadReference($this, $refUUID, $object, [$propertyName]);
 
@@ -1136,29 +1137,33 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                         $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, static fn() => new LazyTypeNotSupportedContext($className, $propertyName));
                         $reference = $reference->getObject();
                     }
-                    $reflection->set($propertyName, $reference);
+
+                    $finalValue = $reference;
                 }
             } else if (is_array($value)) {
-                $reflection->set($propertyName, $this->processLoadedArray($metadata, $object, $value, [$propertyName]));
-            } else {
+                $finalValue = $this->processLoadedArray($metadata, $object, $value, [$propertyName]);
+            } else if ($type instanceof ReflectionNamedType) {
+
+                // TODO add hydration method to strategy and move this logic to standard strategy
+
+
                 /* type conversion of non-union types */
-                if ($type instanceof ReflectionNamedType) {
-                    $expectedType = $type->getName();
-                    $givenType = gettype($value);
+                $expectedType = $type->getName();
+                $givenType = gettype($value);
 
-                    static $scalarMap = ['integer' => true, 'double' => true, 'boolean' => true, 'string' => true];
+                static $scalarMap = ['integer' => true, 'double' => true, 'boolean' => true, 'string' => true];
 
-                    if ($givenType !== $expectedType && isset($scalarMap[$givenType])) {
-                        $this->getEventDispatcher()?->dispatch(Events::BEFORE_TYPE_CONVERSION,
-                            static fn() => new TypeConversionContext($object, $propertyName, $value, $givenType, $expectedType));
+                if ($givenType !== $expectedType && isset($scalarMap[$givenType])) {
+                    $this->getEventDispatcher()?->dispatch(Events::BEFORE_TYPE_CONVERSION,
+                        static fn() => new TypeConversionContext($object, $propertyName, $value, $givenType, $expectedType));
 
-                        if (false === settype($value, $expectedType)) {
-                            throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
-                        }
+                    if (false === settype($finalValue, $expectedType)) {
+                        throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
                     }
                 }
-                $reflection->set($propertyName, $value);
             }
+
+            $reflection->set($propertyName, $finalValue);
         }
 
         return $object;
