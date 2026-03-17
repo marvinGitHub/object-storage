@@ -3,16 +3,19 @@
 namespace melia\ObjectStorage\Strategy;
 
 use melia\ObjectStorage\Context\GraphBuilderContext;
-use melia\ObjectStorage\Strategy\Policy\ChildWrite;
-use melia\ObjectStorage\Strategy\Policy\StaticProperty;
+use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
+use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
 use melia\ObjectStorage\UUID\Generator\AwareInterface;
+use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
 
 interface StrategyInterface extends AwareInterface
 {
     public const int DEFAULT_MAX_DEPTH = 512;
     public const int DEFAULT_SHARD_DEPTH = 2;
-    public const int DEFAULT_POLICY_CHILD_WRITE = ChildWrite::IF_NOT_EXIST;
-    public const int DEFAULT_POLICY_STATIC_PROPERTY = StaticProperty::NEVER;
+    public const int DEFAULT_POLICY_CHILD_PERSISTENCE = ChildPersistence::IF_NOT_EXIST;
+    public const int DEFAULT_POLICY_PROPERTY_PERSISTENCE = PropertyPersistence::ALWAYS;
+    public const int DEFAULT_POLICY_PROPERTY_HYDRATION = PropertyHydration::ALWAYS;
 
     public function inheritLifetime(?GraphBuilderContext $context = null): bool;
 
@@ -26,24 +29,26 @@ interface StrategyInterface extends AwareInterface
 
     public function getShardDepth(): int;
 
-    public function getPolicyChildWrite(): int;
+    public function getPolicyChildPersistence(): int;
 
     public function checksumValidationEnabled(): bool;
 
-    public function getPolicyStaticProperty() : int;
+    public function getPolicyPropertyPersistence() : int;
+
+    public function getPolicyPropertyHydration(): int;
 
     /**
-     * Decide whether a referenced child object should be written when encountered during graph building.
+     * Determines whether a child node should be persisted in the graph-building process.
      *
-     * Only used when getChildWritePolicy() === ChildWritePolicy_CALLBACK.
+     * @param GraphBuilderContext $context The context of the graph builder, containing relevant information for processing.
+     * @param object $child The child object that is being assessed for persistence.
+     * @param string $childUuid The unique identifier of the child.
+     * @param bool $childExists Indicates whether the child already exists in the current graph.
+     * @param array $path The path representing the hierarchy or location of the child in the graph.
      *
-     * @param GraphBuilderContext $context Current graph builder context (parent + metadata + level)
-     * @param object $child The referenced child object (already resolved from LazyLoadReference if applicable)
-     * @param string $childUuid UUID assigned to the child (existing or newly generated)
-     * @param bool $childExists Whether the child already exists in storage
-     * @param array $path Path within the object graph where the child reference was found
+     * @return bool Returns true if the child should be persisted, otherwise false.
      */
-    public function shouldWriteChild(
+    public function shouldPersistChild(
         GraphBuilderContext $context,
         object              $child,
         string              $childUuid,
@@ -52,19 +57,31 @@ interface StrategyInterface extends AwareInterface
     ): bool;
 
     /**
-     * Determines whether a static property of a class should be persisted.
+     * Determines whether a property should be persisted based on its reflection, name, and value.
      *
-     * This method evaluates if the specified static property and its value
-     * should be included in the persistence process.
+     * @param Reflection $reflection The reflection object providing metadata about the containing class or object.
+     * @param string $propertyName The name of the property being assessed for persistence.
+     * @param mixed $value The value of the property being evaluated.
      *
-     * @param string $className The fully qualified name of the class containing the static property.
-     * @param string $propertyName The name of the static property being evaluated.
-     * @param mixed $value The current value of the static property.
-     *
-     * @return bool True if the static property should be persisted, false otherwise.
+     * @return bool Returns true if the property should be persisted, otherwise false.
      */
-    public function shouldPersistStaticProperty(
-        string $className,
+    public function shouldPersistProperty(
+        Reflection $reflection,
+        string $propertyName,
+        mixed $value
+    ): bool;
+
+    /**
+     * Determines whether a property should be hydrated based on the given reflection, property name, and value.
+     *
+     * @param Reflection $reflection The reflection providing metadata about the class or object.
+     * @param string $propertyName The name of the property being assessed for hydration.
+     * @param mixed $value The value associated with the property to determine if hydration is necessary.
+     *
+     * @return bool Returns true if the property should be hydrated, otherwise false.
+     */
+    public function shouldHydrateProperty(
+        Reflection $reflection,
         string $propertyName,
         mixed $value
     ): bool;

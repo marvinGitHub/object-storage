@@ -7,8 +7,10 @@ use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Exception\InvalidPolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
-use melia\ObjectStorage\Strategy\Policy\ChildWrite;
-use melia\ObjectStorage\Strategy\Policy\StaticProperty;
+use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
+use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
+use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
 
@@ -20,8 +22,10 @@ class Standard implements StrategyInterface
     private bool $inheritLifetime = false;
     private int $maxDepth = self::DEFAULT_MAX_DEPTH;
     private int $shardDepth = self::DEFAULT_SHARD_DEPTH;
-    private int $policyChildWrite = ChildWrite::IF_NOT_EXIST;
-    private int $policyStaticProperty = StaticProperty::NEVER;
+    private int $policyChildPersistence = StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE;
+    private int $policyPropertyPersistence = StrategyInterface::DEFAULT_POLICY_PROPERTY_PERSISTENCE;
+
+    private int $policyPropertyHydration = StrategyInterface::DEFAULT_POLICY_PROPERTY_HYDRATION;
 
     private bool $checksumValidation = true;
 
@@ -112,47 +116,42 @@ class Standard implements StrategyInterface
      * Retrieves the current child write policy.
      *
      * @return int The current child write policy. Possible values include:
-     *             - ChildWrite::ALWAYS
-     *             - ChildWrite::IF_NOT_EXIST
-     *             - ChildWrite::NEVER
+     *             - ChildPersistence::ALWAYS
+     *             - ChildPersistence::IF_NOT_EXIST
+     *             - ChildPersistence::NEVER
      */
-    public function getPolicyChildWrite(): int
+    public function getPolicyChildPersistence(): int
     {
-        return $this->policyChildWrite;
+        return $this->policyChildPersistence;
     }
 
     /**
-     * Sets the child write policy for the current object.
+     * Sets the persistence policy for child objects.
      *
-     * @param int $policyChildWrite The child write policy to set. Valid values are:
-     *                              - ChildWrite::ALWAYS
-     *                              - ChildWrite::IF_NOT_EXIST
-     *                              - ChildWrite::NEVER
-     *                              If an invalid value is provided, an InvalidChildWritePolicyException will be thrown.
-     *
+     * @param int $policyChildPersistence The child persistence policy. Must be one of the predefined constants:
+     *                                    ChildPersistence::ALWAYS, ChildPersistence::IF_NOT_EXIST, ChildPersistence::NEVER, or ChildPersistence::CALLBACK.
      * @return void
-     * @throws InvalidPolicyException
+     * @throws InvalidPolicyException Thrown if the provided persistence policy is invalid.
      */
-    public function setPolicyChildWrite(int $policyChildWrite): void
+    public function setPolicyChildPersistence(int $policyChildPersistence): void
     {
-        if (!in_array($policyChildWrite, [ChildWrite::ALWAYS, ChildWrite::IF_NOT_EXIST, ChildWrite::NEVER, ChildWrite::CALLBACK], true)) {
-            throw new InvalidPolicyException('Invalid child write policy.');
+        if (!in_array($policyChildPersistence, [ChildPersistence::ALWAYS, ChildPersistence::IF_NOT_EXIST, ChildPersistence::NEVER, ChildPersistence::CALLBACK], true)) {
+            throw new InvalidPolicyException('Invalid child persistence policy.');
         }
-        $this->policyChildWrite = $policyChildWrite;
+        $this->policyChildPersistence = $policyChildPersistence;
     }
 
     /**
-     * Determines whether a child node should be written to the graph structure.
+     * Determines whether the given child object should be persisted.
      *
-     * @param GraphBuilderContext $context The context of the graph-building operation.
+     * @param GraphBuilderContext $context The context of the graph building process.
      * @param object $child The child object being evaluated.
-     * @param string $childUuid The unique identifier of the child object.
-     * @param bool $childExists Indicates whether the child already exists in the graph.
-     * @param array $path The path in the graph hierarchy for the child object.
-     *
-     * @return bool Returns true if the child should be written; false otherwise.
+     * @param string $childUuid The UUID of the child object.
+     * @param bool $childExists Indicates whether the child object already exists.
+     * @param array $path The path within the graph to the current child object.
+     * @return bool Returns true if the child object should be persisted, false otherwise.
      */
-    public function shouldWriteChild(GraphBuilderContext $context, object $child, string $childUuid, bool $childExists, array $path): bool
+    public function shouldPersistChild(GraphBuilderContext $context, object $child, string $childUuid, bool $childExists, array $path): bool
     {
         if ($childExists) {
             return false;
@@ -175,32 +174,73 @@ class Standard implements StrategyInterface
         $this->checksumValidation = false;
     }
 
-    public function getPolicyStaticProperty(): int
+    public function getPolicyPropertyPersistence(): int
     {
-        return $this->policyStaticProperty;
+        return $this->policyPropertyPersistence;
     }
 
     /**
-     * Sets the child write policy for the current object.
+     * Sets the policy for static property persistence.
      *
-     * @param int $policyStaticProperty The child write policy to set. Valid values are:
-     *                              - ChildWrite::ALWAYS
-     *                              - ChildWrite::IF_NOT_EXIST
-     *                              - ChildWrite::NEVER
-     *                              If an invalid value is provided, an InvalidChildWritePolicyException will be thrown.
+     * @param int $policyPropertyPersistence The persistence policy value, which must be one of the defined constants:
+     *                                             StaticPropertyPersistence::NEVER,
+     *                                             StaticPropertyPersistence::CALLBACK,
+     *                                             or StaticPropertyPersistence::ALWAYS.
      *
      * @return void
-     * @throws InvalidPolicyException
+     *
+     * @throws InvalidPolicyException If the provided policy value is not valid.
      */
-    public function setPolicyStaticProperty(int $policyStaticProperty): void
+    public function setPolicyPropertyPersistence(int $policyPropertyPersistence): void
     {
-        if (!in_array($policyStaticProperty, [StaticProperty::NEVER, StaticProperty::CALLBACK, StaticProperty::ALWAYS], true)) {
-            throw new InvalidPolicyException('Invalid static property policy.');
+        if (!in_array($policyPropertyPersistence, [PropertyPersistence::CALLBACK, PropertyPersistence::ALWAYS], true)) {
+            throw new InvalidPolicyException('Invalid static property persistence policy.');
         }
-        $this->policyStaticProperty = $policyStaticProperty;
+        $this->policyPropertyPersistence = $policyPropertyPersistence;
     }
 
-    public function shouldPersistStaticProperty(string $className, string $propertyName, mixed $value): bool
+    /**
+     * Determines whether the specified property should be persisted.
+     *
+     * @param Reflection $reflection The reflection instance of the class or object being inspected.
+     * @param string $propertyName The name of the property being evaluated.
+     * @param mixed $value The current value of the property.
+     * @return bool Returns true if the property should be persisted, false otherwise.
+     */
+    public function shouldPersistProperty(Reflection $reflection, string $propertyName, mixed $value): bool
+    {
+        return false;
+    }
+
+    /**
+     * Sets the policy for property hydration.
+     *
+     * @param int $policyPropertyHydration The hydration policy to be set. Must be one of the allowed values defined in PropertyHydration.
+     * @return void
+     * @throws InvalidPolicyException If the given hydration policy is invalid.
+     */
+    public function setPolicyPropertyHydration(int $policyPropertyHydration): void
+    {
+        if (!in_array($policyPropertyHydration, [PropertyHydration::CALLBACK, PropertyHydration::ALWAYS], true)) {
+            throw new InvalidPolicyException('Invalid virtual property hydration policy.');
+        }
+        $this->policyPropertyHydration = $policyPropertyHydration;
+    }
+
+    public function getPolicyPropertyHydration(): int
+    {
+        return $this->policyPropertyHydration;
+    }
+
+    /**
+     * Determines whether a specific property should be hydrated.
+     *
+     * @param Reflection $reflection The reflection instance representing the class or object being inspected.
+     * @param string $propertyName The name of the property being evaluated.
+     * @param mixed $value The value of the property being considered for hydration.
+     * @return bool Returns true if the property should be hydrated, false otherwise.
+     */
+    public function shouldHydrateProperty(Reflection $reflection, string $propertyName, mixed $value): bool
     {
         return false;
     }

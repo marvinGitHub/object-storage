@@ -871,7 +871,7 @@ class ObjectStorageTest extends TestCase
         $this->assertEquals('bar', $loaded->child->foo);
     }
 
-    public function testReadonlyAttributesAreNotPersisted(): void
+    public function testReadonlyAttributesArePersisted(): void
     {
         $object = new TestObject();
         $this->assertSame(
@@ -891,10 +891,10 @@ class ObjectStorageTest extends TestCase
         $data = json_decode($json, true);
         $this->assertIsArray($data, 'Stored object data should be valid JSON.');
 
-        $this->assertArrayNotHasKey(
+        $this->assertArrayHasKey(
             'somePublicReadonlyAttribute',
             $data,
-            'Readonly properties must not be persisted.'
+            'Readonly properties must be persisted.'
         );
 
         // Simulate tampered storage data: even if a readonly value is injected into persisted payload,
@@ -908,6 +908,6 @@ class ObjectStorageTest extends TestCase
         $loaded = $this->storage->load($uuid);
 
         $reflection = new Reflection($loaded);
-        $this->assertFalse($reflection->initialized('somePublicReadonlyAttribute'), 'Readonly property should not be initialized.');
+        $this->assertTrue($reflection->initialized('somePublicReadonlyAttribute'), 'Readonly property should be initialized.');
     }
 }

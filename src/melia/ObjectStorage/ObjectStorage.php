@@ -70,8 +70,9 @@ use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
-use melia\ObjectStorage\Strategy\Policy\ChildWrite;
-use melia\ObjectStorage\Strategy\Policy\StaticProperty;
+use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
+use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
+use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
 use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
@@ -108,28 +109,28 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *
      * @var string
      */
-    public const CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
+    public const string CHECKSUM_ALGORITHM_DEFAULT = 'crc32b';
 
     /**
      * The suffix used for metadata files.
      *
      * @var string
      */
-    protected const FILE_SUFFIX_METADATA = '.metadata';
+    protected const string FILE_SUFFIX_METADATA = '.metadata';
 
     /**
      * The suffix used for stub files.
      *
      * @var string
      */
-    protected const FILE_SUFFIX_STUB = '.stub';
+    protected const string FILE_SUFFIX_STUB = '.stub';
 
     /**
      * The suffix used for object files.
      *
      * @var string
      */
-    protected const FILE_SUFFIX_OBJECT = '.obj';
+    protected const string FILE_SUFFIX_OBJECT = '.obj';
 
     protected WeakMap $processingStack;
 
@@ -378,7 +379,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *
      * @param string $uuid The unique identifier for which to retrieve the expiration timestamp.
      * @return DateTimeInterface|null The expiration date and time as a DateTimeInterface object, or null if no expiration is set.
-     * @throws InvalidUUIDException If the provided UUID is not valid.
      * @throws PHPDefaultException
      */
     public function getExpiration(string $uuid): ?DateTimeInterface
@@ -720,13 +720,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         /* if the __serialize method returns null, serialize all properties */
         if (null === $properties) {
             $properties = [];
+
             foreach ($reflection->getPropertyNames() as $propertyName) {
-                if ($reflection->isReadonly($propertyName)) {
-                    continue;
-                }
                 if (false === $reflection->initialized($propertyName)) {
                     continue;
                 }
+
                 $properties[$propertyName] = $reflection->get($propertyName);
             }
         }
@@ -741,12 +740,19 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
         $context->getMetadata()->setReservedReferenceName($reserved);
 
+        $strategy = $this->getStrategy();
+        $className = $target::class;
+
         foreach ($properties as $propertyName => $value) {
             if (false === is_string($propertyName)) {
                 throw new UnsupportedTypeException(sprintf('Property name must be a string. %s given.', gettype($propertyName)));
             }
 
             try {
+                if ((($strategy?->getPolicyPropertyPersistence() ?? StrategyInterface::DEFAULT_POLICY_PROPERTY_PERSISTENCE) === PropertyPersistence::CALLBACK) && true !== $strategy->shouldPersistProperty($reflection, $propertyName, $value)) {
+                    continue;
+                }
+
                 $result[$propertyName] = $this->transformValueForGraph($context, $value, [$propertyName]);
             } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                 $this->getLogger()?->log($e);
@@ -823,25 +829,25 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $exists = $this->exists($refUuid);
                 $writeChild = true;
 
-                switch ($strategy?->getPolicyChildWrite() ?? StrategyInterface::DEFAULT_POLICY_CHILD_WRITE) {
-                    case ChildWrite::IF_NOT_EXIST:
+                switch ($strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
+                    case ChildPersistence::IF_NOT_EXIST:
                         if ($exists) {
                             $writeChild = false;
                         }
                         break;
-                    case ChildWrite::NEVER:
+                    case ChildPersistence::NEVER:
                         $writeChild = false;
                         break;
-                    case ChildWrite::CALLBACK:
+                    case ChildPersistence::CALLBACK:
                         try {
-                            $writeChild = $strategy?->shouldWriteChild($context, $value, $refUuid, $exists, $path) ?? false;
+                            $writeChild = $strategy?->shouldPersistChild($context, $value, $refUuid, $exists, $path) ?? false;
                         } catch (Throwable $e) {
                             $this->getLogger()?->log($e);
                             $writeChild = false; // fail-closed; change to true if you prefer fail-open
                         }
                         break;
                     default:
-                    case ChildWrite::ALWAYS:
+                    case ChildPersistence::ALWAYS:
                         // ignore
                         break;
                 }
@@ -1107,27 +1113,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected function processLoadedData(object $object, array $data, Metadata $metadata): object
     {
+        $strategy = $this->getStrategy();
         $className = $metadata->getClassName();
         $reflection = new Reflection($object);
 
         foreach ($data as $propertyName => $value) {
-            /* dont process readonly properties */
-            if ($reflection->isReadonly($propertyName)) {
+            if ((($strategy?->getPolicyPropertyHydration() ?? StrategyInterface::DEFAULT_POLICY_PROPERTY_HYDRATION) === PropertyHydration::CALLBACK) && true !== $strategy->shouldHydrateProperty($reflection, $propertyName, $value)) {
                 continue;
-            }
-
-            /* process static properties */
-            if ($reflection->isStatic($propertyName)) {
-                $strategy = $this->getStrategy();
-                switch ($strategy?->getPolicyStaticProperty()) {
-                    case StaticProperty::NEVER:
-                        continue 2;
-                    case StaticProperty::CALLBACK:
-                        if (true !== $strategy->shouldPersistStaticProperty($className, $propertyName, $value)) {
-                            continue 2;
-                        }
-                        break;
-                }
             }
 
             $type = Reflection::getPropertyType($object, $propertyName);

@@ -193,6 +193,29 @@ class Reflection
     }
 
     /**
+     * Checks if the specified property exists in the target object.
+     *
+     * @param string $propertyName The name of the property to be checked.
+     * @return bool True if the property exists, false otherwise.
+     * @throws ReflectionException
+     */
+    public function hasProperty(string $propertyName) : bool
+    {
+        return static::getReflectionClass($this->target::class)->hasProperty($propertyName);
+    }
+
+    /**
+     * Determines whether a specified property is virtual.
+     *
+     * @param string $propertyName The name of the property to check.
+     * @return bool True if the property is virtual, false otherwise.
+     */
+    public function isVirtual(string $propertyName) : bool
+    {
+        return static::getProperty($this->target, $propertyName)?->isVirtual() ?? false;
+    }
+
+    /**
      * Checks if a specified property exists and is initialized in the given object.
      *
      * @param string $propertyName The name of the property to check.
@@ -254,5 +277,15 @@ class Reflection
     public static function getPropertyType(object $object, string $propertyName): ?ReflectionType
     {
         return static::getProperty($object, $propertyName)?->getType();
+    }
+
+    /**
+     * Retrieves the class name of the target object.
+     *
+     * @return string The fully qualified class name of the target object.
+     */
+    public function getClassname(): string
+    {
+        return $this->target::class;
     }
 }

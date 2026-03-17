@@ -2,7 +2,7 @@
 
 namespace melia\ObjectStorage\Strategy\Policy;
 
-interface ChildWrite
+interface ChildPersistence
 {
     public const int ALWAYS = 1;
     public const int NEVER = 2;

@@ -262,37 +262,40 @@ This is useful because, depending on your use case, you may want child objects t
 
 ### Available policies
 
-#### Child write policy
+#### Child persistence policy
 
-- **`ChildWrite::ALWAYS`**  
+- **`ChildPersistence::ALWAYS`**  
   Child objects are written every time you store the parent.  
   Use this when the parent is the “source of truth” and you want the entire graph to stay consistent on each save.
 
-- **`ChildWrite::IF_NOT_EXIST`**  
+- **`ChildPersistence::IF_NOT_EXIST`**  
   Child objects are written **only if they don’t exist yet** in storage.  
   Use this when children are meant to be created once (initial persistence) and then updated independently later (or treated as append-only).
 
-- **`ChildWrite::NEVER`**  
+- **`ChildPersistence::NEVER`**  
   Child objects are **never** written as part of storing the parent.  
   Use this when you want strict control: children must be stored explicitly, and `store($parent)` only updates the parent record (references still point to UUIDs).
 
-- **`ChildWrite::CALLBACK`**  
+- **`ChildPersistence::CALLBACK`**  
   Child objects are written based on a custom callback function.  
   Use this when you need fine-grained control over when child objects are written, such as when implementing complex business logic or handling specific edge cases.
 
-#### Static property policy
+#### Property persistence policy
 
-- **`StaticProperty::NEVER`**
-  Static properties are never persisted.
-  This is the safest default and avoids accidentally storing global/shared runtime state.
+- **`PropertyPersistence::CALLBACK`**
+  Properties are written based on a custom callback function.
+  This is useful when you need fine-grained control over when properties are written,
 
-- **`StaticProperty::ALWAYS`**
-  Static properties are always considered for persistence.
-  Use this only when static state is intentionally part of your stored model.
+- **`PropertyPersistence::ALWAYS`**
+  Properties are always considered for persistence.
 
-- **`StaticProperty::CALLBACK`**
-  Static properties are persisted based on a custom callback decision.
-  Use this when you need fine-grained control, for example to allow only specific classes or property names.
+#### Property hydration policy
+- **`PropertyHydration::CALLBACK`**
+  Properties are hydrated based on a custom callback function.
+  This is useful when you need fine-grained control over when properties are hydrated.
+
+- **`PropertyHydration::ALWAYS`**
+  Properties are always considered for hydration.
 
 ## Example Locking
 

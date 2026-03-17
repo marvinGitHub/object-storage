@@ -3,23 +3,23 @@
 namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\InvalidPolicyException;
-use melia\ObjectStorage\Strategy\Policy\ChildWrite;
+use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Strategy\Standard;
 use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 
-class ObjectStorageChildWritePolicyTest extends TestCase
+class ObjectStorageChildPersistencePolicyTest extends TestCase
 {
     public function testSetChildWritePolicyRejectsInvalidValue(): void
     {
         $this->expectException(InvalidPolicyException::class);
-        $this->storage->getStrategy()->setPolicyChildWrite(999999);
+        $this->storage->getStrategy()->setPolicyChildPersistence(999999);
     }
 
     public function testPolicyNeverDoesNotWriteChildWhenStoringParent(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::NEVER);
+        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::NEVER);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -45,7 +45,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
     public function testPolicyIfNotExistWritesChildOnlyWhenChildIsMissing(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::IF_NOT_EXIST);
+        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::IF_NOT_EXIST);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -72,7 +72,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
     public function testPolicyAlwaysCascadesAndWritesModifiedChildWhenStoringParent(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setPolicyChildWrite(ChildWrite::ALWAYS);
+        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -105,7 +105,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
         // Arrange
         $strategy = new class extends Standard
         {
-            public function shouldWriteChild(GraphBuilderContext $context, object $child, string $childUuid, bool $childExists, array $path): bool
+            public function shouldPersistChild(GraphBuilderContext $context, object $child, string $childUuid, bool $childExists, array $path): bool
             {
                 if ($child instanceof ChildObject) {
                     return $child->title === 'Peter';
@@ -113,7 +113,7 @@ class ObjectStorageChildWritePolicyTest extends TestCase
                 return false;
             }
         };
-        $strategy->setPolicyChildWrite(ChildWrite::CALLBACK);
+        $strategy->setPolicyChildPersistence(ChildPersistence::CALLBACK);
         $this->storage->setStrategy($strategy);
 
         $child = new ChildObject('Child', 10);
