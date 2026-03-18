@@ -22,7 +22,7 @@ Changes for each release will be documented in the [Changelog](Changelog.md) fil
 
 - Copy the library or require it via Composer in your project.
 - Ensure the storage directory is writable.
-- PHP 8.0+ recommended.
+- PHP 8.5+ recommended.
 
 ## Quick Start
 
@@ -189,7 +189,6 @@ The object storage emits lifecycle events around critical operations. You can su
 - CACHE_HIT — dispatched when an object is loaded from cache.
 - CACHE_ENTRY_ADDED — dispatched when an object is added to the cache.
 - CACHE_ENTRY_REMOVED — dispatched when an object is removed from the cache.
-- BEFORE_TYPE_CONVERSION — dispatched before type conversion.
 - LAZY_TYPE_NOT_SUPPORTED — dispatched when a lazy type is not supported.
 - BEFORE_INITIAL_STORE — dispatched before the initial store.
 - BEFORE_UPDATE — dispatched before update.
@@ -293,9 +292,14 @@ This is useful because, depending on your use case, you may want child objects t
 - **`PropertyHydration::CALLBACK`**
   Properties are hydrated based on a custom callback function.
   This is useful when you need fine-grained control over when properties are hydrated.
+  The callback function should return a boolean value indicating whether the property should be hydrated.
 
 - **`PropertyHydration::ALWAYS`**
   Properties are always considered for hydration.
+
+## Property Hydration
+
+The strategy itself controls how the properties are hydrated. See StrategyInterface::hydrateProperty() for details.
 
 ## Example Locking
 
