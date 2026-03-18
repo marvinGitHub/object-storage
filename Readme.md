@@ -249,9 +249,9 @@ $storage->store($p);               // persists changes
 
 Recommendation: implement melia\ObjectStorage\UUID\AwareInterface on your objects if you want the UUID to be assigned back onto the instance (via setUUID) and retrievable later (via getUUID).
 
-## Child Write Policy
+## Policies
 
-When you call `store($object)`, ObjectStorage persists the *root* object and may also persist any *child objects* it discovers while walking the object graph (i.e., referenced objects that become their own UUID-backed records). The **Child Write Policy** controls *when* those child objects are written to disk.
+When you call `store($object)`, ObjectStorage persists the *root* object and may also persist any *child objects* it discovers while walking the object graph (i.e., referenced objects that become their own UUID-backed records). The **Child Persistence Policy** controls *when* those child objects are written to disk.
 
 This is useful because, depending on your use case, you may want child objects to be:
 
@@ -259,9 +259,7 @@ This is useful because, depending on your use case, you may want child objects t
 - only created once and then treated as immutable records,
 - or never written automatically (manual/explicit persistence only).
 
-### Available policies
-
-#### Child persistence policy
+### Child persistence policy
 
 - **`ChildPersistence::ALWAYS`**  
   Child objects are written every time you store the parent.  
@@ -279,7 +277,7 @@ This is useful because, depending on your use case, you may want child objects t
   Child objects are written based on a custom callback function.  
   Use this when you need fine-grained control over when child objects are written, such as when implementing complex business logic or handling specific edge cases.
 
-#### Property persistence policy
+### Property persistence policy
 
 - **`PropertyPersistence::CALLBACK`**
   Properties are written based on a custom callback function.
@@ -288,7 +286,7 @@ This is useful because, depending on your use case, you may want child objects t
 - **`PropertyPersistence::ALWAYS`**
   Properties are always considered for persistence.
 
-#### Property hydration policy
+### Property hydration policy
 - **`PropertyHydration::CALLBACK`**
   Properties are hydrated based on a custom callback function.
   This is useful when you need fine-grained control over when properties are hydrated.
