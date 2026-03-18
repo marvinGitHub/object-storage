@@ -133,7 +133,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
     protected WeakMap $processingStack;
 
-    protected WeakMap $objectUuidMap;
+    /**
+     * Identity map containing holding the related uuids to objects
+     *
+     * @var WeakMap<object, string>
+     */
+    protected WeakMap $identityMap;
     protected WeakMap $lazyloadReferenceSupportCache;
 
     /** @var array<string>|null */
@@ -365,7 +370,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     public function clearCache(): void
     {
         $this->getCache()?->clear();
-        $this->objectUuidMap = new WeakMap();
+        $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
         $this->lazyloadReferenceSupportCache = new WeakMap();
         $this->registeredClassNamesCache = null;
@@ -456,10 +461,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         try {
             // 1) prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
             //    only generate a new UUID if none is available
-            $uuid ??= Helper::getAssigned($object) ?? $this->objectUuidMap[$object] ?? $this->getNextAvailableUuid();
+            $uuid ??= Helper::getAssigned($object) ?? $this->identityMap[$object] ?? $this->getNextAvailableUuid();
 
             // 2) update mapping (important for references and later store calls)
-            $this->objectUuidMap[$object] = $uuid;
+            $this->identityMap[$object] = $uuid;
 
             // 3) no early return: ALWAYS call serializeAndStore so that updates are detected via checksum
             $lockAdapter?->acquireExclusiveLock($uuid);
@@ -592,8 +597,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $eventDispatcher = $this->getEventDispatcher();
 
         try {
-            if (!isset($this->objectUuidMap[$object])) {
-                $this->objectUuidMap[$object] = $uuid;
+            if (!isset($this->identityMap[$object])) {
+                $this->identityMap[$object] = $uuid;
             }
 
             Helper::assign($object, $uuid);
@@ -810,22 +815,22 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             if ($value instanceof LazyLoadReference) {
                 if (!$value->isLoaded()) {
-                    $refUuid = $value->getUUID();
-                    return [$context->getMetadata()->getReservedReferenceName() => $refUuid];
+                    $referencedUuid = $value->getUUID();
+                    return [$context->getMetadata()->getReservedReferenceName() => $referencedUuid];
                 }
 
                 $value = $value->getObject();
             }
 
             $metadata = $context->getMetadata();
-            $refUuid = Helper::getAssigned($value) ?? $this->objectUuidMap[$value] ?? $this->getNextAvailableUuid();
+            $referencedUuid = Helper::getAssigned($value) ?? $this->identityMap[$value] ?? $this->getNextAvailableUuid();
 
-            $this->objectUuidMap[$value] = $refUuid;
+            $this->identityMap[$value] = $referencedUuid;
 
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
 
-                $exists = $this->exists($refUuid);
+                $exists = $this->exists($referencedUuid);
                 $writeChild = true;
 
                 switch ($strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
@@ -839,7 +844,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                         break;
                     case ChildPersistence::CALLBACK:
                         try {
-                            $writeChild = $strategy?->shouldPersistChild($context, $value, $refUuid, $exists, $path) ?? false;
+                            $writeChild = $strategy?->shouldPersistChild($context, $value, $referencedUuid, $exists, $path) ?? false;
                         } catch (Throwable $e) {
                             $this->getLogger()?->log($e);
                             $writeChild = false; // fail-closed; change to true if you prefer fail-open
@@ -854,14 +859,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 if ($writeChild) {
                     $this->serializeAndStore(
                         $value,
-                        $refUuid,
+                        $referencedUuid,
                         ($strategy?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
                         $context
                     );
                 }
             }
 
-            return [$metadata->getReservedReferenceName() => $refUuid];
+            return [$metadata->getReservedReferenceName() => $referencedUuid];
         }
 
         if (is_iterable($value)) {
@@ -1124,12 +1129,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $type = Reflection::getPropertyType($object, $propertyName);
 
             if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $refUUID = $value[$metadata->getReservedReferenceName()];
-                if (false === Validator::validate($refUUID)) {
+                $referencedUuid = $value[$metadata->getReservedReferenceName()];
+                if (false === Validator::validate($referencedUuid)) {
                     /* reference UUID is not valid, so we just set the property to the value */
-                    $finalValue = [$metadata->getReservedReferenceName() => $refUUID];
+                    $finalValue = [$metadata->getReservedReferenceName() => $referencedUuid];
                 } else {
-                    $reference = new LazyLoadReference($this, $refUUID, $object, [$propertyName]);
+                    $reference = new LazyLoadReference($this, $referencedUuid, $object, [$propertyName]);
 
                     if (false === $this->supportsLazyReference($type)) {
                         $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, static fn() => new LazyTypeNotSupportedContext($className, $propertyName));
@@ -1578,7 +1583,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         ?StrategyInterface              $strategy = null
     )
     {
-        $this->objectUuidMap = new WeakMap();
+        $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
         $this->lazyloadReferenceSupportCache = new WeakMap();
 
