@@ -21,7 +21,6 @@ use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
 use melia\ObjectStorage\Event\Context\StubContext;
-use melia\ObjectStorage\Event\Context\TypeConversionContext;
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\DispatcherInterface;
@@ -1109,7 +1108,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws DanglingReferenceException
      * @throws InvalidUUIDException
      * @throws ReflectionException
-     * @throws TypeConversionFailureException
      */
     protected function processLoadedData(object $object, array $data, Metadata $metadata): object
     {
@@ -1142,28 +1140,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 }
             } else if (is_array($value)) {
                 $finalValue = $this->processLoadedArray($metadata, $object, $value, [$propertyName]);
-            } else if ($type instanceof ReflectionNamedType) {
-
-                // TODO add hydration method to strategy and move this logic to standard strategy
-
-
-                /* type conversion of non-union types */
-                $expectedType = $type->getName();
-                $givenType = gettype($value);
-
-                static $scalarMap = ['integer' => true, 'double' => true, 'boolean' => true, 'string' => true];
-
-                if ($givenType !== $expectedType && isset($scalarMap[$givenType])) {
-                    $this->getEventDispatcher()?->dispatch(Events::BEFORE_TYPE_CONVERSION,
-                        static fn() => new TypeConversionContext($object, $propertyName, $value, $givenType, $expectedType));
-
-                    if (false === settype($finalValue, $expectedType)) {
-                        throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $className);
-                    }
-                }
             }
 
-            $reflection->set($propertyName, $finalValue);
+            $strategy?->hydrateProperty($reflection, $propertyName, $finalValue);
         }
 
         return $object;

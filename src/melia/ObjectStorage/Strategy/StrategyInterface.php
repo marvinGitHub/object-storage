@@ -85,4 +85,19 @@ interface StrategyInterface extends AwareInterface
         string $propertyName,
         mixed $value
     ): bool;
+
+    /**
+     * Hydrates a property of a given object by assigning a value through reflection.
+     *
+     * @param Reflection $reflection The reflection instance associated with the target object.
+     * @param string $propertyName The name of the property to be hydrated.
+     * @param mixed $value The value to assign to the property.
+     *
+     * @return void
+     */
+    public function hydrateProperty(
+        Reflection $reflection,
+        string $propertyName,
+        mixed $value
+    ) : void;
 }

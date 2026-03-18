@@ -7,12 +7,14 @@ use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Exception\InvalidPolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
+use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
+use ReflectionNamedType;
 
 class Standard implements StrategyInterface
 {
@@ -243,5 +245,33 @@ class Standard implements StrategyInterface
     public function shouldHydrateProperty(Reflection $reflection, string $propertyName, mixed $value): bool
     {
         return false;
+    }
+
+    /**
+     * Hydrates a property of an object with a given value.
+     *
+     * @param Reflection $reflection The reflection object used to access the property.
+     * @param string $propertyName The name of the property to hydrate.
+     * @param mixed $value The value to assign to the specified property.
+     * @return void
+     * @throws TypeConversionFailureException
+     */
+    public function hydrateProperty(Reflection $reflection, string $propertyName, mixed $value): void
+    {
+        $type = Reflection::getPropertyType($reflection->getTarget(), $propertyName);
+
+        if ($type instanceof ReflectionNamedType) {
+            /* type conversion of non-union types */
+            $expectedType = $type->getName();
+            $givenType = gettype($value);
+
+            static $scalarMap = ['integer' => true, 'double' => true, 'boolean' => true, 'string' => true];
+
+            if ($givenType !== $expectedType && isset($scalarMap[$givenType]) && false === settype($finalValue, $expectedType)) {
+                throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $reflection->getClassname());
+            }
+        }
+
+        $reflection->set($propertyName, $value);
     }
 }
