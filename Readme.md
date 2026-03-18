@@ -423,11 +423,6 @@ $dispatcher->addListener(Events::SAFE_MODE_ENABLED, function () {});
 // Safe mode disabled
 $dispatcher->addListener(Events::SAFE_MODE_DISABLED, function () {});
 
-// Type conversion
-$dispatcher->addListener(Events::BEFORE_TYPE_CONVERSION, function (TypeConversionContext $ctx) {
-    // $ctx->getObject(), $ctx->getPropertyName(), $ctx->getGivenType(), $ctx->getExpectedType()
-});
-
 // Lazy type isn't supported
 $dispatcher->addListener(Events::LAZY_TYPE_NOT_SUPPORTED, function (LazyTypeNotSupportedContext $ctx) {
     // $ctx->getClassName(), $ctx->getPropertyName()
