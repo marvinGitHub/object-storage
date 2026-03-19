@@ -1,6 +1,7 @@
 <?php
 
 use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
@@ -169,17 +170,26 @@ try {
 
             $exists = $storage->exists($uuid);
             $isLocked = $storage->getLockAdapter()->isLockedByOtherProcess($uuid);
-            $metadata = null;
+            $metadata = $storage->loadMetadata($uuid);
+            $classname = $storage->getClassName($uuid);
+
             if (false === $isLocked && $exists) {
-                $metadata = $storage->loadMetadata($uuid);
-                $classname = $storage->getClassName($uuid);
                 $json = file_get_contents($storage->getFilePathData($uuid));
             }
 
+            $size = 0;
+            if ($exists) {
+                try {
+                    $size = $storage->getMemoryConsumption($uuid);
+                } catch (Exception $e) {
+                    $logger->error($e);
+                }
+            }
+
             echo $twig->render('view-record.html', [
-                'data' => json_decode($json ?? '{}', true),
+                'data' => json_decode($json ?? '{}', true, 512, JSON_THROW_ON_ERROR),
                 'json' => $json ?? '',
-                'size' => $exists ? $storage->getMemoryConsumption($uuid) : 0,
+                'size' => $size ?? 0,
                 'storage' => $storageDir,
                 'exists' => $exists,
                 'uuid' => $uuid,
@@ -187,7 +197,8 @@ try {
                 'checksum' => $metadata?->getChecksum() ?? '',
                 'algorithm' => $metadata?->getChecksumAlgorithm() ?? '',
                 'isLocked' => $isLocked,
-                'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited'
+                'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited',
+                'shard' => $storage->buildShardedDirectory($uuid),
             ]);
             break;
         case 'save-record':
@@ -197,27 +208,46 @@ try {
 
             if ($json) {
                 $json = trim($json);
-                $object = json_decode($json, false);
+                $object = json_decode($json, false, 512, JSON_THROW_ON_ERROR);
                 if (false === is_object($object)) {
                     $success = false;
                 } else {
                     $storage = null;
+                    $lockAcquired = false;
                     try {
                         $storage = $buildStorage($storageDir);
-                        $storage->getLockAdapter()->acquireExclusiveLock($uuid);
-                        $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
                         $metadata = $storage->loadMetadata($uuid);
-                        $metadata->setChecksum($md5 = md5($json));
+                        if (null === $metadata) {
+                           throw new RuntimeException('No metadata found for UUID: ' . $uuid);
+                        }
+
+                        $storage->getLockAdapter()->acquireExclusiveLock($uuid);
+                        $lockAcquired = true;
+
+                        $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
+
+                        if (!$dataWritten) {
+                            throw new RuntimeException('Unable to write object data.');
+                        }
+
+                        $metadata->setChecksum(md5($json));
                         $metadata->setChecksumAlgorithm('md5');
-                        $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), json_encode($metadata));
-                        $storage->getLockAdapter()->releaseLock($uuid);
-                        $success = $dataWritten && $metadataWritten;
+
+                        $metadataJson = json_encode($metadata, JSON_THROW_ON_ERROR);
+                        $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), $metadataJson);
+
+                        if (!$metadataWritten) {
+                            throw new RuntimeException('Unable to write metadata.');
+                        }
+
+                        $success = true;
                     } catch (Throwable $e) {
                         $success = false;
-                        if ($storage?->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
-                            $storage?->getLockAdapter()->releaseLock($uuid);
-                        }
                         $logger->error($e);
+                    } finally {
+                        if ($storage?->getLockAdapter() && $lockAcquired && $storage->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
+                            $storage->getLockAdapter()->releaseLock($uuid);
+                        }
                     }
                 }
             }
