@@ -38,7 +38,7 @@
     <li class="list-group-item">
         {{ uuid }}&nbsp;
         <button type="button" class="btn btn-success btn-sm" title="Copy UUID" aria-label="Copy UUID"
-                onclick="copyUuidToClipboard('{{ uuid }}')"><i class="bi bi-clipboard"></i></button>
+                onclick="copyToClipboard('{{ uuid }}')"><i class="bi bi-clipboard"></i></button>
         <a class="btn btn-danger btn-sm"
            href="?action=delete-record&storage={{storage}}&uuid={{uuid}}"
            role="button"
