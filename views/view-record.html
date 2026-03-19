@@ -10,12 +10,13 @@
 {% else %}
 {% if exists %}
 
+<div class="d-flex align-items-center gap-2 flex-wrap my-2">
 {% include 'button-back.html' %}
 <input class="btn btn-warning btn-sm" onclick="edit()" type="button" value="Edit"/>
 <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}"
    role="button">Duplicate</a>
 <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}" role="button">Delete</a>
-
+</div>
 
 <div class="card">
     <div class="card-header">

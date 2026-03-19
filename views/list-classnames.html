@@ -2,8 +2,18 @@
 
 {% block body %}
 {% if exists %}
-<a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage}}" role="button">Rebuild Stubs</a>
-<a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage}}" role="button">Rebuild Shards</a>
+<div class="d-flex align-items-center gap-2 flex-wrap my-2">
+    <a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage}}" role="button">Rebuild Stubs</a>
+    <a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage}}" role="button">Rebuild Shards</a>
+
+    <input type="text" class="form-control form-control-sm w-auto" id="input-uuid"
+           placeholder="uuid..." name="uuid">
+
+    <button type="button" class="btn btn-sm btn-primary"
+            onclick="const uuid = document.getElementById('input-uuid').value; if (uuid) { location.href = `?action=view-record&storage={{storage}}&uuid=${uuid}`; }">
+        View
+    </button>
+</div>
 
 {% if hasEntries %}
 <ul class="list-group">

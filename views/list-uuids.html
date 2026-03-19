@@ -1,9 +1,9 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form>
-    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
-</form>
+<div class="d-flex align-items-center gap-2 flex-wrap my-2">
+    {% include 'button-back.html' %}
+</div>
 {% if pages > 1 %}
 <nav aria-label="Pagination">
     <ul class="pagination">
@@ -37,8 +37,12 @@
     {% for uuid in uuids %}
     <li class="list-group-item">
         {{ uuid }}&nbsp;
-        <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}"
-           role="button">Delete</a>
+        <button type="button" class="btn btn-success btn-sm" title="Copy UUID" aria-label="Copy UUID"
+                onclick="copyUuidToClipboard('{{ uuid }}')"><i class="bi bi-clipboard"></i></button>
+        <a class="btn btn-danger btn-sm"
+           href="?action=delete-record&storage={{storage}}&uuid={{uuid}}"
+           role="button"
+           onclick="return confirm('Are you sure you want to delete this UUID?');">Delete</a>
         <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}" role="button">Duplicate</a>
         <a class="btn btn-secondary btn-sm" href="?action=view-record&storage={{storage}}&uuid={{uuid}}" role="button">View</a>
     </li>
