@@ -7,13 +7,32 @@
     <a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage}}" role="button">Rebuild Shards</a>
 
     <input type="text" class="form-control form-control-sm w-auto" id="input-uuid"
-           placeholder="uuid..." name="uuid">
+           placeholder="uuid..." name="uuid" onclick="pasteUuidFromClipboard()">
 
     <button type="button" class="btn btn-sm btn-primary"
             onclick="const uuid = document.getElementById('input-uuid').value; if (uuid) { location.href = `?action=view-record&storage={{storage}}&uuid=${uuid}`; }">
         View
     </button>
 </div>
+
+<script>
+    async function pasteUuidFromClipboard() {
+        const input = document.getElementById('input-uuid');
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+        try {
+            const text = (await navigator.clipboard.readText()).trim();
+
+            if (!uuidRegex.test(text)) {
+               return;
+            }
+
+            input.value = text;
+        } catch (e) {
+            console.log(e);
+        }
+    }
+</script>
 
 {% if hasEntries %}
 <ul class="list-group">
