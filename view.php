@@ -208,7 +208,14 @@ try {
 
             if ($json) {
                 $json = trim($json);
-                $object = json_decode($json, false, 512, JSON_THROW_ON_ERROR);
+
+                try {
+                    $object = json_decode($json, false, 512, JSON_THROW_ON_ERROR);
+                } catch (JsonException $e) {
+                    $success = false;
+                    $object = null;
+                }
+
                 if (false === is_object($object)) {
                     $success = false;
                 } else {
