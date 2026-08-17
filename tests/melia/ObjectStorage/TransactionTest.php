@@ -4,6 +4,7 @@ namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\TransactionAlreadyActiveException;
+use melia\ObjectStorage\Exception\TransactionCommitException;
 use melia\ObjectStorage\Exception\TransactionException;
 use melia\ObjectStorage\Exception\TransactionNotActiveException;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
@@ -12,6 +13,9 @@ use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Transaction;
 use PHPUnit\Framework\MockObject\MockObject;
+use ReflectionException;
+use RuntimeException;
+use Throwable;
 
 /**
  * Transaction unit tests covering begin, store/load/delete, commit, rollback and state transitions.
@@ -253,5 +257,78 @@ class TransactionTest extends TestCase
 
         $this->expectException(TransactionException::class);
         $txn->rollback();
+    }
+
+    /**
+     * Regression test for commit() only catching the library's own Exception type.
+     *
+     * store()/delete() are documented to also throw core exceptions such as
+     * ReflectionException (or Psr\SimpleCache\InvalidArgumentException), which do NOT
+     * extend melia\ObjectStorage\Exception\Exception. Before the fix, such a failure
+     * during commit() bypassed the automatic rollback entirely: the transaction stayed
+     * "active", the exclusive lock was never released, and the raw ReflectionException
+     * propagated instead of a TransactionCommitException.
+     */
+    public function testCommitRollsBackAndWrapsNonLibraryThrowable(): void
+    {
+        $txn = new Transaction($this->storage);
+        $txn->begin();
+
+        $uuid = 'u-reflection-failure';
+        $this->storage->method('exists')->with($uuid)->willReturn(false);
+
+        $this->lockAdapter->expects($this->once())
+            ->method('acquireExclusiveLock')
+            ->with($uuid, $this->anything());
+
+        $this->storage->method('store')->willThrowException(new ReflectionException('simulated non-library failure during store()'));
+
+        // The automatic rollback must still release the lock that was acquired for the
+        // pending store operation.
+        $this->lockAdapter->expects($this->once())->method('releaseLock')->with($uuid);
+
+        $txn->store((object)['a' => 1], $uuid);
+
+        try {
+            $txn->commit();
+            $this->fail('Expected TransactionCommitException was not thrown');
+        } catch (TransactionCommitException $e) {
+            $this->assertInstanceOf(ReflectionException::class, $e->getPrevious());
+        }
+
+        $this->assertFalse($txn->isActive());
+        $this->assertTrue($txn->isRolledBack());
+    }
+
+    /**
+     * Regression test for __destruct() only catching the library's own Exception type.
+     *
+     * A destructor must never let an exception escape (PHP treats that as fatal). Before
+     * the fix, a non-library Throwable raised while auto-rolling-back an still-active
+     * transaction during garbage collection would not be caught, crashing the process
+     * instead of being logged.
+     */
+    public function testDestructorAutoRollbackSwallowsNonLibraryThrowable(): void
+    {
+        $this->stateHandler->method('safeModeEnabled')->willReturn(false);
+
+        /** @var Transaction&MockObject $txn */
+        $txn = $this->getMockBuilder(Transaction::class)
+            ->setConstructorArgs([$this->storage])
+            ->onlyMethods(['rollback'])
+            ->getMock();
+        $txn->method('rollback')->willThrowException(new RuntimeException('simulated non-library failure during rollback()'));
+
+        $txn->begin();
+        $this->assertTrue($txn->isActive());
+
+        $this->logger->expects($this->atLeastOnce())
+            ->method('log')
+            ->with($this->isInstanceOf(Throwable::class));
+
+        // Invoke the destructor logic directly. If it only caught the library's own
+        // Exception type, the mocked RuntimeException would propagate out of this call
+        // and fail the test with an uncaught exception.
+        $txn->__destruct();
     }
 }

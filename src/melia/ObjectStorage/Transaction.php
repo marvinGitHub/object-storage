@@ -150,8 +150,14 @@ class Transaction
 
             return true;
 
-        } catch (Exception $e) {
-            // Automatic rollback on error
+        } catch (Throwable $e) {
+            // Automatic rollback on error. Catching Throwable (not just the library's own
+            // Exception type) matters here: store()/delete() are documented to also throw
+            // core exceptions such as ReflectionException or Psr\SimpleCache\InvalidArgumentException,
+            // which do not extend melia\ObjectStorage\Exception\Exception. With the narrower
+            // catch, those failures skipped the rollback below entirely, leaving the
+            // transaction "active" with its locks still held and any already-executed
+            // operations un-reverted.
             $this->rollback();
             throw new TransactionCommitException('Transaction commit failed: ' . $e->getMessage(), 0, $e);
         }
@@ -495,7 +501,9 @@ class Transaction
         if ($this->isActive && !$this->isCommitted && !$this->isRolledBack) {
             try {
                 $this->rollback();
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
+                // Must not let anything escape a destructor (fatal); catch Throwable, not just
+                // the library's own Exception type, for the same reason as in commit() above.
                 $this->getStorage()->getLogger()?->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
             }
         }
