@@ -95,12 +95,17 @@ class FileSystem extends LockAdapterAbstract
             throw new LockException('Unable to open lock file: ' . $lockFile);
         }
 
+        // Poll with exponential backoff (1ms -> 50ms cap) instead of a fixed 100ms delay:
+        // this acquires uncontended-but-momentarily-busy locks far faster in the common
+        // case, while still avoiding a busy loop under prolonged contention.
+        $retryDelay = 1000;
         while (!$adapter->flock($handle, $lockType | LOCK_NB)) {
             if (microtime(true) - $startTime > $timeout) {
                 $adapter->fclose($handle);
                 throw new LockException(sprintf('Timeout while waiting for lock: %s (%s)', $uuid, ($type === static::LOCK_TYPE_SHARED ? 'shared' : 'exclusive')));
             }
-            usleep(100000); // 100ms
+            usleep($retryDelay);
+            $retryDelay = min($retryDelay * 2, 50000);
         }
 
         $this->activeLocks[$uuid] = [

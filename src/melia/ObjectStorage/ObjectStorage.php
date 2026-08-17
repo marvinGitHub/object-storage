@@ -967,15 +967,31 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             return null;
         }
 
-        $cached = $this->getCache()?->get($uuid);
-        if (null !== $cached) {
-            $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
-            return $cached;
+        $cache = $this->getCache();
+
+        // For non-exclusive reads a cache hit can be served immediately without locking,
+        // as no exclusivity guarantee was requested. An exclusive load, however, must not
+        // bypass locking on a cache hit: callers rely on it to hold the lock afterwards
+        // (e.g. before a subsequent store()), so the cache is re-checked after the lock
+        // below instead of short-circuiting here.
+        if (!$exclusive) {
+            $cached = $cache?->get($uuid);
+            if (null !== $cached) {
+                $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
+                return $cached;
+            }
         }
 
         try {
             if ($exclusive) {
                 $lockAdapter?->acquireExclusiveLock($uuid);
+
+                $cached = $cache?->get($uuid);
+                if (null !== $cached) {
+                    $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
+                    $eventDispatcher?->dispatch(Events::AFTER_LOAD, static fn() => new Context($uuid));
+                    return $cached;
+                }
             } else {
                 $lockAdapter?->acquireSharedLock($uuid);
             }
