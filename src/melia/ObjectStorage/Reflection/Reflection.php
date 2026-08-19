@@ -53,7 +53,6 @@ class Reflection
         if (null === $property) {
             $this->target->{$propertyName} = $value;
         } else {
-            $property->setAccessible(true);
             $property->setValue($this->target, $value);
         }
     }
@@ -100,7 +99,6 @@ class Reflection
             return null;
         }
 
-        $property->setAccessible(true);
         return $property->isInitialized($this->target) ? $property->getValue($this->target) : null;
     }
 
@@ -122,8 +120,6 @@ class Reflection
         if (null === $property) {
             return false;
         }
-
-        $property->setAccessible(true);
 
         if (false === $property->isInitialized($this->target)) {
             return true;
@@ -232,7 +228,6 @@ class Reflection
             return false;
         }
 
-        $property->setAccessible(true);
         return $property->isInitialized($this->target);
     }
 

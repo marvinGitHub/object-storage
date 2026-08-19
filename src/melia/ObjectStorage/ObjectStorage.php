@@ -745,7 +745,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $context->getMetadata()->setReservedReferenceName($reserved);
 
         $strategy = $this->getStrategy();
-        $className = $target::class;
 
         foreach ($properties as $propertyName => $value) {
             if (false === is_string($propertyName)) {
@@ -1108,7 +1107,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         if (false === class_exists($className)) {
             // don't create alias from a stable class, otherwise all unknown aliases will be stored as a placeholder class
-            if (false === class_alias(get_class(new class {
+            if (false === class_alias(get_class(new #[\AllowDynamicProperties] class {
                 }), $className)) {
                 throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
             }
@@ -1665,7 +1664,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected function createObjectIterator(?string $className): Traversable
     {
-        return new class ($className, static::FILE_SUFFIX_OBJECT, $this) implements IteratorAggregate {
+        return new readonly class ($className, static::FILE_SUFFIX_OBJECT, $this) implements IteratorAggregate {
             public function __construct(
                 private ?string       $className,
                 private string        $extension,
