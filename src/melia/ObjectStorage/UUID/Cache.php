@@ -27,9 +27,14 @@ class Cache
 
     public static function setUuidValidity(string $uuid, bool $validity): void
     {
-        if (!isset(self::$validated[$uuid]) && count(self::$validated) >= self::MAX_ENTRIES) {
+        if ((self::$validated[$uuid] ?? null) === $validity) {
+            return;
+        }
+
+        if (count(self::$validated) >= self::MAX_ENTRIES) {
             unset(self::$validated[array_key_first(self::$validated)]);
         }
+
         self::$validated[$uuid] = $validity;
     }
 
