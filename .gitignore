@@ -1,7 +1,6 @@
 index.php
 vendor
 .phpunit.result.cache
-logs
+appData
 .idea
-logs/*
-cache/*
+appData/*

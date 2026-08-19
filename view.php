@@ -1,7 +1,6 @@
 <?php
 
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
@@ -14,7 +13,22 @@ use melia\ObjectStorage\File\Directory;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-if (!is_file($logfile = __DIR__ . '/logs/error.log')) {
+$appDataDir = __DIR__ . '/appData';
+$logDir = $appDataDir . DIRECTORY_SEPARATOR . 'logs';
+$exportDir = $appDataDir . DIRECTORY_SEPARATOR . 'export';
+
+foreach ([
+             $appDataDir,
+             $logDir,
+             $exportDir
+         ] as $dir) {
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+        chmod($dir, 0777);
+    }
+}
+
+if (!is_file($logfile = $logDir . DIRECTORY_SEPARATOR . 'error.log')) {
     touch($logfile);
 }
 
@@ -31,14 +45,14 @@ $action = $_GET['action'] ?? $_POST['action'] ?? 'index';
 $psr16 = new Psr16Cache(new FilesystemAdapter(
     namespace: 'object-storage-viewer',
     defaultLifetime: 60,        // seconds (can also pass per item)
-    directory: __DIR__ . '/logs/cache'
+    directory: $appDataDir . '/cache'
 ));
 
-$createCacheKeyShardDepth = function (string $storageDir): string {
+$createCacheKeyShardDepth = static function (string $storageDir): string {
     return 'shard_depth_' . sha1($storageDir);
 };
 
-$buildStorage = function (string $storageDir) use ($psr16, $createCacheKeyShardDepth): ObjectStorage {
+$buildStorage = static function (string $storageDir) use ($psr16, $createCacheKeyShardDepth): ObjectStorage {
     $storage = new ObjectStorage($storageDir);
 
     $depth = $psr16->get($key = $createCacheKeyShardDepth($storageDir));
@@ -225,7 +239,7 @@ try {
                         $storage = $buildStorage($storageDir);
                         $metadata = $storage->loadMetadata($uuid);
                         if (null === $metadata) {
-                           throw new RuntimeException('No metadata found for UUID: ' . $uuid);
+                            throw new RuntimeException('No metadata found for UUID: ' . $uuid);
                         }
 
                         $storage->getLockAdapter()->acquireExclusiveLock($uuid);
@@ -252,7 +266,7 @@ try {
                         $success = false;
                         $logger->error($e);
                     } finally {
-                        if ($storage?->getLockAdapter() && $lockAcquired && $storage->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
+                        if ($lockAcquired && $storage?->getLockAdapter() && $storage->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
                             $storage->getLockAdapter()->releaseLock($uuid);
                         }
                     }
