@@ -303,8 +303,13 @@ foreach ($configurationsToRun as $currentConfig) {
     $directory->reserveRandomTemporaryDirectory();
     $storage = $configurations[$currentConfig]($directory->getPath());
 
+    $start = microtime(true);
+
     // Run the workload
     runWorkload($storage);
+
+    $end = microtime(true);
+    $duration = $end - $start;
 
     // Finish and save profile
     $data = $profiler->disable();
@@ -314,7 +319,7 @@ foreach ($configurationsToRun as $currentConfig) {
 
     $profiler->save($data);
 
-    echo "Profiling complete for $currentConfig. Results saved.\n";
+    echo "Profiling complete for $currentConfig. Results saved. Duration: $duration seconds\n";
 
     $directory->tearDown();
 
