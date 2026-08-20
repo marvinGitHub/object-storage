@@ -2,6 +2,7 @@
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\Cache\Psr16Cache;
@@ -10,16 +11,19 @@ use Twig\Loader\FilesystemLoader;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use melia\ObjectStorage\File\Directory;
+use function SebastianBergmann\ObjectGraph\object_graph_dump;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-$appDataDir = __DIR__ . '/appData';
+$appDataDir = __DIR__ . DIRECTORY_SEPARATOR . 'appData';
 $logDir = $appDataDir . DIRECTORY_SEPARATOR . 'logs';
+$cacheDir = $appDataDir . DIRECTORY_SEPARATOR . 'cache';
 $exportDir = $appDataDir . DIRECTORY_SEPARATOR . 'export';
 
 foreach ([
              $appDataDir,
              $logDir,
+             $cacheDir,
              $exportDir
          ] as $dir) {
     if (!is_dir($dir)) {
@@ -45,7 +49,7 @@ $action = $_GET['action'] ?? $_POST['action'] ?? 'index';
 $psr16 = new Psr16Cache(new FilesystemAdapter(
     namespace: 'object-storage-viewer',
     defaultLifetime: 60,        // seconds (can also pass per item)
-    directory: $appDataDir . '/cache'
+    directory: $cacheDir
 ));
 
 $createCacheKeyShardDepth = static function (string $storageDir): string {
@@ -278,6 +282,45 @@ try {
                 'success' => $success ?? false,
                 'uuid' => $uuid,
             ]);
+            break;
+        case 'export-record':
+            $storageDir = $_GET['storage'] ?? null;
+            $uuid = $_GET['uuid'] ?? null;
+            $storage = $buildStorage($storageDir);
+
+            $filename = uniqid($uuid, true) . '.dot';
+            $destination = $exportDir . DIRECTORY_SEPARATOR . $filename;
+
+            try {
+                $target = $storage->load($uuid);
+                $visitor = new GraphVisitor($storage);
+                $referenceGraph = $visitor->buildReferenceGraph($target, $uuid, $target::class);
+
+                object_graph_dump($destination, $referenceGraph);
+                $success = true;
+
+                header('Content-Description: File Transfer');
+                header('Content-Type: text/vnd.graphviz');
+                header('Content-Disposition: attachment; filename="' . $filename . '"');
+                header('Content-Length: ' . filesize($destination));
+                header('Cache-Control: no-cache, must-revalidate');
+                header('Pragma: public');
+                readfile($destination);
+                exit;
+            } catch (Throwable $e) {
+                $logger->error($e);
+
+                echo $twig->render('export-failure.html', [
+                    'storage' => $storageDir,
+                    'success' => false,
+                    'uuid' => $uuid,
+                ]);
+            } finally {
+                if (is_file($destination)) {
+                    unlink($destination);
+                }
+            }
+
             break;
         case 'rebuild-stubs':
             $storageDir = $_GET['storage'] ?? null;
