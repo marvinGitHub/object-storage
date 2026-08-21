@@ -526,4 +526,4 @@ See [CLI Documentation](docs/cli.md)
 
 ## License
 
-Apache-2.0 / MIT
+Apache-2.0
