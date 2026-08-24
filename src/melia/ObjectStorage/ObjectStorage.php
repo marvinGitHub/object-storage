@@ -43,6 +43,7 @@ use melia\ObjectStorage\Exception\ObjectExistenceEvaluationFailureException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
+use melia\ObjectStorage\Exception\PropertyHydrationFailureException;
 use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
@@ -1128,6 +1129,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws DanglingReferenceException
      * @throws InvalidUUIDException
      * @throws ReflectionException
+     * @throws PropertyHydrationFailureException
      */
     protected function processLoadedData(object $object, array $data, Metadata $metadata): object
     {
@@ -1162,7 +1164,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $finalValue = $this->processLoadedArray($metadata, $object, $value, [$propertyName]);
             }
 
-            $strategy?->hydrateProperty($reflection, $propertyName, $finalValue);
+            try {
+                $strategy?->hydrateProperty($reflection, $propertyName, $finalValue);
+            } catch (Throwable $e) {
+                throw new PropertyHydrationFailureException(
+                    sprintf('Unable to hydrate property "%s" of class "%s"', $propertyName, $className), null, $e);
+            }
         }
 
         return $object;

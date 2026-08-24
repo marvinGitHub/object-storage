@@ -15,6 +15,7 @@ use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
 use melia\ObjectStorage\UUID\Generator\AwareTrait as GeneratorAwareTrait;
 use melia\ObjectStorage\UUID\Validator;
+use ReflectionException;
 use ReflectionNamedType;
 
 class Standard implements StrategyInterface
@@ -256,6 +257,8 @@ class Standard implements StrategyInterface
      * @param mixed $value The value to assign to the specified property.
      * @return void
      * @throws TypeConversionFailureException
+     * @throws ReflectionException
+     * @throws DynamicPropertiesNotAllowedException
      */
     public function hydrateProperty(Reflection $reflection, string $propertyName, mixed $value): void
     {
