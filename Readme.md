@@ -74,6 +74,16 @@ When a lazy reference loads, it:
 - Objects are stored once; all occurrences become references.
 - Deeply nested arrays/objects are handled uniformly.
 
+### Dynamic properties
+
+If a class should allow dynamic attributes, it must be marked with `#[AllowDynamicProperties]`.
+
+This is relevant for PHP 8.2 and newer, where dynamic properties are deprecated by default.
+
+When using the standard hydration strategy, missing this attribute can cause a `DynamicPropertiesNotAllowedException` to be thrown if undefined properties are assigned at runtime.
+
+Add this attribute only to classes that are intentionally meant to accept undefined properties.
+
 ## Viewer UI
 
 - A simple read-only viewer is included to browse stored objects.
