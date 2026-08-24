@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace tests\melia\ObjectStorage;
 
+use AllowDynamicProperties;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\State\StateHandler;
@@ -65,6 +66,7 @@ final class GrandchildFixture
     }
 }
 
+#[AllowDynamicProperties]
 final class ParentFixture
 {
     /** Non-nullable union, no default - the exact pattern the library recommends for lazy-loadable properties. */

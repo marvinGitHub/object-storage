@@ -6,6 +6,7 @@ use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 
+#[\AllowDynamicProperties]
 class ParentObject implements AwareInterface
 {
     use AwareTrait;

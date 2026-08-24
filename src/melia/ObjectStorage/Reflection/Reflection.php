@@ -2,6 +2,8 @@
 
 namespace melia\ObjectStorage\Reflection;
 
+use AllowDynamicProperties;
+use melia\ObjectStorage\Exception\DynamicPropertiesNotAllowedException;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionNamedType;
@@ -45,16 +47,30 @@ class Reflection
      * @param string $propertyName The name of the property name to be updated on the object.
      * @param mixed $value The value to assign to the specified property name.
      * @return void
+     * @throws DynamicPropertiesNotAllowedException
+     * @throws ReflectionException
      */
     public function set(string $propertyName, mixed $value): void
     {
         $property = static::getProperty($this->target, $propertyName);
 
-        if (null === $property) {
-            $this->target->{$propertyName} = $value;
-        } else {
+        if ($property !== null) {
             $property->setValue($this->target, $value);
+            return;
         }
+
+        if (static::allowsDynamicProperties($this->target) ||
+            method_exists($this->target, '__set')
+        ) {
+            $this->target->{$propertyName} = $value;
+            return;
+        }
+
+        throw new DynamicPropertiesNotAllowedException(sprintf(
+            'Cannot set undefined property "%s" on %s: dynamic properties are not allowed.',
+            $propertyName,
+            $this->target::class
+        ));
     }
 
     /**
@@ -183,7 +199,7 @@ class Reflection
      * @param string $propertyName The name of the property to be checked.
      * @return bool True if the property is static, false otherwise.
      */
-    public function isStatic(string $propertyName) : bool
+    public function isStatic(string $propertyName): bool
     {
         return static::getProperty($this->target, $propertyName)?->isStatic() ?? false;
     }
@@ -195,7 +211,7 @@ class Reflection
      * @return bool True if the property exists, false otherwise.
      * @throws ReflectionException
      */
-    public function hasProperty(string $propertyName) : bool
+    public function hasProperty(string $propertyName): bool
     {
         return static::getReflectionClass($this->target::class)->hasProperty($propertyName);
     }
@@ -206,7 +222,7 @@ class Reflection
      * @param string $propertyName The name of the property to check.
      * @return bool True if the property is virtual, false otherwise.
      */
-    public function isVirtual(string $propertyName) : bool
+    public function isVirtual(string $propertyName): bool
     {
         return static::getProperty($this->target, $propertyName)?->isVirtual() ?? false;
     }
@@ -253,13 +269,35 @@ class Reflection
         return array_keys($cache[$classname] + get_object_vars($this->target));
     }
 
+
     /**
      * @throws ReflectionException
      */
-    public static function getReflectionClass(string $className): ReflectionClass
+    public static function getReflectionClass(object|string $className): ReflectionClass
     {
         static $cache = [];
+        $className = is_object($className) ? $className::class : $className;
         return $cache[$className] ??= new ReflectionClass($className);
+    }
+
+    /**
+     * @throws ReflectionException
+     */
+    public static function allowsDynamicProperties(object|string $class): bool
+    {
+        $reflection = static::getReflectionClass($class);
+
+        do {
+            if ($reflection->getAttributes(
+                AllowDynamicProperties::class
+            )) {
+                return true;
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        return false;
     }
 
     /**

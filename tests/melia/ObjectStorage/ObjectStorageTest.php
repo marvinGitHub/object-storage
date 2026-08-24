@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use AllowDynamicProperties;
 use Closure;
 use DateInterval;
 use DateTimeImmutable;
@@ -38,7 +39,7 @@ class ObjectStorageTest extends TestCase
         $object->bar = 'baz';
 
         $uuid = $this->storage->store($object);
-        $this->assertCount(1, $this->storage->list());
+        $this->assertCount(1, iterator_to_array($this->storage->list()));
         $this->assertTrue($this->storage->exists($uuid));
         $this->assertEquals(1, $this->storage->count('stdClass'));
 
@@ -75,7 +76,7 @@ class ObjectStorageTest extends TestCase
 
         $uuid1 = $this->storage->store($object1);
         $uuid2 = $this->storage->store($object2);
-        $this->assertCount(2, $this->storage->list());
+        $this->assertCount(2, iterator_to_array($this->storage->list()));
         $this->assertTrue($this->storage->exists($uuid1));
         $this->assertTrue($this->storage->exists($uuid2));
     }
@@ -85,7 +86,7 @@ class ObjectStorageTest extends TestCase
         $object = new stdClass();
         $object->foo = 'bar';
         $uuid = $this->storage->store($object);
-        $this->assertCount(1, $this->storage->list());
+        $this->assertCount(1, iterator_to_array($this->storage->list()));
 
         $this->storage->clearCache();
         $this->assertTrue($this->storage->exists($uuid));
@@ -244,7 +245,7 @@ class ObjectStorageTest extends TestCase
 
         $list = $someStorage->list();
 
-        $this->assertCount(2, $list);
+        $this->assertCount(2, iterator_to_array($list));
 
         $this->assertContains($someUUID, $list);
         $this->assertContains($anotherUUID, $list);
@@ -403,16 +404,16 @@ class ObjectStorageTest extends TestCase
     {
         $object = new TestObject();
         $uuid = $this->storage->store($object, null, 1);
-        $this->assertCount(1, $this->storage->list());
+        $this->assertCount(1, iterator_to_array($this->storage->list()));
         $this->assertFalse($this->storage->expired($uuid));
         sleep(2);
-        $this->assertCount(1, $this->storage->list());
+        $this->assertCount(1, iterator_to_array($this->storage->list()));
         $this->assertTrue($this->storage->expired($uuid));
 
         $loaded = $this->storage->load($uuid);
         $this->assertNull($loaded);
         $this->assertTrue($this->storage->exists($uuid));
-        $this->assertCount(1, $this->storage->list());
+        $this->assertCount(1, iterator_to_array($this->storage->list()));
         $this->assertTrue($this->storage->expired($uuid));
     }
 
@@ -425,7 +426,7 @@ class ObjectStorageTest extends TestCase
         $this->assertFalse($this->storage->expired($uuid));
 
         sleep(1);
-        $this->assertLessThanOrEqual(0, $this->storage->getLifetime($uuid));;
+        $this->assertLessThanOrEqual(0, $this->storage->getLifetime($uuid));
         sleep(1);
         $this->assertLessThan(-1, $this->storage->getLifetime($uuid)); // negative means time since expiration
 
@@ -444,7 +445,7 @@ class ObjectStorageTest extends TestCase
 
         $parentUuid = $this->storage->store($parent);
 
-        $this->assertCount(2, $this->storage->list());
+        $this->assertCount(2, iterator_to_array($this->storage->list()));
 
         // Force lazy loading on next read
         $this->storage->clearCache();
@@ -464,7 +465,7 @@ class ObjectStorageTest extends TestCase
         $this->storage->setLifetime($childUuid, 0);
 
         $this->assertTrue($this->storage->exists($childUuid));
-        $this->assertLessThanOrEqual(0, $this->storage->getLifetime($childUuid));;
+        $this->assertLessThanOrEqual(0, $this->storage->getLifetime($childUuid));
 
 
         $this->assertEquals($childUuid, $reloadedParent->child->getUUID());
@@ -627,7 +628,7 @@ class ObjectStorageTest extends TestCase
 
     public function testStoreObjectWithSerializeMethod()
     {
-        $object = new class () {
+        $object = new #[AllowDynamicProperties] class  () {
             public function __serialize()
             {
                 return ['a' => $this->a ?? null];

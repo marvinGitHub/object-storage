@@ -39,7 +39,6 @@ final class FilesystemLockAdapterTest extends LockAdapterTestCase
 
         $ref = new ReflectionClass($adapter);
         $prop = $ref->getProperty('lockDir');
-        $prop->setAccessible(true);
         $this->assertSame($this->tmpDir, $prop->getValue($adapter));
 
         return $adapter;

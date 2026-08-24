@@ -5,6 +5,7 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\AwareTrait;
 
+#[\AllowDynamicProperties]
 class ChildObject implements AwareInterface
 {
     use AwareTrait;

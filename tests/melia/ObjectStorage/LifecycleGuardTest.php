@@ -2,7 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
-class ObjectStorageLifecycleTest extends TestCase
+class LifecycleGuardTest extends TestCase
 {
     public function testSerializeIsCalledOnStoreAndUnserializeOnLoad(): void
     {

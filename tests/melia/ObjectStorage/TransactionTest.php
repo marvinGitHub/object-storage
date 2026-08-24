@@ -156,10 +156,19 @@ class TransactionTest extends TestCase
         ]);
         $this->storage->method('load')->with($uuid2)->willReturn((object)['old' => 'data']);
 
-        // locks
+        // PHPUnit 10 removed withConsecutive(); validate the invocation order
+        // with a callback instead.
+        $acquiredLocks = [];
         $this->lockAdapter->expects($this->exactly(2))
             ->method('acquireExclusiveLock')
-            ->withConsecutive([$uuid1, $this->anything()], [$uuid2, $this->anything()]);
+            ->with(
+                $this->callback(function (string $uuid) use (&$acquiredLocks, $uuid1, $uuid2): bool {
+                    $acquiredLocks[] = $uuid;
+
+                    return $uuid === [$uuid1, $uuid2][count($acquiredLocks) - 1];
+                }),
+                $this->anything()
+            );
 
         // Expect store and delete on commit
         $this->storage->expects($this->once())->method('store')->with($this->callback(function ($o) use ($obj) {
@@ -168,8 +177,15 @@ class TransactionTest extends TestCase
 
         $this->storage->expects($this->once())->method('delete')->with($uuid2);
 
-        // Expected releaseLock during cleanup
-        $this->lockAdapter->expects($this->exactly(2))->method('releaseLock')->withConsecutive([$uuid1], [$uuid2]);
+        // Expected releaseLock during cleanup, in operation order.
+        $releasedLocks = [];
+        $this->lockAdapter->expects($this->exactly(2))
+            ->method('releaseLock')
+            ->with($this->callback(function (string $uuid) use (&$releasedLocks, $uuid1, $uuid2): bool {
+                $releasedLocks[] = $uuid;
+
+                return $uuid === [$uuid1, $uuid2][count($releasedLocks) - 1];
+            }));
 
         $txn->store($obj, $uuid1);
         $txn->delete($uuid2);

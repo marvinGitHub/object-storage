@@ -92,9 +92,7 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
     private function getStateHandler(ObjectStorage $storage): StateHandler
     {
         $ref = new ReflectionClass($storage);
-        $prop = $ref->getProperty('stateHandler');
-        $prop->setAccessible(true);
-        return $prop->getValue($storage);
+        return $ref->getProperty('stateHandler')->getValue($storage);
     }
 }
 

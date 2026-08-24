@@ -5,6 +5,7 @@ namespace melia\ObjectStorage\Strategy;
 use JsonException;
 use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
+use melia\ObjectStorage\Exception\DynamicPropertiesNotAllowedException;
 use melia\ObjectStorage\Exception\InvalidPolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;

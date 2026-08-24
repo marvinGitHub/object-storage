@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+#[\AllowDynamicProperties]
 class TestObject
 {
     public static ?string $somePublicStaticAttributeWhichDefaultsToNull = null;

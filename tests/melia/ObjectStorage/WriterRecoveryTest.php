@@ -26,7 +26,6 @@ final class WriterRecoveryTest extends TestCase
             $writer->setIOAdapter($adapter);
         } else {
             $rp = new ReflectionProperty($writer, 'ioAdapter');
-            $rp->setAccessible(true);
             $rp->setValue($writer, $adapter);
         }
 
@@ -73,7 +72,6 @@ final class WriterRecoveryTest extends TestCase
             $writer->setIOAdapter($adapter);
         } else {
             $rp = new ReflectionProperty($writer, 'ioAdapter');
-            $rp->setAccessible(true);
             $rp->setValue($writer, $adapter);
         }
 
