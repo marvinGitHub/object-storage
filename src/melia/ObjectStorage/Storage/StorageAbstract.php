@@ -86,7 +86,10 @@ abstract class StorageAbstract implements StorageInterface, StorageAssumeInterfa
     {
         $count = 0;
 
-        foreach ($this->getSelection($subSet) as $uuid) {
+        /* without a subset, iterate the class stubs instead of all objects to avoid loading metadata of foreign classes */
+        $selection = $subSet ? $this->getSelection($subSet) : $this->list($className);
+
+        foreach ($selection as $uuid) {
             if (null !== $limit && $limit > 0 && $count >= $limit) {
                 break;
             }
