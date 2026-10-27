@@ -55,6 +55,17 @@ class Dispatcher implements DispatcherInterface
     }
 
     /**
+     * Checks whether at least one listener is registered for the given event.
+     *
+     * @param string $event The name of the event.
+     * @return bool True if a listener is registered, false otherwise.
+     */
+    public function hasListeners(string $event): bool
+    {
+        return !empty($this->listeners[$event]);
+    }
+
+    /**
      * Dispatches an event by invoking all registered listeners for that event.
      * If a listener throws an exception, it is logged without interrupting the dispatch process.
      *

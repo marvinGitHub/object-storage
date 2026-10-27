@@ -73,7 +73,9 @@ class FileSystem extends LockAdapterAbstract
             throw new LockException('Safe mode is enabled. Object cannot be locked.');
         }
 
-        if ($type === static::LOCK_TYPE_SHARED && $this->hasActiveSharedLock($uuid)) {
+        /* any lock held by this process (shared or exclusive) already grants read access;
+           requesting a shared lock via a second handle would block on our own exclusive lock */
+        if ($type === static::LOCK_TYPE_SHARED && $this->isLockedByThisProcess($uuid)) {
             return;
         }
 

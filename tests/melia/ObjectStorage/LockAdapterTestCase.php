@@ -65,4 +65,33 @@ abstract class LockAdapterTestCase extends TestCase
 
         $adapter1->releaseLock($uuid);
     }
+
+    public function testExclusiveLockIsReentrant(): void
+    {
+        $uuid = 'uuid-reentrant-exclusive';
+        $adapter = $this->createAdapter();
+
+        $adapter->acquireExclusiveLock($uuid, 1);
+        $adapter->acquireExclusiveLock($uuid, 0.15);
+
+        $this->assertTrue($adapter->hasActiveExclusiveLock($uuid));
+
+        $adapter->releaseLock($uuid);
+        $this->assertFalse($adapter->isLockedByThisProcess($uuid));
+    }
+
+    public function testSharedLockWhileHoldingExclusiveLockKeepsExclusiveLock(): void
+    {
+        $uuid = 'uuid-shared-after-exclusive';
+        $adapter = $this->createAdapter();
+
+        $adapter->acquireExclusiveLock($uuid, 1);
+        $adapter->acquireSharedLock($uuid, 0.15);
+
+        $this->assertTrue($adapter->hasActiveExclusiveLock($uuid));
+        $this->assertFalse($adapter->hasActiveSharedLock($uuid));
+
+        $adapter->releaseLock($uuid);
+        $this->assertFalse($adapter->isLockedByThisProcess($uuid));
+    }
 }

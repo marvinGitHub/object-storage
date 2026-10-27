@@ -13,7 +13,10 @@ class CachedLockAdapter extends LockAdapterAbstract
     private string $processId;
     private array $activeLocks = [];
 
-    public function __construct(Cache $cache, private string $prefix = 'lock:')
+    /**
+     * @param string $prefix Must not contain PSR-16 reserved characters "{}()/\@:"
+     */
+    public function __construct(Cache $cache, private string $prefix = 'lock_')
     {
         $this->cache = $cache;
         $this->processId = uniqid(gethostname() . '_', true);
@@ -25,6 +28,11 @@ class CachedLockAdapter extends LockAdapterAbstract
      */
     public function acquireSharedLock(string $uuid, float|int $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT): bool
     {
+        /* any lock held by this process (shared or exclusive) already grants read access */
+        if ($this->isLockedByThisProcess($uuid)) {
+            return true;
+        }
+
         $key = $this->getLockKey($uuid);
         $startTime = microtime(true);
         $timeoutSeconds = $timeout;
@@ -75,6 +83,10 @@ class CachedLockAdapter extends LockAdapterAbstract
      */
     public function acquireExclusiveLock(string $uuid, float|int $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT): bool
     {
+        if ($this->hasActiveExclusiveLock($uuid)) {
+            return true;
+        }
+
         $key = $this->getLockKey($uuid);
         $startTime = microtime(true);
         $timeoutSeconds = $timeout;

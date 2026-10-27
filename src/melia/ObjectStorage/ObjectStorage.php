@@ -440,21 +440,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $eventDispatcher = $this->getEventDispatcher();
         $eventDispatcher?->dispatch(Events::BEFORE_STORE, static fn() => new ObjectPersistenceContext($uuid, $object));
 
-        /* use metadata to check for existence, since this will already warm up the metadata cache */
-        $metadata = $this->loadMetadata($uuid);
-        $exists = null !== $metadata;
-
-        if ($exists) {
-            $eventDispatcher?->dispatch(Events::BEFORE_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
-        }
-
         // LazyLoadReference: not loaded → only return UUID
         if ($object instanceof LazyLoadReference) {
             if (false === $object->isLoaded()) {
                 return $object->getUUID();
             }
-            $object = $object->getObject();
+            // read the UUID from the reference, the referenced object doesn't necessarily provide one
             $uuid = $object->getUUID();
+            $object = $object->getObject();
         }
 
         $lockAdapter = $this->getLockAdapter();
@@ -463,6 +456,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             // 1) prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
             //    only generate a new UUID if none is available
             $uuid ??= Helper::getAssigned($object) ?? $this->identityMap[$object] ?? $this->getNextAvailableUuid();
+
+            /* use metadata to check for existence, since this will already warm up the metadata cache;
+               this has to happen after resolving the UUID, otherwise updates without an explicit UUID go unnoticed */
+            $exists = null !== $this->loadMetadata($uuid);
+
+            if ($exists) {
+                $eventDispatcher?->dispatch(Events::BEFORE_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
+            }
 
             // 2) update mapping (important for references and later store calls)
             $this->identityMap[$object] = $uuid;
@@ -650,15 +651,18 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $writeCache = $checksumChanged || $classNameChanged || $lifetimeChanged;
 
             if ($writeGraph) {
-                $contextBuilderObjectPersistenceContext = function () use ($uuid, $object, $exists): ObjectPersistenceContext {
+                // the previous object must be loaded before the data file is overwritten, otherwise the
+                // new data would be validated against the old metadata (checksum mismatch → safe mode)
+                $previousObject = null;
+                if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
                     try {
-                        $previousObject = $exists ? $this->load($uuid) : null;
+                        $previousObject = $this->load($uuid);
                     } catch (Throwable $e) {
                         $this->getLogger()?->log($e);
-                        $previousObject = null;
                     }
-                    return new ObjectPersistenceContext($uuid, $object, $previousObject);
-                };
+                }
+
+                $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject);
 
                 try {
                     $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $serializedGraph);
@@ -982,6 +986,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             }
         }
 
+        // a lock held before this call belongs to the caller (e.g. a previous exclusive load or a
+        // running store) and must survive this load, both on success and on failure
+        $lockedBefore = $lockAdapter?->isLockedByThisProcess($uuid) ?? false;
+
         try {
             if ($exclusive) {
                 $lockAdapter?->acquireExclusiveLock($uuid);
@@ -998,7 +1006,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $object = $this->loadFromStorage($uuid);
 
-            if (!$exclusive) {
+            if (!$exclusive && !$lockedBefore) {
                 $lockAdapter?->releaseLock($uuid);
             }
 
@@ -1006,7 +1014,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             return $object;
         } catch (Throwable $e) {
-            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+            if (!$lockedBefore && $lockAdapter?->isLockedByThisProcess($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
             }
             $eventDispatcher?->dispatch(Events::OBJECT_LOADING_FAILURE, static fn() => new Context($uuid));
