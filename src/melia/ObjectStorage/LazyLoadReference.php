@@ -89,14 +89,16 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
         if ($this->loadedObject === null) {
             $storage = $this->getStorage();
 
-            static $listener;
-            if (null === $listener) {
-                $listener = function (Context $context) {
-                    if ($this->uuid === $context->getUuid()) {
-                        throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" is expired', $this->uuid ?? ''));
-                    }
-                };
-            }
+            // a fresh listener per load: a static one would be shared by all instances and keep the first
+            // reference (and its root) alive; it only records the expiry, since the dispatcher swallows
+            // exceptions thrown by listeners
+            $uuid = $this->uuid;
+            $expired = false;
+            $listener = static function (Context $context) use ($uuid, &$expired): void {
+                if ($uuid === $context->getUuid()) {
+                    $expired = true;
+                }
+            };
 
             if ($storage instanceof ObjectStorage) {
                 $storage->getEventDispatcher()?->addListener(Events::OBJECT_EXPIRED, $listener);
@@ -111,7 +113,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
                     $storage->getEventDispatcher()?->removeListener(Events::OBJECT_EXPIRED, $listener);
                 }
                 if (null === $this->loadedObject) {
-                    throw new DanglingReferenceException(sprintf('Reference to object with UUID "%s" could not be loaded', $this->uuid ?? ''));
+                    throw new DanglingReferenceException(sprintf($expired ? 'Reference to object with UUID "%s" is expired' : 'Reference to object with UUID "%s" could not be loaded', $this->uuid ?? ''));
                 }
             }
 

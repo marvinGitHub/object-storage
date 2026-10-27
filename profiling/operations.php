@@ -8,8 +8,7 @@ use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Locking\Backends\LockAdapterAbstract;
 use melia\ObjectStorage\ObjectStorage;
-use melia\ObjectStorage\Locking\Backends\FileSystem;
-use melia\ObjectStorage\Locking\Backends\CachedLockAdapter;
+use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Logger\LoggerInterface;
@@ -21,6 +20,8 @@ use Symfony\Component\Cache\Adapter\ApcuAdapter;
 use Symfony\Component\Cache\Adapter\MemcachedAdapter;
 use Symfony\Component\Cache\Adapter\RedisAdapter;
 use Symfony\Component\Cache\Psr16Cache;
+use Symfony\Component\Lock\Store\MemcachedStore;
+use Symfony\Component\Lock\Store\RedisStore;
 use Throwable;
 use Xhgui\Profiler\Profiler;
 
@@ -44,24 +45,11 @@ $logger = new class implements LoggerInterface {
 
 $eventDispatcher = new Dispatcher();
 
-$lockAdapterApcu = new CachedLockAdapter(new Psr16Cache(new ApcuAdapter()));
-$lockAdapterApcu->setEventDispatcher($eventDispatcher);
-
-$lockAdapterMemcached = new CachedLockAdapter(new Psr16Cache($memcachedAdapter));
-$lockAdapterMemcached->setEventDispatcher($eventDispatcher);
-
-$lockAdapterRedis = new CachedLockAdapter(new Psr16Cache($redisAdapter));
-$lockAdapterRedis->setEventDispatcher($eventDispatcher);
-
-$lockAdapterFileSystem = new FileSystem();
-$lockAdapterFileSystem->setEventDispatcher($eventDispatcher);
-$lockAdapterFileSystem->setLogger($logger);
-
+// lock adapters are created per storage directory, since the file locks live inside it
 $lockAdapters = [
-    'lock-adapter-apcu' => $lockAdapterApcu,
-    'lock-adapter-memcached' => $lockAdapterMemcached,
-    'lock-adapter-filesystem' => $lockAdapterFileSystem,
-    'lock-adapter-redis' => $lockAdapterRedis,
+    'lock-adapter-memcached' => static fn(string $dir) => new SymfonyLockAdapter(new MemcachedStore($memcached)),
+    'lock-adapter-filesystem' => static fn(string $dir) => SymfonyLockAdapter::createFileLockAdapter($dir . DIRECTORY_SEPARATOR . 'locks'),
+    'lock-adapter-redis' => static fn(string $dir) => new SymfonyLockAdapter(new RedisStore($redis)),
 ];
 
 $objectCaches = [
@@ -78,19 +66,18 @@ $objectCaches = [
 foreach ($objectCaches as $objectCacheName => $objectCache) {
     /**
      * @var string $lockAdapterName
-     * @var LockAdapterAbstract $lockAdapter
+     * @var callable(string): LockAdapterAbstract $lockAdapterFactory
      */
-    foreach ($lockAdapters as $lockAdapterName => $lockAdapter) {
+    foreach ($lockAdapters as $lockAdapterName => $lockAdapterFactory) {
         $configName = sprintf('%s.%s', $objectCacheName, $lockAdapterName);
 
-        $configurations[$configName] = static function (string $dir) use ($lockAdapter, $eventDispatcher, $logger, $objectCache) {
-            if ($lockAdapter instanceof FileSystem) {
-                $lockAdapter->setLockDir($dir);
-            }
-
+        $configurations[$configName] = static function (string $dir) use ($lockAdapterFactory, $eventDispatcher, $logger, $objectCache) {
             $state = new StateHandler($dir);
             $state->setEventDispatcher($eventDispatcher);
 
+            $lockAdapter = $lockAdapterFactory($dir);
+            $lockAdapter->setEventDispatcher($eventDispatcher);
+            $lockAdapter->setLogger($logger);
             $lockAdapter->setStateHandler($state);
 
             return new ObjectStorage(

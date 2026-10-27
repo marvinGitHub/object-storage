@@ -265,17 +265,40 @@ class Standard implements StrategyInterface
         $type = Reflection::getPropertyType($reflection->getTarget(), $propertyName);
 
         if ($type instanceof ReflectionNamedType) {
-            /* type conversion of non-union types */
+            /* type conversion of non-union scalar types; gettype() names differ from declared type names */
+            static $scalarTypes = ['integer' => 'int', 'double' => 'float', 'boolean' => 'bool', 'string' => 'string'];
+
             $expectedType = $type->getName();
-            $givenType = gettype($value);
+            $givenType = $scalarTypes[gettype($value)] ?? null;
 
-            static $scalarMap = ['integer' => true, 'double' => true, 'boolean' => true, 'string' => true];
+            if (null !== $givenType && $givenType !== $expectedType && in_array($expectedType, $scalarTypes, true)) {
+                $converted = $value;
 
-            if ($givenType !== $expectedType && isset($scalarMap[$givenType]) && false === settype($finalValue, $expectedType)) {
-                throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $reflection->getClassname());
+                if (false === settype($converted, $expectedType) || false === static::isLosslessConversion($value, $converted, $expectedType)) {
+                    throw new TypeConversionFailureException('Unable to convert value to type ' . $expectedType . ' for property ' . $propertyName . ' of class ' . $reflection->getClassname());
+                }
+
+                $value = $converted;
             }
         }
 
         $reflection->set($propertyName, $value);
+    }
+
+    /**
+     * Checks whether a scalar conversion kept the value, e.g. "5" → 5 is fine while "abc" → 0 or 2.5 → 2 is not.
+     *
+     * @param bool|int|float|string $original The value before the conversion.
+     * @param bool|int|float|string $converted The value after the conversion.
+     * @param string $type The target type (int, float, bool or string).
+     * @return bool True if no information was lost, false otherwise.
+     */
+    protected static function isLosslessConversion(bool|int|float|string $original, bool|int|float|string $converted, string $type): bool
+    {
+        return match ($type) {
+            'int', 'float' => (is_numeric($original) || is_bool($original)) && $converted == $original,
+            'bool' => !is_string($original) || in_array($original, ['', '0', '1'], true),
+            default => true,
+        };
     }
 }

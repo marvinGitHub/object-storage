@@ -7,7 +7,7 @@ namespace melia\ObjectStorage\Cli\DI;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
+use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\State\StateHandler;
@@ -41,7 +41,7 @@ final class Container
         $state = new StateHandler($dir);
         $state->setEventDispatcher($eventDispatcher);
 
-        $lock = new FileSystemLockingBackend($dir);
+        $lock = SymfonyLockAdapter::createFileLockAdapter($dir . DIRECTORY_SEPARATOR . 'locks');
         $lock->setStateHandler($state);
         $lock->setLogger($logger);
         $lock->setEventDispatcher($eventDispatcher);

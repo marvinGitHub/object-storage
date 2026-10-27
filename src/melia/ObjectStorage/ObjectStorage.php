@@ -58,7 +58,7 @@ use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
 use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\WriterAwareTrait;
-use melia\ObjectStorage\Locking\Backends\FileSystem as FileSystemLockingBackend;
+use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\Metadata\Cache\AwareTrait as MetadataCacheAwareTrait;
@@ -572,6 +572,16 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     public function getStorageDir(): string
     {
         return $this->storageDir;
+    }
+
+    /**
+     * Retrieves the directory of the default file locks.
+     *
+     * @return string The full path to the lock directory.
+     */
+    public function getLockDir(): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'locks';
     }
 
     /**
@@ -1652,7 +1662,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->setStateHandler($stateHandler);
 
         if (null === $lockAdapter) {
-            $lockAdapter = new FileSystemLockingBackend($this->getStorageDir());
+            $lockAdapter = SymfonyLockAdapter::createFileLockAdapter($this->getLockDir());
             $lockAdapter->setStateHandler($stateHandler);
             $lockAdapter->setLogger($this->logger);
             $lockAdapter->setEventDispatcher($eventDispatcher);

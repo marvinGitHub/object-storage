@@ -5,18 +5,17 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\LazyLoadReference;
-use melia\ObjectStorage\Locking\Backends\CachedLockAdapter;
+use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\ObjectStorage;
-use Symfony\Component\Cache\Adapter\ArrayAdapter;
-use Symfony\Component\Cache\Psr16Cache;
+use Symfony\Component\Lock\Store\InMemoryStore;
 
 final class ObjectStorageLockingRegressionTest extends TestCase
 {
-    public function testExclusiveLoadFollowedByStoreWithCachedLockAdapter(): void
+    public function testExclusiveLoadFollowedByStoreWithNonFileLockStore(): void
     {
         $dir = $this->createTemporaryDirectory();
         $this->storageDirs[] = $dir;
-        $storage = new ObjectStorage($dir, lockAdapter: new CachedLockAdapter(new Psr16Cache(new ArrayAdapter())));
+        $storage = new ObjectStorage($dir, lockAdapter: new SymfonyLockAdapter(new InMemoryStore()));
 
         $uuid = $storage->store(new ChildObject('before', 1));
 

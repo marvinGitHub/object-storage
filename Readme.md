@@ -123,8 +123,8 @@ Use when you need explicit control over concurrent access (e.g., long-running wr
     - Obtain a write/exclusive lock (mutually exclusive).
 - releaseLock(string $uuid): void
     - Release a held lock (shared or exclusive).
-- isLocked(string $uuid): bool
-    - Check if a lock exists (by any process).
+- isLockedByOtherProcess(string $uuid): bool
+    - Check if another process currently holds a lock (shared or exclusive).
 - isLockedByThisProcess(string $uuid): bool
     - Check if the current process holds the lock.
 - getActiveLocks(): array
@@ -155,9 +155,38 @@ Use when you need to gate operations globally (e.g., fail-safe after corruption)
 
 ## Locking, Caching, Safe Mode
 
-- Locking: shared on load, exclusive on store; cleaned up automatically.
+- Locking: shared on load, exclusive on store; released automatically.
 - Caching: in-memory cache avoids repeated deserialization; use clearCache() to reset.
 - Safe Mode: if corrupted data is detected, safe mode is enabled to prevent writes until resolved. Disable via disableSafeMode() after fixing.
+
+### Lock backends
+
+Locking is based on [symfony/lock](https://symfony.com/doc/current/components/lock.html), so any of its stores can be used via `SymfonyLockAdapter`.
+
+By default, file locks (`FlockStore`) are kept in `<storage dir>/locks`. One small lock file per locked object remains there after the lock is released. This is intended: deleting lock files is not race-free, two processes could hold the same lock at once.
+
+If you don't want lock files, or the storage is shared across hosts, use a store without files:
+
+```php
+use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
+use Symfony\Component\Lock\Store\RedisStore;
+
+$redis = new Redis();
+$redis->connect('localhost', 6379);
+
+$storage = new ObjectStorage(
+    __DIR__ . '/var/object-storage',
+    lockAdapter: new SymfonyLockAdapter(new RedisStore($redis), prefix: 'my-storage.')
+);
+```
+
+- RedisStore, PostgreSqlStore: no lock files, shared locks for reading.
+- MemcachedStore, PdoStore, DoctrineDbalStore: no lock files, but reads use exclusive locks (no shared lock support), so concurrent readers wait for each other.
+- SemaphoreStore: no lock files, Linux only (ext-sysvsem).
+- Expiring stores (e.g. Redis) free locks of crashed processes after the TTL (default 300 seconds, constructor argument `$ttl`).
+- Use a distinct `prefix` per storage when several storages share one store.
+
+The former `FileSystem` and `CachedLockAdapter` backends have been removed; create a `SymfonyLockAdapter` with the matching store instead (`createFileLockAdapter()` for file locks).
 
 ## Unknown Classes: Automatic Aliasing
 
