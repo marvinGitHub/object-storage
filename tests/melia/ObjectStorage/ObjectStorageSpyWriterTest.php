@@ -65,19 +65,19 @@ class ObjectStorageSpyWriterTest extends TestCase
         $calls = $this->writerSpy->getAtomicWriteCalls();
 
         // Assert - Verify call details
-        $this->assertCount(3, $calls, 'Should have 3 calls (data + metadata + classname)');
+        $this->assertCount(3, $calls, 'Should have 3 calls (data + metadata as group, classname)');
         $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
 
-        // Check first call (data file)
+        // Check first call (data file, written as a group with its metadata)
         $dataCall = $calls[0];
-        $this->assertEquals('atomicWrite', $dataCall['method']);
+        $this->assertEquals('atomicWriteAll', $dataCall['method']);
         $this->assertStringEndsWith('.obj', $dataCall['filename']);
         $this->assertGreaterThan(0, $dataCall['data_length']);
         $this->assertIsFloat($dataCall['timestamp']);
 
-        // Check second call (metadata file)
+        // Check second call (metadata file, committed after the data)
         $metadataCall = $calls[1];
-        $this->assertEquals('atomicWrite', $metadataCall['method']);
+        $this->assertEquals('atomicWriteAll', $metadataCall['method']);
         $this->assertStringEndsWith('.metadata', $metadataCall['filename']);
         $this->assertGreaterThan(0, $metadataCall['data_length']);
 

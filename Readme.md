@@ -159,6 +159,22 @@ Use when you need to gate operations globally (e.g., fail-safe after corruption)
 - Caching: in-memory cache avoids repeated deserialization; use clearCache() to reset.
 - Safe Mode: if corrupted data is detected, safe mode is enabled to prevent writes until resolved. It applies to all processes using the storage directory and persists across restarts. Reading (load, list, match) keeps working; store, delete, setLifetime/setExpiration, exclusive loads and exclusive locks are rejected. Disable via disableSafeMode() (or the CLI) after fixing.
 
+### Durability
+
+An object is stored in two files, its data and its metadata (holding the checksum of the data). Both are written as a group with `WriterInterface::atomicWriteAll()`, so a crash (killed process, power loss) can't leave data without matching metadata. The `Writer` does this as follows:
+
+1. writes every file of the group as a pending file (`<uuid>.obj.pending`, `<uuid>.metadata.pending`), flushed to disk with `fsync`,
+2. commits the files in order by atomic renames, the data before the metadata, each flushed to disk as well.
+
+A crash before the first commit leaves the previous state. A crash between the commits is completed by `WriterInterface::recover()`, which the storage calls when an object's data doesn't match its metadata (or the metadata is missing): it commits the remaining pending files, so the files on disk are consistent again, instead of enabling safe mode. `delete()` recovers as well, so no leftovers remain. Other files (e.g. the class registry) are written to a temporary file and renamed atomically.
+
+`fsync` makes stores considerably slower, depending on the disk: a store of a changed object takes 5 flushes: both pending files, their directory once, and each commit (in a Docker-on-Windows test about 13 ms instead of 0.2 ms per store). Where durability doesn't matter, e.g. for caches or tests, it can be disabled:
+
+```php
+$storage = new ObjectStorage(__DIR__ . '/var/cache');
+$storage->getWriter()->setSyncEnabled(false);
+```
+
 ### Lock backends
 
 Locking is based on [symfony/lock](https://symfony.com/doc/current/components/lock.html), so any of its stores can be used via `SymfonyLockAdapter`.

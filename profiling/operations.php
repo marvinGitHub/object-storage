@@ -79,7 +79,7 @@ foreach ($objectCaches as $objectCacheName => $objectCache) {
             $lockAdapter->setLogger($logger);
             $lockAdapter->setStateHandler($state);
 
-            return new ObjectStorage(
+            $storage = new ObjectStorage(
                 $dir,
                 $logger,
                 $lockAdapter,
@@ -87,6 +87,10 @@ foreach ($objectCaches as $objectCacheName => $objectCache) {
                 $eventDispatcher,
                 $objectCache
             );
+
+			$storage->getWriter()->setSyncEnabled(false);
+
+			return $storage;
         };
     }
 }
@@ -103,6 +107,10 @@ if ($configName !== 'all' && !isset($configurations[$configName])) {
 $configurationsToRun = $configName === 'all'
     ? array_keys($configurations)
     : [$configName];
+
+// The profiler records every function call, which makes the measured duration considerably longer.
+// Run with PROFILE=0 to measure the plain duration, e.g. to compare the performance of two versions.
+$profilingEnabled = getenv('PROFILE') !== '0';
 
 // Workload function to avoid duplication
 function runWorkload(ObjectStorage $storage): array
@@ -279,10 +287,13 @@ function runWorkload(ObjectStorage $storage): array
 
 foreach ($configurationsToRun as $currentConfig) {
 
-    echo "Profiling configuration: $currentConfig\n";
+    echo ($profilingEnabled ? 'Profiling' : 'Measuring (profiler disabled)') . " configuration: $currentConfig\n";
 
-    $profiler = new Profiler(require __DIR__ . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'config.php');
-    $profiler->enable();
+    $profiler = null;
+    if ($profilingEnabled) {
+        $profiler = new Profiler(require __DIR__ . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'config.php');
+        $profiler->enable();
+    }
 
     // Setup storage with selected configuration
     $directory = new Directory();
@@ -298,14 +309,18 @@ foreach ($configurationsToRun as $currentConfig) {
     $duration = $end - $start;
 
     // Finish and save profile
-    $data = $profiler->disable();
-    if (isset($data['meta']['url'])) {
-        $data['meta']['url'] .= sprintf(' (%s)', $currentConfig);
+    if (null !== $profiler) {
+        $data = $profiler->disable();
+        if (isset($data['meta']['url'])) {
+            $data['meta']['url'] .= sprintf(' (%s)', $currentConfig);
+        }
+
+        $profiler->save($data);
+
+        echo "Profiling complete for $currentConfig. Results saved. Duration: $duration seconds\n";
+    } else {
+        echo "Measuring complete for $currentConfig. Duration: $duration seconds\n";
     }
-
-    $profiler->save($data);
-
-    echo "Profiling complete for $currentConfig. Results saved. Duration: $duration seconds\n";
 
     $directory->tearDown();
 

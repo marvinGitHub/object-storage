@@ -11,6 +11,7 @@ use Twig\Loader\FilesystemLoader;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use melia\ObjectStorage\File\Directory;
+use melia\ObjectStorage\Metadata\Metadata;
 use function SebastianBergmann\ObjectGraph\object_graph_dump;
 
 require_once __DIR__ . '/vendor/autoload.php';
@@ -159,15 +160,20 @@ try {
                 $uuidNew = $storage->getNextAvailableUuid();
 
                 $data = file_get_contents($storage->getFilePathData($uuid));
-                $medata = file_get_contents($storage->getFilePathMetadata($uuid));
 
-                $storage->buildShardedDirectory($uuidNew);
+                // the copied metadata must name the duplicate, otherwise later metadata updates of the
+                // duplicate (e.g. its lifetime) would be written to the original
+                $metadata = Metadata::createFromArray(json_decode(file_get_contents($storage->getFilePathMetadata($uuid)), true, 512, JSON_THROW_ON_ERROR));
+                $metadata->setUuid($uuidNew);
 
-                $dataWritten = false !== file_put_contents($storage->getFilePathData($uuidNew), $data);
-                $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuidNew), $medata);
+                // written as a group (the writer creates the shard directory), so a crash leaves no half copy
+                $storage->getWriter()->atomicWriteAll([
+                    $storage->getFilePathData($uuidNew) => $data,
+                    $storage->getFilePathMetadata($uuidNew) => json_encode($metadata, JSON_THROW_ON_ERROR),
+                ]);
                 $storage->createStub($storage->getClassName($uuid), $uuidNew);
                 $storage->getLockAdapter()->releaseLock($uuid);
-                $success = $dataWritten && $metadataWritten;
+                $success = true;
             } catch (Throwable $e) {
                 $success = false;
                 $logger->error($e);

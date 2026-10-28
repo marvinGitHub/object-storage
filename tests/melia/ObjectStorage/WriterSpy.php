@@ -29,6 +29,44 @@ class WriterSpy implements WriterInterface
         $this->realWriter?->atomicWrite($filename, $data);
     }
 
+    /**
+     * Records one call per file of the group, so a group counts like the single writes it replaces.
+     */
+    public function atomicWriteAll(array $files): void
+    {
+        foreach ($files as $filename => $data) {
+            $this->methodCalls[] = [
+                'method' => 'atomicWriteAll',
+                'filename' => $filename,
+                'data_length' => strlen((string)$data),
+                'timestamp' => microtime(true)
+            ];
+        }
+
+        $this->realWriter?->atomicWriteAll($files);
+    }
+
+    public function syncEnabled(): bool
+    {
+        return $this->realWriter?->syncEnabled() ?? false;
+    }
+
+    public function setSyncEnabled(bool $enabled): void
+    {
+        $this->realWriter?->setSyncEnabled($enabled);
+    }
+
+    public function recover(array $filenames): bool
+    {
+        $this->methodCalls[] = [
+            'method' => 'recover',
+            'filename' => implode(',', $filenames),
+            'timestamp' => microtime(true)
+        ];
+
+        return $this->realWriter?->recover($filenames) ?? false;
+    }
+
     public function createEmptyFile(string $filename): void
     {
         $this->methodCalls[] = [
@@ -45,9 +83,12 @@ class WriterSpy implements WriterInterface
         return $this->methodCalls;
     }
 
+    /**
+     * Calls writing file contents, i.e. atomicWrite() and each file of atomicWriteAll().
+     */
     public function getAtomicWriteCalls(): array
     {
-        return array_filter($this->methodCalls, fn($call) => $call['method'] === 'atomicWrite');
+        return array_values(array_filter($this->methodCalls, static fn($call) => in_array($call['method'], ['atomicWrite', 'atomicWriteAll'], true)));
     }
 
     public function getCallsForUuid(?string $uuid): array
@@ -65,6 +106,6 @@ class WriterSpy implements WriterInterface
 
     public function getAtomicWriteCallCount(): int
     {
-        return count(array_filter($this->methodCalls, fn($call) => $call['method'] === 'atomicWrite'));
+        return count($this->getAtomicWriteCalls());
     }
 }

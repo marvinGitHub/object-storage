@@ -66,6 +66,17 @@ class TestCase extends \PHPUnit\Framework\TestCase
         return $path;
     }
 
+    /**
+     * Places a file directly (bypassing the storage, e.g. to simulate corrupted data), creating its directory.
+     */
+    protected function putFile(string $filename, string $content): void
+    {
+        if (!is_dir(dirname($filename))) {
+            mkdir(dirname($filename), 0777, true);
+        }
+        file_put_contents($filename, $content);
+    }
+
     protected function createStorage(): ObjectStorage
     {
         $dir = $this->createTemporaryDirectory();

@@ -19,6 +19,7 @@ final class WriterRecoveryTest extends TestCase
     public function testRecoveryOnWriteFailureDeletesFile(): void
     {
         $adapter = $this->createMock(AdapterInterface::class);
+        $adapter->method('isDir')->willReturn(true); // the target directory exists
         $writer = new Writer();
 
         // Attach the adapter (works whether the trait exposes a setter or not).
@@ -59,12 +60,13 @@ final class WriterRecoveryTest extends TestCase
         $this->expectException(IOException::class);
         $this->expectExceptionMessage('Failed to write to file');
 
-        $writer->atomicWrite('some/target/file.dat', 'payload', false);
+        $writer->atomicWrite('some/target/file.dat', 'payload');
     }
 
     public function testRecoverySkipsUnlinkWhenFileDoesNotExist(): void
     {
         $adapter = $this->createMock(AdapterInterface::class);
+        $adapter->method('isDir')->willReturn(true); // the target directory exists
         $writer = new Writer();
 
         // Attach the adapter (works whether the trait exposes a setter or not).
@@ -101,6 +103,6 @@ final class WriterRecoveryTest extends TestCase
         $this->expectException(IOException::class);
         $this->expectExceptionMessage('Failed to write to file');
 
-        $writer->atomicWrite('some/target/file.dat', 'payload', false);
+        $writer->atomicWrite('some/target/file.dat', 'payload');
     }
 }

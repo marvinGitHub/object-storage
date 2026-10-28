@@ -14,6 +14,17 @@ interface AdapterInterface
 
     public function fflush($resource): bool;
 
+    /**
+     * Flushes the content of an open file to disk, so it survives a crash or power loss.
+     */
+    public function fsync($resource): bool;
+
+    /**
+     * Flushes a directory to disk, so files created or renamed in it survive a crash or power loss.
+     * Returns true where directories don't need to (or can't) be flushed explicitly, e.g. on Windows.
+     */
+    public function fsyncDirectory(string $directory): bool;
+
     /** @return int|false */
     public function ftell($resource);
 

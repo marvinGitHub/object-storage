@@ -29,6 +29,30 @@ class RealAdapter implements AdapterInterface
         return fflush($resource);
     }
 
+    public function fsync($resource): bool
+    {
+        return fsync($resource);
+    }
+
+    public function fsyncDirectory(string $directory): bool
+    {
+        // directories cannot be opened for flushing on Windows; NTFS journals these changes itself
+        if (DIRECTORY_SEPARATOR === '\\') {
+            return true;
+        }
+
+        $handle = @fopen($directory, 'r');
+        if (false === $handle) {
+            return false;
+        }
+
+        try {
+            return @fsync($handle);
+        } finally {
+            fclose($handle);
+        }
+    }
+
     public function ftell($resource): int
     {
         return ftell($resource);

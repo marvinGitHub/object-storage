@@ -673,72 +673,79 @@ class ObjectStorageTest extends TestCase
         $this->assertEquals($uuid, $loaded->uuid);
     }
 
-    public function testStoreThrowsWhenWriterMockFailsOnDataWrite(): void
+    /**
+     * A writer whose group writes (data + metadata) fail, other calls are no-ops.
+     */
+    private function createWriterFailingOnGroupWrite(): WriterInterface
     {
-        // Arrange: a mock writer that throws on first atomicWrite (data), then no-op
-        $failingWriter = new class implements WriterInterface {
-            private int $call = 0;
-
+        return new class implements WriterInterface {
             public function atomicWrite(string $filename, ?string $data = null): void
             {
-                $this->call++;
-                if ($this->call === 1) {
-                    throw new \RuntimeException('Simulated write failure');
-                }
-                // subsequent calls are ignored
+            }
+
+            public function atomicWriteAll(array $files): void
+            {
+                throw new \RuntimeException('Simulated write failure');
+            }
+
+            public function recover(array $filenames): bool
+            {
+                return false;
+            }
+
+            public function syncEnabled(): bool
+            {
+                return false;
+            }
+
+            public function setSyncEnabled(bool $enabled): void
+            {
             }
 
             public function createEmptyFile(string $filename): void
             {
-                // TODO: Implement createEmptyFile() method.
             }
         };
-
-        $this->storage->setWriter($failingWriter);
-
-        $obj = new stdClass();
-        $obj->foo = 'bar';
-
-        // Assert
-        $this->expectException(ObjectSavingFailureException::class);
-
-        // Act
-        $this->storage->store($obj);
     }
 
-    public function testStoreThrowsWhenWriterMockFailsOnMetadataWrite(): void
+    public function testStoreThrowsWhenWriterMockFailsOnDataWrite(): void
     {
-        // Arrange: mock writer throws on 2nd atomicWrite (metadata), other calls no-op
-        // Expected call order on initial store: data(.obj), metadata(.metadata), classnames.json, stub(.stub)
-        $writerThatFailsOnSecondCall = new class implements WriterInterface {
-            private int $calls = 0;
-
-            public function atomicWrite(string $filename, ?string $data = null): void
-            {
-                $this->calls++;
-                if ($this->calls === 2) {
-                    throw new \RuntimeException('Simulated metadata write failure');
-                }
-                // all other calls succeed (no-op here)
-            }
-
-            public function createEmptyFile(string $filename): void
-            {
-                // TODO: Implement createEmptyFile() method.
-            }
-        };
-
-        $this->storage->setWriter($writerThatFailsOnSecondCall);
+        $this->storage->setWriter($this->createWriterFailingOnGroupWrite());
 
         $obj = new stdClass();
         $obj->foo = 'bar';
 
-        // Act
         try {
             $this->storage->store($obj);
-        } catch (Throwable $e) {
-            $this->assertInstanceOf(MetadataSavingFailureException::class, $e->getPrevious());;
+            $this->fail('a failing write must fail the store');
+        } catch (ObjectSavingFailureException $e) {
+            $this->assertInstanceOf(ObjectSavingFailureException::class, $e->getPrevious());
+            $this->assertInstanceOf(\RuntimeException::class, $e->getPrevious()->getPrevious());
         }
+    }
+
+    public function testFailedWriteKeepsPreviousState(): void
+    {
+        $obj = new stdClass();
+        $obj->foo = 'before';
+        $uuid = $this->storage->store($obj);
+
+        $writer = $this->storage->getWriter();
+        $this->storage->setWriter($this->createWriterFailingOnGroupWrite());
+
+        $obj->foo = 'after';
+        try {
+            $this->storage->store($obj, $uuid);
+            $this->fail('a failing write must fail the store');
+        } catch (ObjectSavingFailureException) {
+            // expected
+        }
+
+        $this->storage->setWriter($writer);
+        $this->storage->clearCache();
+
+        $this->assertSame('before', $this->storage->load($uuid)->foo);
+        $this->assertFalse($this->storage->getStateHandler()->safeModeEnabled());
     }
 
     public function testSetAndGetExpirationWithConcreteDateTime(): void

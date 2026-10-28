@@ -18,8 +18,8 @@ class ObjectStorageClassAliasTest extends TestCase
 
         $storage = new ObjectStorage($dir);
 
-        file_put_contents($storage->getFilePathMetadata($uuid), sprintf('{"timestamp":1756892960,"className":"%s","uuid":"%s","version":"1.0","checksum":"671130ff","checksumAlgorithm":"crc32b"}', $unknownClassname, $uuid));
-        file_put_contents($storage->getFilePathData($uuid), '{"name":"Lazy-B"}');
+        $this->putFile($storage->getFilePathMetadata($uuid), sprintf('{"timestamp":1756892960,"className":"%s","uuid":"%s","version":"1.0","checksum":"671130ff","checksumAlgorithm":"crc32b"}', $unknownClassname, $uuid));
+        $this->putFile($storage->getFilePathData($uuid), '{"name":"Lazy-B"}');
 
         $this->assertTrue($storage->exists($uuid));
 

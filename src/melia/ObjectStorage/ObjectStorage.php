@@ -8,6 +8,7 @@ use DateTimeInterface;
 use Exception as PHPDefaultException;
 use FilterIterator;
 use Generator;
+use JsonException;
 use GlobIterator;
 use Iterator;
 use IteratorAggregate;
@@ -56,8 +57,12 @@ use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
+use melia\ObjectStorage\File\Reader;
 use melia\ObjectStorage\File\ReaderAwareTrait;
+use melia\ObjectStorage\File\ReaderInterface;
+use melia\ObjectStorage\File\Writer;
 use melia\ObjectStorage\File\WriterAwareTrait;
+use melia\ObjectStorage\File\WriterInterface;
 use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Logger\LoggerInterface;
@@ -103,6 +108,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use Cache\AwareTrait;
     use MetadataCacheAwareTrait;
     use ClassRenameMapAwareTrait;
+
+    /**
+     * The writer and reader created by default, which follow the IO adapter of the storage (see setIOAdapter()).
+     */
+    private ?Writer $defaultWriter = null;
+    private ?Reader $defaultReader = null;
 
     /**
      * The default checksum algorithm used for checksum validation.
@@ -315,20 +326,29 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Builds the sharded directory for a UUID
+     * Returns the files an object is stored in, in the order they are written: the data before the metadata
+     * holding its checksum, so a committed metadata file always belongs to a committed data file.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return array{string, string} The paths of the data file and the metadata file.
+     * @throws IOException
+     */
+    protected function getObjectFiles(string $uuid): array
+    {
+        return [$this->getFilePathData($uuid), $this->getFilePathMetadata($uuid)];
+    }
+
+    /**
+     * Builds the path of the sharded directory for a UUID, for the configured shard depth. The directory is not
+     * created: the writer creates it when the first file is written, so looking up unknown UUIDs leaves no
+     * empty directories behind.
      *
      * @param string $uuid
-     * @return string
-     * @throws IOException
+     * @return string The path of the directory, with a trailing directory separator.
      */
     public function buildShardedDirectory(string $uuid): string
     {
-        $path = $this->getShardedDirectory($uuid, $this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH);
-
-        // cache the directory check to avoid repeated I/O calls
-        $this->createDirectoryIfNotExist($path);
-
-        return $path;
+        return $this->getShardedDirectory($uuid, $this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH);
     }
 
     /**
@@ -376,7 +396,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected function saveMetadata(Metadata $metadata): void
     {
         try {
-            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), json_encode($metadata, JSON_THROW_ON_ERROR, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH));
+            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), $this->serializeMetadata($metadata));
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));
@@ -384,11 +404,56 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             throw new MetadataSavingFailureException(message: 'Unable to save metadata for uuid: ' . $metadata->getUUID(), previous: $e);
         }
 
+        $this->cacheMetadata($metadata);
+    }
+
+    /**
+     * Serializes metadata to JSON, as stored in the metadata file.
+     *
+     * @param Metadata $metadata The metadata to serialize.
+     * @return string The JSON representation.
+     * @throws JsonException
+     */
+    protected function serializeMetadata(Metadata $metadata): string
+    {
+        return json_encode($metadata, JSON_THROW_ON_ERROR, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
+    }
+
+    /**
+     * Puts metadata into the metadata cache; a failing cache is logged, not thrown.
+     *
+     * @param Metadata $metadata The metadata to cache.
+     * @return void
+     */
+    protected function cacheMetadata(Metadata $metadata): void
+    {
         try {
             $this->getMetadataCache()?->set($metadata->getUUID(), $metadata);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
         }
+    }
+
+    /**
+     * Completes a write of an object interrupted by a crash, so its data and metadata files match again.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool True if the files changed, false otherwise or if the recovery failed.
+     */
+    protected function recoverInterruptedWrite(string $uuid): bool
+    {
+        try {
+            $recovered = $this->getWriter()->recover($this->getObjectFiles($uuid));
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return false;
+        }
+
+        if ($recovered) {
+            $this->getLogger()?->log(new Exception(sprintf('Recovered object %s from an interrupted write', $uuid)));
+        }
+
+        return $recovered;
     }
 
     /**
@@ -593,6 +658,58 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
+     * Returns the writer; unless one was set, a default writer is created once, using the IO adapter of the storage.
+     *
+     * @return WriterInterface
+     */
+    public function getWriter(): WriterInterface
+    {
+        if (null === $this->writer) {
+            $this->defaultWriter = new Writer();
+            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
+            $this->writer = $this->defaultWriter;
+        }
+
+        return $this->writer;
+    }
+
+    /**
+     * Returns the reader; unless one was set, a default reader is created once, using the IO adapter of the storage.
+     *
+     * @return ReaderInterface
+     */
+    public function getReader(): ReaderInterface
+    {
+        if (null === $this->reader) {
+            $this->defaultReader = new Reader();
+            $this->defaultReader->setIOAdapter($this->getIOAdapter());
+            $this->reader = $this->defaultReader;
+        }
+
+        return $this->reader;
+    }
+
+    /**
+     * Sets the IO adapter of the storage, which the default writer and reader use as well. A writer or reader set
+     * explicitly keeps its own adapter.
+     *
+     * @param AdapterInterface|null $ioAdapter
+     * @return void
+     */
+    public function setIOAdapter(?AdapterInterface $ioAdapter): void
+    {
+        $this->ioAdapter = $ioAdapter;
+
+        if (null !== $this->defaultWriter && $this->writer === $this->defaultWriter) {
+            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
+        }
+
+        if (null !== $this->defaultReader && $this->reader === $this->defaultReader) {
+            $this->defaultReader->setIOAdapter($this->getIOAdapter());
+        }
+    }
+
+    /**
      * Retrieves the directory of the storage.
      *
      * @return string The storage directory path as a string.
@@ -702,8 +819,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
                 $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject);
 
+                // data and metadata are written as a group, so a crash can't leave data without matching metadata
+                [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
+
                 try {
-                    $this->getWriter()->atomicWrite($this->getFilePathData($uuid), $serializedGraph);
+                    $this->getWriter()->atomicWriteAll([
+                        $filePathData => $serializedGraph,
+                        $filePathMetadata => $this->serializeMetadata($metadata),
+                    ]);
                     $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                 } catch (Throwable $e) {
                     $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
@@ -715,7 +838,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
             }
 
-            if ($writeMetadata) {
+            if ($writeGraph) {
+                $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
+                $this->cacheMetadata($metadata);
+            } elseif ($writeMetadata) {
                 $this->saveMetadata($metadata);
             }
 
@@ -1092,8 +1218,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected function loadFromStorage(string $uuid): ?object
     {
-        // load metadata once and derive the class name and lifetime from it
+        // load metadata once and derive the class name and lifetime from it; a new object whose first write
+        // was interrupted by a crash has no metadata file yet, recovering completes (or discards) that write
         $metadata = $this->loadMetadata($uuid);
+        if (null === $metadata && $this->recoverInterruptedWrite($uuid)) {
+            $metadata = $this->reloadMetadata($uuid);
+        }
+
         if (null === $metadata) {
             $this->getStateHandler()?->enableSafeMode();
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
@@ -1106,8 +1237,29 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             return null;
         }
 
-        // the metadata to build the object from is the one the data was written with
-        $metadata = $this->verifyChecksum($uuid, $raw, $metadata);
+        // the metadata to build the object from is the one the data was written with; data not matching its
+        // metadata may be left by an interrupted write, which is completed before the files are read again
+        $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $metadata);
+        if (null === $matchingMetadata && $this->recoverInterruptedWrite($uuid)) {
+            $raw = $this->readFile($filename);
+            if (null === $raw) {
+                return null;
+            }
+            $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $this->reloadMetadata($uuid) ?? $metadata);
+        }
+
+        if (null === $matchingMetadata) {
+            $expected = $this->loadMetadata($uuid) ?? $metadata;
+            $this->getStateHandler()?->enableSafeMode();
+            throw new ChecksumMismatchException(sprintf(
+                'Checksum mismatch for uuid %s. Current: %s Expected: %s',
+                $uuid,
+                static::generateChecksum($raw, $expected->getChecksumAlgorithm()),
+                $expected->getChecksum()
+            ));
+        }
+
+        $metadata = $matchingMetadata;
         $data = $this->decodeJson($raw, $filename);
 
         // build object using the single metadata instance
@@ -1127,20 +1279,19 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Verifies the raw data of an object against the checksum of its metadata.
+     * Finds the metadata the raw data of an object was written with, by its checksum.
      *
      * The given metadata may come from the cache and be outdated, since another process may have updated
      * the object in the meantime. So on a mismatch the metadata is reloaded from disk once, and the same
-     * data is verified again. Only a mismatch against the metadata on disk indicates corrupted data.
+     * data is verified again.
      *
      * @param string $uuid The unique identifier of the object.
      * @param string $data The raw data as read from the data file.
      * @param Metadata $metadata The metadata of the object, possibly from the cache.
-     * @return Metadata The metadata matching the data: the given one or the one reloaded from disk.
-     * @throws ChecksumMismatchException If the data doesn't match the metadata on disk; safe mode is enabled.
-     * @throws SafeModeActivationFailedException
+     * @return Metadata|null The metadata matching the data (the given one or the one reloaded from disk),
+     *                       or null if the data matches neither.
      */
-    protected function verifyChecksum(string $uuid, string $data, Metadata $metadata): Metadata
+    protected function findMatchingMetadata(string $uuid, string $data, Metadata $metadata): ?Metadata
     {
         if (false === $this->getStrategy()?->checksumValidationEnabled() || static::checksumMatches($data, $metadata)) {
             return $metadata;
@@ -1151,14 +1302,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             return $freshMetadata;
         }
 
-        $expected = $freshMetadata ?? $metadata;
-        $this->getStateHandler()?->enableSafeMode();
-        throw new ChecksumMismatchException(sprintf(
-            'Checksum mismatch for uuid %s. Current: %s Expected: %s',
-            $uuid,
-            static::generateChecksum($data, $expected->getChecksumAlgorithm()),
-            $expected->getChecksum()
-        ));
+        return null;
     }
 
     /**
@@ -1431,6 +1575,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             if (!$this->exists($uuid)) {
                 throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
+            }
+
+            // complete an interrupted write first, so no leftovers of it remain (or are committed) after deleting
+            if ($this->recoverInterruptedWrite($uuid)) {
+                $this->reloadMetadata($uuid);
             }
 
             $className = $this->getClassName($uuid);

@@ -8,7 +8,8 @@ trait WriterAwareTrait
 
     public function getWriter(): WriterInterface
     {
-        return $this->writer ?? new Writer();
+        // keep the default writer, so its configuration (e.g. setSyncEnabled()) applies to later writes
+        return $this->writer ??= new Writer();
     }
 
     public function setWriter(WriterInterface $writer): void

@@ -83,4 +83,36 @@ class RealAdapterTest extends TestCase
         $this->assertFileExists($path);
         $this->assertTrue(is_file($path));
     }
+
+    public function testFsync(): void
+    {
+        $adapter = new RealAdapter();
+        $filename = $this->createTemporaryFile();
+
+        $handle = $adapter->fopen($filename, 'w');
+        $adapter->fwrite($handle, 'content');
+
+        $this->assertTrue($adapter->fsync($handle));
+
+        $adapter->fclose($handle);
+        $this->assertStringEqualsFile($filename, 'content');
+    }
+
+    public function testFsyncDirectory(): void
+    {
+        $adapter = new RealAdapter();
+
+        $this->assertTrue($adapter->fsyncDirectory($this->reserveRandomDirectory()));
+    }
+
+    public function testFsyncDirectoryFailsForMissingDirectory(): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $this->markTestSkipped('Directories are not flushed explicitly on Windows');
+        }
+
+        $adapter = new RealAdapter();
+
+        $this->assertFalse($adapter->fsyncDirectory(sys_get_temp_dir() . '/does-not-exist-' . uniqid()));
+    }
 }

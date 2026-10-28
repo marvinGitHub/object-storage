@@ -10,6 +10,13 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - The default lock adapter is now `SymfonyLockAdapter` with file locks in `<storage dir>/locks` (previously `<uuid>.lock` files directly in the storage directory). The CLI uses the same location.
 - New dependency: `symfony/lock`.
+- Stores are crash-safe: data and metadata are written as a group by the writer (as pending files `<uuid>.obj.pending`, `<uuid>.metadata.pending` first, then committed by atomic renames, the data before the metadata). A store interrupted between both commits is completed when loading or deleting the object, instead of enabling safe mode.
+- **Breaking:** `ObjectStorage::buildShardedDirectory()` only builds the path and no longer creates the directory; the writer creates it when the first file is written. Looking up unknown UUIDs (`exists()`, `load()`, `loadMetadata()`) no longer leaves empty shard directories behind. Code writing into shard directories itself has to create them.
+- `Writer` always creates a missing directory when writing; the parameter `$createDirectoryIfNotExist` of `Writer::atomicWrite()` has been removed (passing it has no effect anymore).
+- `Writer` flushes every written file and the rename of it to disk (`fsync`). This makes stores considerably slower; disable it with `$storage->getWriter()->setSyncEnabled(false)` (or `new Writer(sync: false)`) where durability doesn't matter.
+- The default writer and reader of a storage are created once and kept, so their configuration applies to later operations (previously `getWriter()`/`getReader()` returned a new instance on every call).
+- **Breaking:** `WriterInterface` has new methods `atomicWriteAll()` (writes several files as a group) and `recover()` (completes an interrupted group write), used for the crash-safe store, as well as `syncEnabled()` and `setSyncEnabled()`. Custom writer implementations have to implement them (see `Writer`).
+- **Breaking:** `AdapterInterface` has new methods `fsync()` and `fsyncDirectory()`, used by `Writer` to flush files and directories to disk. Custom IO adapters have to implement them (see `RealAdapter`).
 - Safe mode only blocks modifications: loading, listing and matching objects keep working, only exclusive locks (store, delete, lifetime changes, exclusive loads) are rejected. Previously every lock was rejected, so a single corrupted object made the whole storage unreadable. Loads no longer check the safe mode file, which saves a file lookup per load.
 
 ### Removed
@@ -22,6 +29,8 @@ All notable changes to this project will be documented in this file.
 - Code creating `FileSystem` or `CachedLockAdapter` explicitly has to be migrated to `SymfonyLockAdapter`, see "Lock backends" in the Readme.
 
 ### Fixed
+- The default writer and reader of a storage ignored the IO adapter given to the storage and always accessed the real filesystem. They now use the adapter of the storage, and follow it when it is changed by `setIOAdapter()`; an explicitly set writer or reader keeps its own adapter.
+- Viewer: duplicating a record copied the metadata including the UUID of the original, so later metadata updates of the duplicate (e.g. its lifetime) overwrote the metadata of the original. The duplicate is now written with its own UUID, data and metadata as a crash-safe group.
 - Loading an object that another process had updated in the meantime could enable safe mode for the whole storage: the data was validated against outdated cached metadata. On a checksum mismatch the metadata is now reloaded from disk once; safe mode is only enabled if the data doesn't match the metadata on disk either.
 - `load()` no longer releases a lock that the caller acquired before (e.g. by a previous exclusive load or a running `store()`).
 - The previous object passed to `OBJECT_SAVED` / `OBJECT_WRITE_FAILED` listeners is now loaded before the data file is overwritten.

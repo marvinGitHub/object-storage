@@ -30,11 +30,11 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
         $metadata->setTimestampCreation(microtime(true));
         $metadata->setChecksum('abcdef0123456789abcdef0123456789'); // bogus checksum
         $metadataPath = $this->storage->getFilePathMetadata($uuid);
-        file_put_contents($metadataPath, json_encode($metadata, JSON_UNESCAPED_SLASHES));
+        $this->putFile($metadataPath, json_encode($metadata, JSON_UNESCAPED_SLASHES));
 
         // Create object data file with content that will produce a different checksum
         $objectPath = $this->storage->getFilePathData($uuid);
-        file_put_contents($objectPath, json_encode(['a' => 1], JSON_UNESCAPED_SLASHES));
+        $this->putFile($objectPath, json_encode(['a' => 1], JSON_UNESCAPED_SLASHES));
 
         try {
             $this->storage->load($uuid);
@@ -52,7 +52,7 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
 
         // No metadata file is written to simulate load failure
         // Create object file so load attempts to proceed after metadata (which will fail first)
-        file_put_contents($this->storage->getFilePathData($uuid), json_encode(['x' => 2], JSON_UNESCAPED_SLASHES));
+        $this->putFile($this->storage->getFilePathData($uuid), json_encode(['x' => 2], JSON_UNESCAPED_SLASHES));
 
         $this->expectException(ObjectLoadingFailureException::class);
 
