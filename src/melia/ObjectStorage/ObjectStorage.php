@@ -246,11 +246,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected function loadFromJsonFile(string $filename, ?callable $validator = null): ?array
     {
-        try {
-            $data = $this->getReader()->read($filename);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($filename));
+        $data = $this->readFile($filename);
+        if (null === $data) {
             return null;
         }
 
@@ -258,20 +255,51 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $validator($data);
         }
 
+        return $this->decodeJson($data, $filename);
+    }
+
+    /**
+     * Reads the raw content of a file; a read failure is logged and dispatched, not thrown.
+     *
+     * @param string $filename The path to the file to read.
+     * @return string|null The content of the file, or null if it cannot be read.
+     */
+    protected function readFile(string $filename): ?string
+    {
         try {
-            $data = json_decode($data, true, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH, JSON_THROW_ON_ERROR);
+            return $this->getReader()->read($filename);
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
-            $data = null;
+            $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($filename));
+            return null;
+        }
+    }
+
+    /**
+     * Decodes JSON read from a file, enabling safe mode upon failure.
+     *
+     * @param string $data The JSON to decode.
+     * @param string $filename The path to the file the JSON was read from, for error reporting.
+     * @return array The decoded data as an associative array.
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException If the data cannot be decoded.
+     */
+    protected function decodeJson(string $data, string $filename): array
+    {
+        try {
+            $decoded = json_decode($data, true, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH, JSON_THROW_ON_ERROR);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $decoded = null;
         }
 
-        if (null === $data) {
+        if (false === is_array($decoded)) {
             $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, static fn() => new IOContext($filename));
             $this->getStateHandler()?->enableSafeMode();
             throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
         }
 
-        return $data;
+        return $decoded;
     }
 
     /**
@@ -1071,26 +1099,16 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
         }
 
-        try {
-            $data = $this->loadFromJsonFile($this->getFilePathData($uuid), function (string $data) use ($metadata) {
-                if (false === $this->getStrategy()?->checksumValidationEnabled()) {
-                    return;
-                }
+        $filename = $this->getFilePathData($uuid);
 
-                $checksum = static::generateChecksum($data, $metadata->getChecksumAlgorithm());
-
-                if ($metadata->getChecksum() !== $checksum) {
-                    throw new ChecksumMismatchException(sprintf('Checksum mismatch for uuid %s. Current: %s Expected: %s', $metadata->getUUID(), $checksum, $metadata->getChecksum()));
-                }
-            });
-        } catch (ChecksumMismatchException $e) {
-            $this->getStateHandler()?->enableSafeMode();
-            throw $e;
-        }
-
-        if (false === is_array($data)) {
+        $raw = $this->readFile($filename);
+        if (null === $raw) {
             return null;
         }
+
+        // the metadata to build the object from is the one the data was written with
+        $metadata = $this->verifyChecksum($uuid, $raw, $metadata);
+        $data = $this->decodeJson($raw, $filename);
 
         // build object using the single metadata instance
         $object = $this->createInstance($metadata->getClassName());
@@ -1106,6 +1124,70 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->addToCache($uuid, $object, $metadata->getLifetime());
 
         return $object;
+    }
+
+    /**
+     * Verifies the raw data of an object against the checksum of its metadata.
+     *
+     * The given metadata may come from the cache and be outdated, since another process may have updated
+     * the object in the meantime. So on a mismatch the metadata is reloaded from disk once, and the same
+     * data is verified again. Only a mismatch against the metadata on disk indicates corrupted data.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @param string $data The raw data as read from the data file.
+     * @param Metadata $metadata The metadata of the object, possibly from the cache.
+     * @return Metadata The metadata matching the data: the given one or the one reloaded from disk.
+     * @throws ChecksumMismatchException If the data doesn't match the metadata on disk; safe mode is enabled.
+     * @throws SafeModeActivationFailedException
+     */
+    protected function verifyChecksum(string $uuid, string $data, Metadata $metadata): Metadata
+    {
+        if (false === $this->getStrategy()?->checksumValidationEnabled() || static::checksumMatches($data, $metadata)) {
+            return $metadata;
+        }
+
+        $freshMetadata = $this->reloadMetadata($uuid);
+        if (null !== $freshMetadata && static::checksumMatches($data, $freshMetadata)) {
+            return $freshMetadata;
+        }
+
+        $expected = $freshMetadata ?? $metadata;
+        $this->getStateHandler()?->enableSafeMode();
+        throw new ChecksumMismatchException(sprintf(
+            'Checksum mismatch for uuid %s. Current: %s Expected: %s',
+            $uuid,
+            static::generateChecksum($data, $expected->getChecksumAlgorithm()),
+            $expected->getChecksum()
+        ));
+    }
+
+    /**
+     * Checks whether the checksum of the data equals the one recorded in the metadata.
+     *
+     * @param string $data The raw data.
+     * @param Metadata $metadata The metadata holding the expected checksum and its algorithm.
+     * @return bool True if the checksums are equal, false otherwise.
+     */
+    protected static function checksumMatches(string $data, Metadata $metadata): bool
+    {
+        return $metadata->getChecksum() === static::generateChecksum($data, $metadata->getChecksumAlgorithm());
+    }
+
+    /**
+     * Loads the metadata from disk, bypassing and refreshing the metadata cache.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return Metadata|null The metadata on disk, or null if it cannot be loaded.
+     */
+    protected function reloadMetadata(string $uuid): ?Metadata
+    {
+        try {
+            $this->getMetadataCache()?->delete($uuid);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+
+        return $this->loadMetadata($uuid);
     }
 
     /**

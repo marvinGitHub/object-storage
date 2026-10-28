@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - Code creating `FileSystem` or `CachedLockAdapter` explicitly has to be migrated to `SymfonyLockAdapter`, see "Lock backends" in the Readme.
 
 ### Fixed
+- Loading an object that another process had updated in the meantime could enable safe mode for the whole storage: the data was validated against outdated cached metadata. On a checksum mismatch the metadata is now reloaded from disk once; safe mode is only enabled if the data doesn't match the metadata on disk either.
 - `load()` no longer releases a lock that the caller acquired before (e.g. by a previous exclusive load or a running `store()`).
 - The previous object passed to `OBJECT_SAVED` / `OBJECT_WRITE_FAILED` listeners is now loaded before the data file is overwritten.
 - `store()` of a loaded `LazyLoadReference` failed for objects not implementing the UUID `AwareInterface`.

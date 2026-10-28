@@ -6,7 +6,6 @@ require_once __DIR__ . '/../vendor/autoload.php';
 
 use melia\ObjectStorage\Event\Dispatcher;
 use melia\ObjectStorage\File\Directory;
-use melia\ObjectStorage\Locking\Backends\LockAdapterAbstract;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\State\StateHandler;
@@ -66,7 +65,7 @@ $objectCaches = [
 foreach ($objectCaches as $objectCacheName => $objectCache) {
     /**
      * @var string $lockAdapterName
-     * @var callable(string): LockAdapterAbstract $lockAdapterFactory
+     * @var \Closure(string): SymfonyLockAdapter $lockAdapterFactory
      */
     foreach ($lockAdapters as $lockAdapterName => $lockAdapterFactory) {
         $configName = sprintf('%s.%s', $objectCacheName, $lockAdapterName);

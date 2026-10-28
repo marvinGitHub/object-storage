@@ -86,6 +86,63 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
         }
     }
 
+    public function testOutdatedCachedMetadataOfObjectUpdatedByOtherProcessDoesNotEnableSafeMode(): void
+    {
+        $object = new ChildObject('before', 1);
+        $uuid = $this->storage->store($object);
+        $this->storage->clearCache();
+
+        // warms only the metadata cache, as e.g. match(), getClassName() or expired() do
+        $this->storage->getClassName($uuid);
+
+        $otherProcess = new ObjectStorage($this->storage->getStorageDir());
+        $updated = $otherProcess->load($uuid);
+        $updated->title = 'after';
+        $otherProcess->store($updated, $uuid);
+
+        $loaded = $this->storage->load($uuid);
+
+        $this->assertSame('after', $loaded->title);
+        $this->assertFalse($this->getStateHandler($this->storage)->safeModeEnabled(), 'An update by another process must not enable safe mode.');
+    }
+
+    public function testClassChangedByOtherProcessIsLoadedWithFreshMetadata(): void
+    {
+        $uuid = $this->storage->store(new ChildObject('child', 1));
+        $this->storage->clearCache();
+        $this->storage->getClassName($uuid);
+
+        $otherProcess = new ObjectStorage($this->storage->getStorageDir());
+        $replacement = new DummyClassForChecksumTest();
+        $replacement->a = 'replaced';
+        $otherProcess->store($replacement, $uuid);
+
+        $loaded = $this->storage->load($uuid);
+
+        $this->assertInstanceOf(DummyClassForChecksumTest::class, $loaded);
+        $this->assertSame('replaced', $loaded->a);
+        $this->assertSame(DummyClassForChecksumTest::class, $this->storage->getClassName($uuid), 'the metadata cache must be refreshed');
+        $this->assertFalse($this->getStateHandler($this->storage)->safeModeEnabled());
+    }
+
+    public function testCorruptedDataStillEnablesSafeModeWhenMetadataIsCached(): void
+    {
+        $uuid = $this->storage->store(new ChildObject('child', 1));
+        $this->storage->clearCache();
+        $this->storage->getClassName($uuid);
+
+        file_put_contents($this->storage->getFilePathData($uuid), json_encode(['title' => 'tampered', 'value' => 1]));
+
+        try {
+            $this->storage->load($uuid);
+            $this->fail('loading corrupted data must fail');
+        } catch (ObjectLoadingFailureException $e) {
+            $this->assertInstanceOf(ChecksumMismatchException::class, $e->getPrevious());
+        }
+
+        $this->assertTrue($this->getStateHandler($this->storage)->safeModeEnabled(), 'A mismatch against the metadata on disk must still enable safe mode.');
+    }
+
     /**
      * Extract the StateHandler from ObjectStorage via reflection since it is protected.
      */
