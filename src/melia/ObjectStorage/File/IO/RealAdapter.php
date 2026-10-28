@@ -29,9 +29,21 @@ class RealAdapter implements AdapterInterface
         return fflush($resource);
     }
 
-    public function fsync($resource): bool
+    public function fsyncFile(string $filename): bool
     {
-        return fsync($resource);
+        // opened for writing: on Windows, flushing requires write access
+        return $this->fsyncPath($filename, 'r+');
+    }
+
+    public function renameSync(string $from, string $to): bool
+    {
+        if (false === $this->rename($from, $to)) {
+            return false;
+        }
+
+        $this->fsyncDirectory(dirname($to));
+
+        return true;
     }
 
     public function fsyncDirectory(string $directory): bool
@@ -41,7 +53,19 @@ class RealAdapter implements AdapterInterface
             return true;
         }
 
-        $handle = @fopen($directory, 'r');
+        return $this->fsyncPath($directory, 'r');
+    }
+
+    /**
+     * Opens a file or directory, flushes it to disk and closes it again.
+     *
+     * @param string $path The file or directory to flush.
+     * @param string $mode The mode to open it with.
+     * @return bool Whether it could be opened and flushed.
+     */
+    private function fsyncPath(string $path, string $mode): bool
+    {
+        $handle = @fopen($path, $mode);
         if (false === $handle) {
             return false;
         }
@@ -120,11 +144,32 @@ class RealAdapter implements AdapterInterface
      */
     public function moveFile(string $source, string $targetDir, ?string $fileName = null): bool
     {
-        $fileName = $fileName ?? basename($source);
+        return $this->rename($source, $this->prepareMoveTarget($source, $targetDir, $fileName));
+    }
+
+    /**
+     * Like moveFile(), but flushes the move to disk, see renameSync().
+     */
+    public function moveFileSync(string $source, string $targetDir, ?string $fileName = null): bool
+    {
+        return $this->renameSync($source, $this->prepareMoveTarget($source, $targetDir, $fileName));
+    }
+
+    /**
+     * Creates the target directory of a move if it doesn't exist and returns the target path.
+     *
+     * @param string $source The path to the source file.
+     * @param string $targetDir The target directory.
+     * @param string|null $fileName The new name of the file, defaults to the basename of the source file.
+     * @return string The path of the file in the target directory.
+     */
+    private function prepareMoveTarget(string $source, string $targetDir, ?string $fileName): string
+    {
         if (!$this->isDir($targetDir)) {
             $this->mkdir($targetDir, 0777, true);
         }
-        return $this->rename($source, rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $fileName);
+
+        return rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . ($fileName ?? basename($source));
     }
 
     public function isDir(string $filename): bool

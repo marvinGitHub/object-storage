@@ -701,10 +701,6 @@ class ObjectStorageTest extends TestCase
             public function setSyncEnabled(bool $enabled): void
             {
             }
-
-            public function createEmptyFile(string $filename): void
-            {
-            }
         };
     }
 

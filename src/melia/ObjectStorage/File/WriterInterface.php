@@ -7,8 +7,6 @@ interface WriterInterface
 
     public function atomicWrite(string $filename, ?string $data = null): void;
 
-    public function createEmptyFile(string $filename): void;
-
     /**
      * @return bool Whether written files are flushed to disk (fsync), so they survive a power loss or OS crash.
      */

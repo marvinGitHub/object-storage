@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
@@ -44,6 +45,55 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
             // After mismatch, safe mode must be enabled
             $this->assertTrue($this->getStateHandler($this->storage)->safeModeEnabled(), 'Safe mode should be enabled after checksum mismatch.');
         }
+    }
+
+    public function testLoadingAnUnknownUuidReturnsNullWithoutSafeModeOrFailures(): void
+    {
+        $logged = [];
+        $logger = new class ($logged) implements \melia\ObjectStorage\Logger\LoggerInterface {
+            public function __construct(private array &$logged) {}
+            public function log(\Throwable $error): void { $this->logged[] = $error; }
+        };
+        $storage = new ObjectStorage($this->storage->getStorageDir(), logger: $logger);
+
+        $failures = [];
+        foreach ([Events::METADATA_LOADING_FAILURE, Events::IO_READ_FAILURE, Events::OBJECT_LOADING_FAILURE] as $event) {
+            $storage->getEventDispatcher()->addListener($event, static function () use (&$failures, $event) {
+                $failures[] = $event;
+            });
+        }
+
+        $uuid = $storage->getNextAvailableUuid();
+
+        $this->assertNull($storage->load($uuid));
+        $this->assertNull($storage->loadMetadata($uuid));
+        $this->assertFalse($this->getStateHandler($storage)->safeModeEnabled());
+        $this->assertSame([], $failures, 'a missing object is not a failure');
+        $this->assertSame([], $logged, 'a missing object is not logged');
+    }
+
+    public function testLoadingADeletedObjectReturnsNull(): void
+    {
+        $uuid = $this->storage->store(new ChildObject('child', 1));
+        $this->storage->delete($uuid);
+
+        $otherProcess = new ObjectStorage($this->storage->getStorageDir());
+
+        $this->assertNull($otherProcess->load($uuid));
+        $this->assertFalse($this->getStateHandler($otherProcess)->safeModeEnabled());
+    }
+
+    public function testExclusiveLoadOfAnUnknownUuidKeepsTheLockForCreatingTheObject(): void
+    {
+        $uuid = $this->storage->getNextAvailableUuid();
+
+        $this->assertNull($this->storage->load($uuid, true));
+        $this->assertTrue($this->storage->getLockAdapter()->hasActiveExclusiveLock($uuid));
+
+        $this->storage->store(new ChildObject('created', 1), $uuid);
+
+        $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
+        $this->assertSame('created', $this->storage->load($uuid)->title);
     }
 
     public function testSafeModeEnabledWhenMetadataCannotBeLoaded(): void

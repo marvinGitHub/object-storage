@@ -28,6 +28,43 @@ final class ObjectStorageLockingRegressionTest extends TestCase
         $this->assertFalse($storage->getLockAdapter()->isLockedByThisProcess($uuid));
     }
 
+    public function testExclusiveLoadReturnsCurrentStateInsteadOfCachedCopy(): void
+    {
+        $uuid = $this->storage->store(new ChildObject('stock', 100));
+        $this->storage->load($uuid); // cached in this "process"
+
+        $otherProcess = new ObjectStorage($this->storage->getStorageDir());
+        $product = $otherProcess->load($uuid, true);
+        $product->value = 99;
+        $otherProcess->store($product, $uuid);
+
+        $loaded = $this->storage->load($uuid, true);
+
+        $this->assertSame(99, $loaded->value, 'an exclusive load must not return an outdated cached copy');
+        $this->assertTrue($this->storage->getLockAdapter()->hasActiveExclusiveLock($uuid));
+        $this->assertSame($loaded, $this->storage->load($uuid), 'the fresh object replaces the cached copy');
+
+        $this->storage->getLockAdapter()->releaseLock($uuid);
+    }
+
+    public function testReadModifyWriteWithExclusiveLoadLosesNoUpdates(): void
+    {
+        $uuid = $this->storage->store(new ChildObject('stock', 10));
+        $otherProcess = new ObjectStorage($this->storage->getStorageDir());
+
+        // both "processes" have the object cached, then update it alternately
+        $this->storage->load($uuid);
+        $otherProcess->load($uuid);
+
+        foreach ([$this->storage, $otherProcess, $this->storage, $otherProcess] as $storage) {
+            $product = $storage->load($uuid, true);
+            $product->value--;
+            $storage->store($product, $uuid);
+        }
+
+        $this->assertSame(6, (new ObjectStorage($this->storage->getStorageDir()))->load($uuid)->value);
+    }
+
     public function testSharedLoadDoesNotReleaseExclusiveLockOfCaller(): void
     {
         $uuid = $this->storage->store(new ChildObject('title', 1));
@@ -43,6 +80,32 @@ final class ObjectStorageLockingRegressionTest extends TestCase
         $this->assertTrue($this->storage->getLockAdapter()->hasActiveExclusiveLock($uuid));
 
         $this->storage->getLockAdapter()->releaseLock($uuid);
+    }
+
+    public function testPreviousObjectIsTheStoredStateWhenTheObjectIsCached(): void
+    {
+        $contexts = [];
+        $this->storage->getEventDispatcher()->addListener(Events::OBJECT_SAVED, function (ObjectPersistenceContext $context) use (&$contexts) {
+            $contexts[] = $context;
+        });
+
+        $object = new ChildObject('before', 1);
+        $uuid = $this->storage->store($object);
+
+        // the object is cached: update the same instance
+        $object->title = 'after';
+        $this->storage->store($object, $uuid);
+
+        $this->assertCount(2, $contexts);
+        $this->assertNull($contexts[0]->getPreviousObject(), 'a new object has no previous state');
+
+        $previous = $contexts[1]->getPreviousObject();
+        $this->assertNotSame($object, $previous, 'the previous state must not be the object being stored');
+        $this->assertSame('before', $previous->title);
+        $this->assertSame('after', $contexts[1]->getObject()->title);
+
+        // the previous state doesn't replace the current object in the cache
+        $this->assertSame($object, $this->storage->load($uuid));
     }
 
     public function testObjectSavedListenerReceivesPreviousObject(): void

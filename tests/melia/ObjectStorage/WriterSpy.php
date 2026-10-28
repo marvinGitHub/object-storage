@@ -67,17 +67,6 @@ class WriterSpy implements WriterInterface
         return $this->realWriter?->recover($filenames) ?? false;
     }
 
-    public function createEmptyFile(string $filename): void
-    {
-        $this->methodCalls[] = [
-            'method' => 'createEmptyFile',
-            'filename' => $filename,
-            'timestamp' => microtime(true)
-        ];
-
-        $this->realWriter?->createEmptyFile($filename);
-    }
-
     public function getMethodCalls(): array
     {
         return $this->methodCalls;

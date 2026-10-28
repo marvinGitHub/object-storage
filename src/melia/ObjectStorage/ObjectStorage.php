@@ -231,7 +231,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         try {
-            $metadata = $this->loadFromJsonFile($this->getFilePathMetadata($uuid));
+            $filePathMetadata = $this->getFilePathMetadata($uuid);
+
+            // no metadata stored under this UUID: nothing to load, which is not a failure worth reporting
+            if (false === $this->getIOAdapter()->isFile($filePathMetadata)) {
+                return null;
+            }
+
+            $metadata = $this->loadFromJsonFile($filePathMetadata);
             if (null === $metadata) {
                 throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
             }
@@ -339,30 +346,19 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Builds the path of the sharded directory for a UUID, for the configured shard depth. The directory is not
-     * created: the writer creates it when the first file is written, so looking up unknown UUIDs leaves no
-     * empty directories behind.
+     * Builds the path of the sharded directory for a UUID: one directory level per leading character of the UUID,
+     * as many levels as the configured shard depth (depth 0 => <storage>/shards). The directory is not created:
+     * the writer creates it when the first file is written, so looking up unknown UUIDs leaves no empty
+     * directories behind.
      *
      * @param string $uuid
      * @return string The path of the directory, with a trailing directory separator.
      */
     public function buildShardedDirectory(string $uuid): string
     {
-        return $this->getShardedDirectory($uuid, $this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH);
-    }
+        $depth = min($this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH, 32);
 
-    /**
-     * Get the sharded directory for a UUID for a given sharding depth.
-     * Depth 0 => storageDir/shards
-     *
-     * @param string $uuid
-     * @param int $depth
-     * @return string
-     */
-    protected function getShardedDirectory(string $uuid, int $depth): string
-    {
-        $uuid = Helper::removeHyphens($uuid);
-        return $this->getShardDir() . DIRECTORY_SEPARATOR . chunk_split(substr($uuid, 0, min($depth, 32)), 1, DIRECTORY_SEPARATOR);
+        return $this->getShardDir() . DIRECTORY_SEPARATOR . chunk_split(substr(Helper::removeHyphens($uuid), 0, $depth), 1, DIRECTORY_SEPARATOR);
     }
 
     /**
@@ -807,11 +803,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             if ($writeGraph) {
                 // the previous object must be loaded before the data file is overwritten, otherwise the
-                // new data would be validated against the old metadata (checksum mismatch → safe mode)
+                // new data would be validated against the old metadata (checksum mismatch → safe mode);
+                // it is read from the files, not the cache, which holds the object being stored, and is
+                // not cached, so it doesn't replace the current object there
                 $previousObject = null;
                 if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
                     try {
-                        $previousObject = $this->load($uuid);
+                        $previousObject = $this->loadFromStorage($uuid, addToCache: false);
                     } catch (Throwable $e) {
                         $this->getLogger()?->log($e);
                     }
@@ -1138,10 +1136,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $cache = $this->getCache();
 
         // For non-exclusive reads a cache hit can be served immediately without locking,
-        // as no exclusivity guarantee was requested. An exclusive load, however, must not
-        // bypass locking on a cache hit: callers rely on it to hold the lock afterwards
-        // (e.g. before a subsequent store()), so the cache is re-checked after the lock
-        // below instead of short-circuiting here.
+        // as no exclusivity guarantee was requested. An exclusive load always reads the
+        // stored state under the lock (see below), so it never short-circuits here.
         if (!$exclusive) {
             $cached = $cache?->get($uuid);
             if (null !== $cached) {
@@ -1156,14 +1152,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         try {
             if ($exclusive) {
+                // an exclusive load is the start of a read-modify-write: it must return the state
+                // stored right now, not a cached copy, which doesn't know about changes of other
+                // processes; reading from storage replaces the cached copy as well
                 $lockAdapter?->acquireExclusiveLock($uuid);
-
-                $cached = $cache?->get($uuid);
-                if (null !== $cached) {
-                    $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
-                    $eventDispatcher?->dispatch(Events::AFTER_LOAD, static fn() => new Context($uuid));
-                    return $cached;
-                }
             } else {
                 $lockAdapter?->acquireSharedLock($uuid);
             }
@@ -1205,9 +1197,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Loads an object based on a UUID from a cache or file.
+     * Loads an object based on a UUID from its files.
      *
      * @param string $uuid The unique ID of the object to be loaded.
+     * @param bool $addToCache Whether the loaded object is put into the cache; false to read a stored state
+     *                         without replacing the cached object, e.g. the previous state of an object being stored.
      * @return object|null The loaded object or null if it doesn't exist.
      * @throws InvalidFileFormatException
      * @throws InvalidUUIDException
@@ -1216,7 +1210,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws SerializationFailureException
      * @throws TypeConversionFailureException|Throwable
      */
-    protected function loadFromStorage(string $uuid): ?object
+    protected function loadFromStorage(string $uuid, bool $addToCache = true): ?object
     {
         // load metadata once and derive the class name and lifetime from it; a new object whose first write
         // was interrupted by a crash has no metadata file yet, recovering completes (or discards) that write
@@ -1225,12 +1219,18 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $metadata = $this->reloadMetadata($uuid);
         }
 
+        $filename = $this->getFilePathData($uuid);
+
         if (null === $metadata) {
+            // nothing stored under this UUID (never stored or deleted): not an error
+            if (false === $this->getIOAdapter()->isFile($filename)) {
+                return null;
+            }
+
+            // data without metadata: corrupted
             $this->getStateHandler()?->enableSafeMode();
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
         }
-
-        $filename = $this->getFilePathData($uuid);
 
         $raw = $this->readFile($filename);
         if (null === $raw) {
@@ -1273,7 +1273,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         Helper::assign($object, $uuid);
 
-        $this->addToCache($uuid, $object, $metadata->getLifetime());
+        if ($addToCache) {
+            $this->addToCache($uuid, $object, $metadata->getLifetime());
+        }
 
         return $object;
     }
@@ -1626,7 +1628,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $this->registerClassname($className);
             $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-            $this->getWriter()->createEmptyFile($pathname);
+            $adapter->touch($pathname);
             $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, static fn() => new StubContext($uuid, $className));
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
@@ -2012,11 +2014,15 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
         $adapter = $this->getIOAdapter();
 
-        if ($adapter->isFile($path = $this->getFilePathMetadata($uuid))) {
-            $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());
-        }
-        if ($adapter->isFile($path = $this->getFilePathData($uuid))) {
-            $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());
+        // flushed like every other write, so the moved files don't reappear after a power loss
+        $sync = $this->getWriter()->syncEnabled();
+
+        foreach ([$this->getFilePathMetadata($uuid), $this->getFilePathData($uuid)] as $path) {
+            if ($adapter->isFile($path)) {
+                $sync
+                    ? $adapter->moveFileSync($path, $this->getFilePathCorruptedArtifacts())
+                    : $adapter->moveFile($path, $this->getFilePathCorruptedArtifacts());
+            }
         }
     }
 

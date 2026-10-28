@@ -84,18 +84,21 @@ class RealAdapterTest extends TestCase
         $this->assertTrue(is_file($path));
     }
 
-    public function testFsync(): void
+    public function testFsyncFile(): void
     {
         $adapter = new RealAdapter();
         $filename = $this->createTemporaryFile();
+        file_put_contents($filename, 'content');
 
-        $handle = $adapter->fopen($filename, 'w');
-        $adapter->fwrite($handle, 'content');
+        $this->assertTrue($adapter->fsyncFile($filename));
+        $this->assertStringEqualsFile($filename, 'content', 'flushing must not change the content');
+    }
 
-        $this->assertTrue($adapter->fsync($handle));
+    public function testFsyncFileFailsForMissingFile(): void
+    {
+        $adapter = new RealAdapter();
 
-        $adapter->fclose($handle);
-        $this->assertStringEqualsFile($filename, 'content');
+        $this->assertFalse($adapter->fsyncFile(sys_get_temp_dir() . '/does-not-exist-' . uniqid()));
     }
 
     public function testFsyncDirectory(): void
@@ -103,6 +106,50 @@ class RealAdapterTest extends TestCase
         $adapter = new RealAdapter();
 
         $this->assertTrue($adapter->fsyncDirectory($this->reserveRandomDirectory()));
+    }
+
+    public function testMoveFileSyncCreatesTheDirectoryAndRenames(): void
+    {
+        $adapter = new RealAdapter();
+        $directory = $this->reserveRandomDirectory();
+        file_put_contents($directory . '/source', 'content');
+
+        $this->assertTrue($adapter->moveFileSync($directory . '/source', $directory . '/new/dir', 'renamed'));
+
+        $this->assertFileDoesNotExist($directory . '/source');
+        $this->assertStringEqualsFile($directory . '/new/dir/renamed', 'content');
+    }
+
+    public function testMoveFileKeepsTheNameByDefault(): void
+    {
+        $adapter = new RealAdapter();
+        $directory = $this->reserveRandomDirectory();
+        file_put_contents($directory . '/source', 'content');
+
+        $this->assertTrue($adapter->moveFile($directory . '/source', $directory . '/target/'));
+
+        $this->assertStringEqualsFile($directory . '/target/source', 'content');
+    }
+
+    public function testRenameSyncReplacesTheTarget(): void
+    {
+        $adapter = new RealAdapter();
+        $directory = $this->reserveRandomDirectory();
+        file_put_contents($directory . '/new', 'new');
+        file_put_contents($directory . '/target', 'old');
+
+        $this->assertTrue($adapter->renameSync($directory . '/new', $directory . '/target'));
+
+        $this->assertFileDoesNotExist($directory . '/new');
+        $this->assertStringEqualsFile($directory . '/target', 'new');
+    }
+
+    public function testRenameSyncFailsForMissingSource(): void
+    {
+        $adapter = new RealAdapter();
+        $directory = $this->reserveRandomDirectory();
+
+        $this->assertFalse(@$adapter->renameSync($directory . '/missing', $directory . '/target'));
     }
 
     public function testFsyncDirectoryFailsForMissingDirectory(): void

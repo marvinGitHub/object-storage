@@ -7,13 +7,13 @@ trait AdapterAwareTrait
     protected ?AdapterInterface $ioAdapter = null;
 
     /**
-     * Retrieves the current adapter instance.
+     * Retrieves the current adapter instance; unless one was set, the real file system adapter is created once.
      *
-     * @return AdapterInterface The adapter instance if set, null otherwise.
+     * @return AdapterInterface The adapter instance.
      */
     public function getIOAdapter(): AdapterInterface
     {
-        return $this->ioAdapter ?? new RealAdapter();
+        return $this->ioAdapter ??= new RealAdapter();
     }
 
     /**

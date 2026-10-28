@@ -2,583 +2,123 @@
 
 # ObjectStorage
 
-A lightweight, file-based object store for PHP that persists object graphs by UUID, supports lazy loading, parent auto-updates, and handles deeply nested structures. Includes a simple viewer UI for exploring stored objects.
+**Store PHP objects as they are — whole object graphs, by UUID, in plain files. No database, no schema, no mapping.**
 
-- Persistent storage by UUID (data + metadata + stubs)
-- Lazy loading of references with transparent replacement in parents
-- Safe mode, locking, in-memory caching
-- Class stubs for fast listing, class registry
-- Automatic class aliasing if a class is unknown at load time
-- Simple object storage viewer (view.php)
-- Directory sharding for large datasets
-- Handling of circular references
-- Event-driven lifecycle events
+```php
+$uuid = $storage->store($order);          // the order, its customer and all its lines
+$order = $storage->load($uuid);           // related objects are loaded lazily when you touch them
+echo $order->customer->name;
+```
 
-## Changelog
+ObjectStorage is a file-based object store for PHP. It persists your objects including everything they reference, loads related objects only when they are accessed, and keeps the data safe against crashes and concurrent access.
 
-Changes for each release will be documented in the [Changelog](Changelog.md) file.
+## When to use it
+
+- **Prototypes and small to medium applications** that want to persist domain objects without designing tables first.
+- **Caches and snapshots** of computed or fetched data, with a lifetime per object.
+- **Tools, CLI applications and background jobs** that need durable state without running a database server.
+- **Document-like data** (configurations, drafts, workflow state) that is mostly loaded and stored as a whole.
+
+It is not a replacement for a database when you need indexes, joins or ad-hoc queries over large amounts of data: queries are PHP callbacks that scan the stored objects of a class.
+
+## Features
+
+| | |
+|---|---|
+| **Object graphs** | Stores an object and everything it references; every object gets its own UUID, shared and circular references are kept. |
+| **Lazy loading** | Referenced objects are loaded on first access and then replace their placeholder transparently. |
+| **Querying** | List and count objects per class, filter them with PHP callbacks, refine results step by step. |
+| **Lifetime** | Optional time-to-live per object, e.g. for caches. |
+| **Concurrency** | Shared and exclusive locks per object, based on [symfony/lock](https://symfony.com/doc/current/components/lock.html) (files, Redis, Memcached, databases, …). |
+| **Durability** | Crash-safe writes with checksums; interrupted writes are recovered, corrupted data puts the storage into a read-only safe mode. |
+| **Caching** | In-memory cache by default, any PSR-16 cache (APCu, Redis, …) can be plugged in. |
+| **Events** | Hooks for every operation, e.g. for audit logs, indexes or metrics. |
+| **Refactoring support** | Renamed classes can be mapped, unknown classes still load. |
+| **Tooling** | A CLI for inspection and maintenance, and a small web viewer for development. |
+
+## Requirements
+
+- PHP 8.5 or newer with `ext-json`
+- A writable directory for the storage
 
 ## Installation
 
-- Copy the library or require it via Composer in your project.
-- Ensure the storage directory is writable.
-- PHP 8.5+ recommended.
+```bash
+composer require melia/object-storage
+```
 
-## Quick Start
+## Quick start
 
 ```php
 <?php
+
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\UUID\AwareInterface;
+use melia\ObjectStorage\UUID\AwareTrait;
 
-$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
+require __DIR__ . '/vendor/autoload.php';
 
-// Build a small graph
-$child  = new ChildObject('child-1');
-$parent = new ParentObject('parent-1', $child);
+class Customer implements AwareInterface
+{
+    use AwareTrait; // lets the storage write the UUID back into the object
 
-// Store graph (references are auto-managed)
-$uuid = $storage->store($parent);
-
-// Load later
-$loaded = $storage->load($uuid);
-echo $loaded->name;         // "parent-1"
-echo $loaded->child->name;  // Lazy loads "child-1"
-```
-
-
-## How It Works
-
-- Graphs are serialized deterministically. When an object references another object, the reference is stored as: { "__reference": "<uuid>" }.
-- On load, references become lazy until accessed; then the referenced object is loaded and the parent structure is updated to hold the real object.
-- Arrays are traversed recursively; nested objects within arrays are also references and benefit from lazy loading and parent replacement.
-
-### Lazy Loading
-
-- Properties whose declared type allows LazyLoadReference (or object/mixed) are loaded on demand.
-- Accessing a property or method on a lazy reference triggers a read from storage.
-- After the first access, the placeholder is replaced in the parent object/array so subsequent access is direct.
-
-Tip: Use union types to enable lazy loading where desired, e.g.:
-- public LazyLoadReference|ChildObject $child;
-
-If the property type is a concrete class without LazyLoadReference, the loader eagerly resolves and sets the real object.
-
-### Parent Auto-Updates
-
-When a lazy reference loads, it:
-- Replaces itself inside its parent (object property or array cell).
-- Prevents repeat loads and keeps code simple (you work with the real object thereafter).
-
-### Nested Objects
-
-- Objects are stored once; all occurrences become references.
-- Deeply nested arrays/objects are handled uniformly.
-
-### Dynamic properties
-
-If a class should allow dynamic attributes, it must be marked with `#[AllowDynamicProperties]`.
-
-This is relevant for PHP 8.2 and newer, where dynamic properties are deprecated by default.
-
-When using the standard hydration strategy, missing this attribute can cause a `DynamicPropertiesNotAllowedException` to be thrown if undefined properties are assigned at runtime.
-
-Add this attribute only to classes that are intentionally meant to accept undefined properties.
-
-## Viewer UI
-
-- A simple read-only viewer is included to browse stored objects.
-- Open object-storage/view.php in the browser (ensure it can access your storage directory).
-## API Highlights
-
-### General
-- store(object $object, ?string $uuid = null, null|int|float $ttl = null): string
-    - Persists object and its referenced children; returns UUID. Optional lifetime in seconds.
-- load(string $uuid, bool $exclusive = false): ?object
-    - Loads object with locking (shared when $exclusive=false). Returns null if expired.
-- exists(string $uuid): bool
-    - Checks if object data file exists.
-- delete(string $uuid): void
-    - Deletes object, metadata, and the related stub.
-- list(?string $class = null): Traversable
-    - Iterates UUIDs; optionally filtered by class (via stubs).
-- match(callable $matcher, ?string $className = null, ?int $limit = null, ?array $subSet = null): Traversable
-    - Iterates UUIDs/objects matching a predicate; optionally filtered by class (via stubs).
-- loadMetadata(string $uuid): ?array
-    - Returns metadata (className, checksum, timestamp, etc.) or null.
-- getClassName(string $uuid): ?string
-    - Returns stored class name for the UUID.
-- clearCache(): void
-    - Clears in-memory caches.
-- removeFromCache(string $uuid): void
-    - Removes object from cache 
-- rebuildStubs(): void
-    - Rebuilds class stub index.
-
-### Locking (use LockAdapter)
-Use when you need explicit control over concurrent access (e.g., long-running writes, cross-process coordination). ObjectStorage uses the lock adapter internally in store/load/delete; call these for advanced scenarios.
-
-- acquireSharedLock(string $uuid, int|float $timeout): void
-    - Obtain a read/shared lock (multiple readers allowed).
-- acquireExclusiveLock(string $uuid, int|float $timeout): void
-    - Obtain a write/exclusive lock (mutually exclusive).
-- releaseLock(string $uuid): void
-    - Release a held lock (shared or exclusive).
-- isLockedByOtherProcess(string $uuid): bool
-    - Check if another process currently holds a lock (shared or exclusive).
-- isLockedByThisProcess(string $uuid): bool
-    - Check if the current process holds the lock.
-- getActiveLocks(): array
-    - UUIDs currently locked by this process.
-
-When to use:
-- Use LockAdapter methods when orchestrating multi-step operations where you must hold a lock across several API calls.
-- Rely on internal locking via load/store/delete for single atomic operations.
-
-### State (use StateHandler)
-Use when you need to gate operations globally (e.g., fail-safe after corruption) or query/process-wide state.
-- safeModeEnabled(): bool
-    - Check if the safe mode is active.
-- enableSafeMode(): bool
-    - Activate safe mode to prevent further mutations.
-
-### Lifetime (TTL)
-- getLifetime(string $uuid): ?float
-    - Remaining seconds (0 at expiry, negative after expiry, null if unlimited).
-- setLifetime(string $uuid, null|int|float $ttl): void
-    - Sets/updates lifetime in seconds.
-- expired(string $uuid): bool
-    - Indicates whether the object is expired (load() returns null for expired objects).
-- getExpiration(string $uuid): ?DateTimeInterface
-    - Returns expiration date/time or null if unlimited.
-- setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
-    - Sets/updates expiration date/time.
-
-## Locking, Caching, Safe Mode
-
-- Locking: shared on load, exclusive on store; released automatically.
-- Caching: in-memory cache avoids repeated deserialization; use clearCache() to reset.
-- Safe Mode: if corrupted data is detected, safe mode is enabled to prevent writes until resolved. It applies to all processes using the storage directory and persists across restarts. Reading (load, list, match) keeps working; store, delete, setLifetime/setExpiration, exclusive loads and exclusive locks are rejected. Disable via disableSafeMode() (or the CLI) after fixing.
-
-### Durability
-
-An object is stored in two files, its data and its metadata (holding the checksum of the data). Both are written as a group with `WriterInterface::atomicWriteAll()`, so a crash (killed process, power loss) can't leave data without matching metadata. The `Writer` does this as follows:
-
-1. writes every file of the group as a pending file (`<uuid>.obj.pending`, `<uuid>.metadata.pending`), flushed to disk with `fsync`,
-2. commits the files in order by atomic renames, the data before the metadata, each flushed to disk as well.
-
-A crash before the first commit leaves the previous state. A crash between the commits is completed by `WriterInterface::recover()`, which the storage calls when an object's data doesn't match its metadata (or the metadata is missing): it commits the remaining pending files, so the files on disk are consistent again, instead of enabling safe mode. `delete()` recovers as well, so no leftovers remain. Other files (e.g. the class registry) are written to a temporary file and renamed atomically.
-
-`fsync` makes stores considerably slower, depending on the disk: a store of a changed object takes 5 flushes: both pending files, their directory once, and each commit (in a Docker-on-Windows test about 13 ms instead of 0.2 ms per store). Where durability doesn't matter, e.g. for caches or tests, it can be disabled:
-
-```php
-$storage = new ObjectStorage(__DIR__ . '/var/cache');
-$storage->getWriter()->setSyncEnabled(false);
-```
-
-### Lock backends
-
-Locking is based on [symfony/lock](https://symfony.com/doc/current/components/lock.html), so any of its stores can be used via `SymfonyLockAdapter`.
-
-By default, file locks (`FlockStore`) are kept in `<storage dir>/locks`. One small lock file per locked object remains there after the lock is released. This is intended: deleting lock files is not race-free, two processes could hold the same lock at once.
-
-If you don't want lock files, or the storage is shared across hosts, use a store without files:
-
-```php
-use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
-use Symfony\Component\Lock\Store\RedisStore;
-
-$redis = new Redis();
-$redis->connect('localhost', 6379);
-
-$storage = new ObjectStorage(
-    __DIR__ . '/var/object-storage',
-    lockAdapter: new SymfonyLockAdapter(new RedisStore($redis), prefix: 'my-storage.')
-);
-```
-
-- RedisStore, PostgreSqlStore: no lock files, shared locks for reading.
-- MemcachedStore, PdoStore, DoctrineDbalStore: no lock files, but reads use exclusive locks (no shared lock support), so concurrent readers wait for each other.
-- SemaphoreStore: no lock files, Linux only (ext-sysvsem).
-- Expiring stores (e.g. Redis) free locks of crashed processes after the TTL (default 300 seconds, constructor argument `$ttl`).
-- Use a distinct `prefix` per storage when several storages share one store.
-
-The former `FileSystem` and `CachedLockAdapter` backends have been removed; create a `SymfonyLockAdapter` with the matching store instead (`createFileLockAdapter()` for file locks).
-
-## Unknown Classes: Automatic Aliasing
-
-If a class recorded in metadata does not exist at load time, the storage creates a class alias dynamically so the object can still be instantiated. This keeps old data readable even when types moved or were renamed (ensure you reintroduce real classes or map aliases as part of migrations when possible).
-
-## Best Practices
-
-- Prefer union types for properties that should be lazily loaded.
-- Keep the storage directory on a fast, reliable disk with proper permissions.
-- Use exclusive load/store for read-modify-write sequences.
-- Monitor safe mode and logs; rebuild stubs if you reorganize storage.
-
-## Object Storage Lifecycle Events
-
-The object storage emits lifecycle events around critical operations. You can subscribe to these events to implement indexing, auditing, metrics, cache invalidation, background jobs, etc.
-
-### Event names
-
-- BEFORE_STORE — dispatched before an object is persisted.
-- AFTER_STORE — dispatched after an object has been persisted (and locks released).
-- OBJECT_SAVED — dispatched when the main object data file is written (before metadata/stub).
-- METADATA_SAVED — dispatched after metadata has been written.
-- STUB_CREATED — dispatched after a class stub has been created.
-- STUB_REMOVED — dispatched after a class stub has been removed.
-- BEFORE_LOAD — dispatched before an object is loaded.
-- AFTER_LOAD — dispatched after an object has been loaded.
-- BEFORE_DELETE — dispatched before an object is deleted.
-- AFTER_DELETE — dispatched after an object has been deleted.
-- CACHE_CLEARED — dispatched when the in-memory cache is cleared.
-- SHARED_LOCK_ACQUIRED — dispatched when a shared lock is acquired.
-- EXCLUSIVE_LOCK_ACQUIRED — dispatched when an exclusive lock is acquired.
-- LOCK_RELEASED — dispatched when a lock is released.
-- SAFE_MODE_ENABLED — dispatched when safe mode is enabled.
-- SAFE_MODE_DISABLED — dispatched when safe mode is disabled.
-- LIFETIME_CHANGED — dispatched when an object’s lifetime value changes.
-- OBJECT_EXPIRED — dispatched when an object reaches/exceeds its lifetime and expires.
-- CLASS_ALIAS_CREATED — dispatched when an alias is created for an unknown class.
-- CLASSNAME_CHANGED — dispatched when the class name of an object is changed.
-- CACHE_HIT — dispatched when an object is loaded from cache.
-- CACHE_ENTRY_ADDED — dispatched when an object is added to the cache.
-- CACHE_ENTRY_REMOVED — dispatched when an object is removed from the cache.
-- LAZY_TYPE_NOT_SUPPORTED — dispatched when a lazy type is not supported.
-- BEFORE_INITIAL_STORE — dispatched before the initial store.
-- BEFORE_UPDATE — dispatched before update.
-- AFTER_UPDATE — dispatched after update.
-- METADATA_WRITE_FAILED — dispatched when metadata write failed.
-- OBJECT_WRITE_FAILED — dispatched when object write failed.
-- CACHE_WRITE_FAILED — dispatched when cache write failed.
-- STUB_WRITE_FAILED — dispatched when stub write failed.
-- IO_READ_FAILURE — dispatched when IO read operation fails.
-- JSON_DECODING_FAILURE — dispatched when JSON decoding fails during IO read operation.
-- JSON_ENCODING_FAILURE — dispatched when JSON encoding fails during IO write operation.
-- METADATA_LOADING_FAILURE — dispatched when metadata loading fails.
-- OBJECT_LOADING_FAILURE — dispatched when object loading fails.
-- OBJECT_SAVING_FAILURE — dispatched when object saving fails.
-- OBJECT_CORRUPTION_DETECTED — dispatched when object corruption is detected.
-
-Event constants are defined in melia\ObjectStorage\Event\Events.
-
-### Context payloads
-
-Listeners receive a context object implementing melia\ObjectStorage\Event\Context\ContextInterface. Common contexts include:
-
-- Context(uuid) — carries the UUID related to the operation.
-- ObjectPersistenceContext(uuid, path) — carries UUID and path for persistence ops.
-- StubContext(uuid, className) — carries UUID and class name during stub lifecycle.
-- LifetimeContext(uuid, previous, current) — carries lifetime changes (e.g., TTL).
-
-**Note**: Some events (like CACHE_CLEARED or SAFE_MODE_* and lock events) may have no contextual UUID.
-
-### Subscribing to events
-
-You can get the dispatcher via the AwareTrait (getEventDispatcher/setEventDispatcher) and register listeners:
-
-## Example Storing and Loading
-
-```php
-<?php
-$storage = new ObjectStorage(__DIR__.'/var/objects');
-
-$child  = new ChildObject('child-X');
-$parent = new ParentObject('parent-X', $child);
-
-$uuid = $storage->store($parent);
-
-$p = $storage->load($uuid);        // child is lazy
-echo $p->child->name;              // triggers load and parent replacement
-$p->child->name = 'child-X2';
-$storage->store($p);               // persists changes
-```
-
-## UUID Assignment After Store
-
-- Every time you call store($object), the object is persisted under a stable UUID.
-- If the object already has a UUID, it’s preserved; otherwise, a new UUID is generated for persistence.
-- The assigned UUID is returned by store(...). It is only written back to the object if the object implements melia\ObjectStorage\UUID\AwareInterface (i.e., exposes getUUID/setUUID). Objects that do not implement the interface are not mutated.
-- All references between objects are recorded by UUID, ensuring consistent identity across loads, updates, and lazy loading.
-- Use the returned UUID to load, update, lock, or delete the object in later operations.
-
-Recommendation: implement melia\ObjectStorage\UUID\AwareInterface on your objects if you want the UUID to be assigned back onto the instance (via setUUID) and retrievable later (via getUUID).
-
-## Policies
-
-When you call `store($object)`, ObjectStorage persists the *root* object and may also persist any *child objects* it discovers while walking the object graph (i.e., referenced objects that become their own UUID-backed records). The **Child Persistence Policy** controls *when* those child objects are written to disk.
-
-This is useful because, depending on your use case, you may want child objects to be:
-
-- always synchronized to storage,
-- only created once and then treated as immutable records,
-- or never written automatically (manual/explicit persistence only).
-
-### Child persistence policy
-
-- **`ChildPersistence::ALWAYS`**  
-  Child objects are written every time you store the parent.  
-  Use this when the parent is the “source of truth” and you want the entire graph to stay consistent on each save.
-
-- **`ChildPersistence::IF_NOT_EXIST`**  
-  Child objects are written **only if they don’t exist yet** in storage.  
-  Use this when children are meant to be created once (initial persistence) and then updated independently later (or treated as append-only).
-
-- **`ChildPersistence::NEVER`**  
-  Child objects are **never** written as part of storing the parent.  
-  Use this when you want strict control: children must be stored explicitly, and `store($parent)` only updates the parent record (references still point to UUIDs).
-
-- **`ChildPersistence::CALLBACK`**  
-  Child objects are written based on a custom callback function.  
-  Use this when you need fine-grained control over when child objects are written, such as when implementing complex business logic or handling specific edge cases.
-
-### Property persistence policy
-
-- **`PropertyPersistence::CALLBACK`**
-  Properties are written based on a custom callback function.
-  This is useful when you need fine-grained control over when properties are written,
-
-- **`PropertyPersistence::ALWAYS`**
-  Properties are always considered for persistence.
-
-### Property hydration policy
-- **`PropertyHydration::CALLBACK`**
-  Properties are hydrated based on a custom callback function.
-  This is useful when you need fine-grained control over when properties are hydrated.
-  The callback function should return a boolean value indicating whether the property should be hydrated.
-
-- **`PropertyHydration::ALWAYS`**
-  Properties are always considered for hydration.
-
-## Property Hydration
-
-The strategy itself controls how the properties are hydrated. See StrategyInterface::hydrateProperty() for details.
-
-## Example Locking
-
-```php
-<?php
-use melia\ObjectStorage\ObjectStorage;
-
-$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
-$uuid = '...'; // existing object id
-
-// Read-Modify-Write with exclusive lock + simple retry
-$attempts = 0;
-$maxAttempts = 3;
-
-do {
-    try {
-        // 1) Acquire exclusive lock for this object
-        $obj = $storage->load($uuid, true); // exclusive
-        
-        // 2) Modify under lock
-        $obj->title = 'Updated Title ' . time();
-
-        // 3) Persist while still holding the lock
-        $storage->store($obj);
-
-        // 4) Done: lock is released after operations finish
-        break;
-    } catch (\Throwable $e) {
-        $attempts++;
-        if ($attempts >= $maxAttempts) {
-            // Could log and rethrow or return a 423 Locked in an API context
-            throw $e;
-        }
-        // Back off briefly before retrying to avoid lock contention
-        usleep(200_000 * $attempts); // 200ms, 400ms, 600ms
-    }
-} while ($storage->getLockAdapter()->isLockedByOtherProcess($uuid));
-```
-
-## Example Event Listener
-
-```php
-<?php
-use melia\ObjectStorage\ObjectStorage;
-use melia\ObjectStorage\Event\Events;
-use melia\ObjectStorage\Event\DispatcherInterface;
-use melia\ObjectStorage\Event\Context\Context;
-use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
-use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
-use melia\ObjectStorage\Event\Context\LifetimeContext;
-use melia\ObjectStorage\Event\Context\StubContext;
-use melia\ObjectStorage\Event\Context\TypeConversionContext;
-use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
-
-// Initialize storage (using defaults)
-$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
-
-// Get the dispatcher and register listeners
-/** @var DispatcherInterface $dispatcher */
-$dispatcher = $storage->getEventDispatcher();
-
-// Called before an object is stored
-$dispatcher->addListener(Events::BEFORE_STORE, function (ObjectPersistenceContext $ctx) {
-    // $ctx->getUuid()
-});
-
-// Called after an object is stored (with previous object if available)
-$dispatcher->addListener(Events::OBJECT_SAVED, function (ObjectPersistenceContext $ctx) {
-    // $ctx->getUuid(), $ctx->getObject(), $ctx->getPreviousObject()
-});
-
-// Called after metadata is saved
-$dispatcher->addListener(Events::METADATA_SAVED, function (Context $ctx) {
-    // $ctx->getUuid()
-});
-
-// Called before and after load
-$dispatcher->addListener(Events::BEFORE_LOAD, function (Context $ctx) {});
-$dispatcher->addListener(Events::AFTER_LOAD, function (Context $ctx) {});
-
-// Cache hit during load
-$dispatcher->addListener(Events::CACHE_HIT, function (Context $ctx) {});
-
-// Object expired during load
-$dispatcher->addListener(Events::OBJECT_EXPIRED, function (Context $ctx) {});
-
-// Lifetime changed via setExpiration/setLifetime
-$dispatcher->addListener(Events::LIFETIME_CHANGED, function (LifetimeContext $ctx) {
-    // $ctx->getUuid(), $ctx->getExpiresAt()
-});
-
-// Stub files created/removed
-$dispatcher->addListener(Events::STUB_CREATED, function (StubContext $ctx) {
-    // $ctx->getUuid(), $ctx->getClassName()
-});
-$dispatcher->addListener(Events::STUB_REMOVED, function (StubContext $ctx) {});
-
-// Classname changed for existing UUID
-$dispatcher->addListener(Events::CLASSNAME_CHANGED, function (ClassnameChangeContext $ctx) {
-    // $ctx->getUuid(), $ctx->getPreviousClassname(), $ctx->getNewClassname()
-});
-
-// After delete
-$dispatcher->addListener(Events::AFTER_DELETE, function (Context $ctx) {});
-
-// Clear cache
-$dispatcher->addListener(Events::CACHE_CLEARED, function () {});
-
-// Shared lock acquired
-$dispatcher->addListener(Events::SHARED_LOCK_ACQUIRED, function (Context $ctx) {});
-
-// Exclusive lock acquired
-$dispatcher->addListener(Events::EXCLUSIVE_LOCK_ACQUIRED, function (Context $ctx) {});
-
-// Lock released
-$dispatcher->addListener(Events::LOCK_RELEASED, function (Context $ctx) {});
-
-// Safe mode enabled
-$dispatcher->addListener(Events::SAFE_MODE_ENABLED, function () {});
-
-// Safe mode disabled
-$dispatcher->addListener(Events::SAFE_MODE_DISABLED, function () {});
-
-// Lazy type isn't supported
-$dispatcher->addListener(Events::LAZY_TYPE_NOT_SUPPORTED, function (LazyTypeNotSupportedContext $ctx) {
-    // $ctx->getClassName(), $ctx->getPropertyName()
+    public function __construct(public string $name) {}
 }
 
-// Cache entry added
-$dispatcher->addListener(Events::CACHE_ENTRY_ADDED, function (Context $ctx) {});
+class Order implements AwareInterface
+{
+    use AwareTrait;
 
-// Cache entry removed
-$dispatcher->addListener(Events::CACHE_ENTRY_REMOVED, function (Context $ctx) {});
+    /** @var string[] */
+    public array $items = [];
 
-// Use storage as usual
-$uuid = $storage->store((object)['name' => 'Alice']);
-$loaded = $storage->load($uuid);
+    public function __construct(public mixed $customer) {}
+}
+
+$storage = new ObjectStorage(__DIR__ . '/var/storage');
+
+// store: the order and the customer are stored as two objects
+$order = new Order(new Customer('Ada'));
+$order->items = ['keyboard', 'mouse'];
+$uuid = $storage->store($order);
+
+// load: the customer is loaded on first access
+$order = $storage->load($uuid);
+echo $order->customer->name; // Ada
+
+// update and delete
+$order->items[] = 'monitor';
+$storage->store($order);
 $storage->delete($uuid);
 ```
 
-## Why resources and closures are not serialized
+Continue with [Getting started](docs/getting-started.md) for the details of storing, loading and identifying objects.
 
-Object graphs can include values that aren’t portable or safely reconstructible outside the current PHP process. Two notable cases:
+## Documentation
 
-### Resources
-Examples: file handles, sockets, database connections.
+| Topic | What you will find |
+|---|---|
+| [Getting started](docs/getting-started.md) | Creating a storage, storing, loading, updating and deleting objects, UUIDs |
+| [Concepts](docs/concepts.md) | Object graphs, lazy loading, caching and what is stored on disk |
+| [Querying](docs/querying.md) | Listing, counting and filtering objects |
+| [Lifetime](docs/lifetime.md) | Expiring objects, e.g. for caches |
+| [Concurrency](docs/concurrency.md) | Locks, read-modify-write, lock backends, multiple processes |
+| [Durability and safe mode](docs/durability.md) | Crash-safe writes, checksums, recovery and safe mode |
+| [Configuration](docs/configuration.md) | Constructor options, caches, strategy and persistence policies |
+| [Events](docs/events.md) | Reacting to storage operations |
+| [Serialization](docs/serialization.md) | Which objects can be stored, hooks, renamed classes |
+| [Maintenance and tools](docs/maintenance.md) | CLI, viewer, rebuilding indexes, migrations |
 
-- What they are: Opaque handles to OS/engine state that only make sense within the current process and moment in time.
-- Why not serializable: Their identity/state cannot be meaningfully captured in JSON (or any durable format). Even with metadata (path, mode), you cannot restore the same live handle state (cursor position, locks, permissions).
-- Correct approach: Persist minimal, reconstructible data (e.g., file path, intended open mode) and re-open the resource when needed by application code.
+## Examples
 
-### Closures (anonymous functions)
-- What they are: Executable code bound to a dynamic environment (scope variables, $this, static state).
-- Why not serializable: Built-in serialization cannot safely capture code + bound context portably. Round-tripping across processes, versions, or deployments is brittle and a security risk.
-- Correct approach: Persist a symbolic reference instead (e.g., class + method name, or a handler key), and resolve to a callable at runtime. For workflows/queues, store commands/events (DTOs), not raw callables.
+Complete scenarios, each runnable as is:
 
-### Library behavior
-- Attempting to serialize such values will be skipped and logged, or will raise:
-    - ResourceSerializationNotSupportedException for resources
-    - ClosureSerializationNotSupportedException for closures
+- [A blog with lazily loaded comments](docs/examples/blog-with-lazy-comments.md) — object graphs, lazy loading, querying
+- [Caching API responses](docs/examples/api-response-cache.md) — lifetime, a fast setup without fsync, Redis locks
+- [Inventory with concurrent updates](docs/examples/inventory-concurrent-updates.md) — exclusive loads, read-modify-write
+- [An audit log from events](docs/examples/audit-log-with-events.md) — events with the previous and the new state
+- [Renaming classes](docs/examples/renaming-classes.md) — keeping stored data loadable after a refactoring
 
-### Design guideline
-Persist data, not live process artifacts. Keep serialization deterministic and reconstructible from plain values.
+## Changelog and license
 
-## Generators and Iterables
-
-- Generators and other iterables (Generator, Iterator, IteratorAggregate, Traversable) are materialized during storage. The library walks the iterator and stores the yielded keys and values as a regular array-like structure. On load, you’ll get a traversable/array structure with the same keys/values, not a live generator.
-
-- Why: generators are stateful, one-shot, and tied to the runtime; persisting them as-is is neither portable nor reproducible. Materialization ensures deterministic storage and retrieval.
-
-- Important warning about infinite or very large generators:
-    - Infinite generators will never finish materializing and will hang or exhaust resources.
-    - Very large generators can consume excessive memory/time when materialized.
-
-- Recommendation: only store finite, bounded generators/iterables. If you need streaming or lazy sequences, persist a bounded snapshot (e.g., a page) or a descriptor (query params, offsets) and reconstruct the stream at runtime.
-
-Here’s an updated README section you can use.
-
-## Object Serialization Lifecycle
-
-This library uses PHP 7.4+ magic methods `__serialize()` and `__unserialize()` for custom persistence hooks. We no longer use `__sleep()` or `__wakeup()` since these will be deprecated in PHP 8.5.
-
-- On store: a clone is prepared via `__serialize()` before serialization; the original instance is not mutated.
-- On load: after reconstruction, `__unserialize()` restores transient or derived state.
-
-### Implement
-- `__serialize(): array` — return a stable array of properties to persist; you may also prepare/normalize state for storage.
-- `__unserialize(array $data): void` — rebuild non-persisted resources, caches, and derived fields from the provided data.
-
-### Notes
-- Hooks are optional; persistence works without them.
-- Do not serialize raw resources or closures; reconstruct them in `__unserialize()`.
-- Lazy references may load on demand unless the property type requires a concrete object.
-
-### Class Rename Map
-
-Map old class names to new ones so stored objects keep loading after refactors.
-
-- On load, if metadata says Old\Class and a mapping Old\Class -> New\Class exists, the object is created as New\Class.
-- If no mapping or class exist, a temporary alias is created to keep loading working.
-
-**Usage**
-
-```php
-<?php
-use melia\ObjectStorage\ObjectStorage;
-use melia\ObjectStorage\Runtime\ClassRenameMap;
-
-$storage = new ObjectStorage(__DIR__ . '/var/object-storage');
-
-$map = new ClassRenameMap();
-$map->createAlias(\Legacy\OldUser::class, \App\Domain\User::class);
-$storage->setClassRenameMap($map);
-
-$loaded = $storage->load($uuid); // Instance of \App\Domain\User
-```
-
-**Tips**
-
-- Configure mappings at startup.
-- Use fully qualified class names.
-- Keep mappings until all old data is migrated.
-
-## Command Line Interface
-See [CLI Documentation](docs/cli.md)
-
-## License
-
-Apache-2.0
+Changes are documented in the [Changelog](Changelog.md). The library is licensed under the Apache License 2.0.

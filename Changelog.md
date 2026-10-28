@@ -15,8 +15,8 @@ All notable changes to this project will be documented in this file.
 - `Writer` always creates a missing directory when writing; the parameter `$createDirectoryIfNotExist` of `Writer::atomicWrite()` has been removed (passing it has no effect anymore).
 - `Writer` flushes every written file and the rename of it to disk (`fsync`). This makes stores considerably slower; disable it with `$storage->getWriter()->setSyncEnabled(false)` (or `new Writer(sync: false)`) where durability doesn't matter.
 - The default writer and reader of a storage are created once and kept, so their configuration applies to later operations (previously `getWriter()`/`getReader()` returned a new instance on every call).
-- **Breaking:** `WriterInterface` has new methods `atomicWriteAll()` (writes several files as a group) and `recover()` (completes an interrupted group write), used for the crash-safe store, as well as `syncEnabled()` and `setSyncEnabled()`. Custom writer implementations have to implement them (see `Writer`).
-- **Breaking:** `AdapterInterface` has new methods `fsync()` and `fsyncDirectory()`, used by `Writer` to flush files and directories to disk. Custom IO adapters have to implement them (see `RealAdapter`).
+- **Breaking:** `WriterInterface` has new methods `atomicWriteAll()` (writes several files as a group) and `recover()` (completes an interrupted group write), used for the crash-safe store, as well as `syncEnabled()` and `setSyncEnabled()`. Custom writer implementations have to implement them (see `Writer`). `createEmptyFile()` has been removed from `WriterInterface` and `Writer`; the storage creates its index files through the IO adapter.
+- **Breaking:** `AdapterInterface` has new methods `fsyncFile()`, `fsyncDirectory()`, `renameSync()` and `moveFileSync()`, used to flush files, directories, renames and moves to disk. Custom IO adapters have to implement them (see `RealAdapter`).
 - Safe mode only blocks modifications: loading, listing and matching objects keep working, only exclusive locks (store, delete, lifetime changes, exclusive loads) are rejected. Previously every lock was rejected, so a single corrupted object made the whole storage unreadable. Loads no longer check the safe mode file, which saves a file lookup per load.
 
 ### Removed
@@ -29,11 +29,13 @@ All notable changes to this project will be documented in this file.
 - Code creating `FileSystem` or `CachedLockAdapter` explicitly has to be migrated to `SymfonyLockAdapter`, see "Lock backends" in the Readme.
 
 ### Fixed
+- Loading a UUID under which nothing is stored (never stored or deleted) enabled safe mode for the whole storage and threw an exception. `load()` now returns `null` in this case; safe mode is only enabled for data without metadata. Missing metadata is no longer logged or reported as `IO_READ_FAILURE` / `METADATA_LOADING_FAILURE` either.
+- `ObjectPersistenceContext::getPreviousObject()` of the `OBJECT_SAVED` event returned the object being stored itself, taken from the cache, instead of its previous state. It now returns the previously stored state, read from disk before the data file is overwritten and without replacing the cached object.
+- An exclusive load (`load($uuid, true)`) returned the cached object if the process had one, which doesn't know about changes of other processes. A read-modify-write in a long-running process could therefore lose updates. An exclusive load now always reads the stored state and replaces the cached copy.
 - The default writer and reader of a storage ignored the IO adapter given to the storage and always accessed the real filesystem. They now use the adapter of the storage, and follow it when it is changed by `setIOAdapter()`; an explicitly set writer or reader keeps its own adapter.
 - Viewer: duplicating a record copied the metadata including the UUID of the original, so later metadata updates of the duplicate (e.g. its lifetime) overwrote the metadata of the original. The duplicate is now written with its own UUID, data and metadata as a crash-safe group.
 - Loading an object that another process had updated in the meantime could enable safe mode for the whole storage: the data was validated against outdated cached metadata. On a checksum mismatch the metadata is now reloaded from disk once; safe mode is only enabled if the data doesn't match the metadata on disk either.
 - `load()` no longer releases a lock that the caller acquired before (e.g. by a previous exclusive load or a running `store()`).
-- The previous object passed to `OBJECT_SAVED` / `OBJECT_WRITE_FAILED` listeners is now loaded before the data file is overwritten.
 - `store()` of a loaded `LazyLoadReference` failed for objects not implementing the UUID `AwareInterface`.
 - `BEFORE_UPDATE` / `AFTER_UPDATE` were not dispatched when updating an object without passing its UUID explicitly.
 - Scalar type conversion during hydration never took effect. Values are now converted to the declared scalar type, and lossy conversions (e.g. `"abc"` or `2.5` to `int`) throw a `TypeConversionFailureException`.

@@ -59,6 +59,10 @@
       "@composer install",
       "php profiling/operations.php"
     ],
+    "measure": [
+      "@composer install",
+      "PROFILE=0 php profiling/operations.php"
+    ],
     "coverage": [
       "@composer install",
       "XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-text --whitelist src"

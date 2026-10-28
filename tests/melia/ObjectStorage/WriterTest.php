@@ -206,12 +206,10 @@ class WriterTest extends TestCase
             $calls[] = 'write ' . $filename;
             return $filename === $failWriteOf ? 0 : strlen($data);
         });
-        $adapter->method('fopen')->willReturn('handle');
-        $adapter->method('fsync')->willReturnCallback(static function () use (&$calls, $fsyncSucceeds) {
+        $adapter->method('fsyncFile')->willReturnCallback(static function () use (&$calls, $fsyncSucceeds) {
             $calls[] = 'fsync';
             return $fsyncSucceeds;
         });
-        $adapter->method('fclose')->willReturn(true);
         $adapter->method('fsyncDirectory')->willReturnCallback(static function (string $directory) use (&$calls) {
             $calls[] = 'fsyncDirectory ' . $directory;
             return true;
@@ -219,6 +217,12 @@ class WriterTest extends TestCase
         $adapter->method('isFile')->willReturn(true);
         $adapter->method('rename')->willReturnCallback(static function (string $from, string $to) use (&$calls) {
             $calls[] = 'rename ' . $from . ' > ' . $to;
+            return true;
+        });
+        // like RealAdapter::renameSync(): rename, then flush the directory
+        $adapter->method('renameSync')->willReturnCallback(static function (string $from, string $to) use (&$calls) {
+            $calls[] = 'rename ' . $from . ' > ' . $to;
+            $calls[] = 'fsyncDirectory ' . dirname($to);
             return true;
         });
         $adapter->method('unlink')->willReturnCallback(static function (string $filename) use (&$calls) {

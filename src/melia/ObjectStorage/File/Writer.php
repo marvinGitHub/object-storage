@@ -4,8 +4,6 @@ namespace melia\ObjectStorage\File;
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
-use melia\ObjectStorage\File\IO\AdapterInterface;
-use melia\ObjectStorage\File\IO\RealAdapter;
 use Random\RandomException;
 
 class Writer implements WriterInterface
@@ -64,7 +62,7 @@ class Writer implements WriterInterface
         $this->writeFile($stagingPath, $data);
 
         try {
-            $this->moveFile($stagingPath, $filename);
+            $this->rename($stagingPath, $filename);
         } catch (IOException $e) {
             $this->deleteIfExists($stagingPath);
             throw $e;
@@ -99,9 +97,10 @@ class Writer implements WriterInterface
 
         // all pending files must exist on disk before anything is committed; flushing a directory persists
         // all its entries at once, so each directory is flushed once instead of once per pending file
+        // (best effort: some filesystems don't support flushing directories)
         if ($this->sync) {
-            foreach ($this->getDirectories(array_keys($files)) as $directory) {
-                $this->syncDirectory($directory);
+            foreach (array_unique(array_map(Directory::getDirectoryName(...), array_keys($files))) as $directory) {
+                $this->getIOAdapter()->fsyncDirectory($directory);
             }
         }
 
@@ -188,7 +187,7 @@ class Writer implements WriterInterface
             throw new IOException('No pending file to commit: ' . $pendingFilename);
         }
 
-        $this->moveFile($pendingFilename, $filename);
+        $this->rename($pendingFilename, $filename);
     }
 
     /**
@@ -216,8 +215,8 @@ class Writer implements WriterInterface
             }
 
             // the content must be on disk before the file is renamed, otherwise it may be empty after a crash
-            if ($this->sync) {
-                $this->syncFile($filename);
+            if ($this->sync && false === $adapter->fsyncFile($filename)) {
+                throw new IOException('Unable to flush file to disk: ' . $filename);
             }
         } catch (IOException $e) {
             $this->deleteIfExists($filename);
@@ -226,21 +225,19 @@ class Writer implements WriterInterface
     }
 
     /**
-     * Renames a file atomically and flushes the rename to disk.
+     * Renames a file atomically, replacing an existing file; the rename is flushed to disk if sync is enabled.
      *
      * @param string $from The path of the file to rename.
      * @param string $to The new path, replacing an existing file.
      * @return void
      * @throws IOException If the file cannot be renamed.
      */
-    protected function moveFile(string $from, string $to): void
+    protected function rename(string $from, string $to): void
     {
-        if (false === $this->getIOAdapter()->rename($from, $to)) {
-            throw new IOException('Failed to rename file: ' . $from);
-        }
+        $adapter = $this->getIOAdapter();
 
-        if ($this->sync) {
-            $this->syncDirectory(Directory::getDirectoryName($to));
+        if (false === ($this->sync ? $adapter->renameSync($from, $to) : $adapter->rename($from, $to))) {
+            throw new IOException('Failed to rename file: ' . $from);
         }
     }
 
@@ -295,78 +292,5 @@ class Writer implements WriterInterface
     protected function getPendingFilename(string $filename): string
     {
         return $filename . static::SUFFIX_PENDING;
-    }
-
-    /**
-     * Flushes the content of a file to disk.
-     *
-     * @param string $filename The file to flush.
-     * @return void
-     * @throws IOException If the file cannot be opened or flushed.
-     */
-    protected function syncFile(string $filename): void
-    {
-        $adapter = $this->getIOAdapter();
-        $handle = $adapter->fopen($filename, 'r+');
-
-        if (false === $handle) {
-            throw new IOException('Unable to open file for syncing: ' . $filename);
-        }
-
-        try {
-            if (false === $adapter->fsync($handle)) {
-                throw new IOException('Unable to flush file to disk: ' . $filename);
-            }
-        } finally {
-            $adapter->fclose($handle);
-        }
-    }
-
-    /**
-     * Flushes a directory to disk, so the creation or rename of files in it survives a crash.
-     * Best effort: some filesystems don't support flushing directories, which is not treated as an error.
-     *
-     * @param string $directory The directory to flush.
-     * @return void
-     */
-    protected function syncDirectory(string $directory): void
-    {
-        $this->getIOAdapter()->fsyncDirectory($directory);
-    }
-
-    /**
-     * Returns the distinct directories of the given files.
-     *
-     * @param string[] $filenames The paths of the files.
-     * @return string[] The directories, each once, in the order of their first file.
-     */
-    protected function getDirectories(array $filenames): array
-    {
-        return array_values(array_unique(array_map(Directory::getDirectoryName(...), $filenames)));
-    }
-
-    /**
-     * Retrieves the adapter instance used for input/output operations.
-     * If the adapter is not already initialized, a new instance of RealAdapter is created and assigned.
-     *
-     * @return AdapterInterface|null The adapter instance or null if not set.
-     */
-    public function getIOAdapter(): ?AdapterInterface
-    {
-        if (null === $this->ioAdapter) {
-            $this->ioAdapter = new RealAdapter();
-        }
-        return $this->ioAdapter;
-    }
-
-    /**
-     * Creates an empty file with the specified filename.
-     *
-     * @param string $filename The name of the file to be created.
-     * @return void
-     */
-    public function createEmptyFile(string $filename): void
-    {
-        $this->getIOAdapter()->touch($filename);
     }
 }

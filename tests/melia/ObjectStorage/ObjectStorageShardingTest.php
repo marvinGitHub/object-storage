@@ -31,6 +31,37 @@ class ObjectStorageShardingTest extends TestCase
         $this->assertSame('child', (new ObjectStorage($this->storage->getStorageDir()))->load($uuid)->title);
     }
 
+    /**
+     * @dataProvider provideSyncSettings
+     */
+    public function testRebuildingStubsMovesObjectsWithoutClassNameAside(bool $sync): void
+    {
+        $this->storage->getWriter()->setSyncEnabled($sync);
+        $uuid = $this->storage->store(new ChildObject('child', 1));
+
+        // corrupt the metadata: no class name
+        $metadata = json_decode(file_get_contents($this->storage->getFilePathMetadata($uuid)), true);
+        $metadata['className'] = '';
+        file_put_contents($this->storage->getFilePathMetadata($uuid), json_encode($metadata));
+        $this->storage->clearCache();
+
+        $this->storage->rebuildStubs();
+
+        $this->assertFileDoesNotExist($this->storage->getFilePathData($uuid));
+        $this->assertFileDoesNotExist($this->storage->getFilePathMetadata($uuid));
+
+        $moved = array_filter(
+            iterator_to_array(new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->storage->getStorageDir(), \FilesystemIterator::SKIP_DOTS))),
+            static fn(\SplFileInfo $file) => str_starts_with($file->getFilename(), $uuid),
+        );
+        $this->assertCount(2, $moved, 'data and metadata are moved aside, not deleted');
+    }
+
+    public static function provideSyncSettings(): array
+    {
+        return ['with sync' => [true], 'without sync' => [false]];
+    }
+
     public function testLookingUpUnknownObjectCreatesNoDirectories(): void
     {
         $uuid = '877d51df-aebd-4807-8701-95e007e9b701';
