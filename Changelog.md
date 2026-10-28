@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - The default lock adapter is now `SymfonyLockAdapter` with file locks in `<storage dir>/locks` (previously `<uuid>.lock` files directly in the storage directory). The CLI uses the same location.
 - New dependency: `symfony/lock`.
+- Safe mode only blocks modifications: loading, listing and matching objects keep working, only exclusive locks (store, delete, lifetime changes, exclusive loads) are rejected. Previously every lock was rejected, so a single corrupted object made the whole storage unreadable. Loads no longer check the safe mode file, which saves a file lookup per load.
 
 ### Removed
 - `Locking\Backends\FileSystem`, use `SymfonyLockAdapter::createFileLockAdapter()` instead. It deleted lock files on release, which allowed two processes to hold the same lock at once.

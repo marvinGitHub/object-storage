@@ -157,7 +157,7 @@ Use when you need to gate operations globally (e.g., fail-safe after corruption)
 
 - Locking: shared on load, exclusive on store; released automatically.
 - Caching: in-memory cache avoids repeated deserialization; use clearCache() to reset.
-- Safe Mode: if corrupted data is detected, safe mode is enabled to prevent writes until resolved. Disable via disableSafeMode() after fixing.
+- Safe Mode: if corrupted data is detected, safe mode is enabled to prevent writes until resolved. It applies to all processes using the storage directory and persists across restarts. Reading (load, list, match) keeps working; store, delete, setLifetime/setExpiration, exclusive loads and exclusive locks are rejected. Disable via disableSafeMode() (or the CLI) after fixing.
 
 ### Lock backends
 

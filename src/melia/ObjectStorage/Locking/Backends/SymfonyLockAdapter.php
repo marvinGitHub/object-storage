@@ -121,8 +121,10 @@ class SymfonyLockAdapter extends LockAdapterAbstract
      */
     private function acquire(string $uuid, LockInterface $lock, bool $exclusive, int|float $timeout): void
     {
-        if ($this->getStateHandler()?->safeModeEnabled()) {
-            throw new LockException('Safe mode is enabled. Object cannot be locked.');
+        // safe mode only prevents modifications: exclusive locks are taken for writing, shared locks for reading,
+        // so reads keep working (and skip the safe mode check, which costs a file lookup per load)
+        if ($exclusive && $this->getStateHandler()?->safeModeEnabled()) {
+            throw new LockException('Safe mode is enabled. Object cannot be locked for writing.');
         }
 
         $startTime = microtime(true);
