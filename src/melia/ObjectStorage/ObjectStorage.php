@@ -138,6 +138,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected const string FILE_SUFFIX_METADATA = '.metadata';
 
     /**
+     * The lock resource guarding the registry of class names (classnames.json).
+     */
+    protected const string LOCK_CLASSNAMES = 'classnames';
+
+    /**
      * The suffix used for stub files.
      *
      * @var string
@@ -1706,17 +1711,35 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected function registerClassname(string $className): void
     {
         $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
+        if (isset($registeredClassnames[$className])) {
+            return;
+        }
 
-        if (!isset($registeredClassnames[$className])) {
-            try {
-                $this->registeredClassNamesCache[$className] = $className;
-                $this->createDirectoryIfNotExist($this->getStubDirectory());
-                $this->getWriter()->atomicWrite(
-                    $this->getFilePathClassnames(),
-                    json_encode($this->registeredClassNamesCache, JSON_THROW_ON_ERROR)
-                );
-            } catch (Throwable $e) {
-                throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+        try {
+            // the registry is written as a whole: without the lock, processes registering at the same time
+            // overwrite each other's class names
+            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
+                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
+                $lockedHere = true;
+            }
+
+            // other processes may have registered class names since the registry was read
+            $this->registeredClassNamesCache = null;
+            $this->getRegisteredClassnames();
+            $this->registeredClassNamesCache[$className] = $className;
+
+            $this->createDirectoryIfNotExist($this->getStubDirectory());
+            $this->getWriter()->atomicWrite(
+                $this->getFilePathClassnames(),
+                json_encode($this->registeredClassNamesCache, JSON_THROW_ON_ERROR)
+            );
+        } catch (Throwable $e) {
+            throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
+        } finally {
+            if ($lockedHere) {
+                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
             }
         }
     }
