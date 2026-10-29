@@ -53,7 +53,8 @@ final class Report
 }
 ```
 
-- The keys of the array returned by `__serialize()` have to be strings.
+- The array returned by `__serialize()` may use string or int keys (e.g. `ArrayObject`); `__unserialize()` receives it as stored.
+- Objects in the array returned by `__serialize()`, also in nested arrays, are stored on their own and passed to `__unserialize()` loaded again, as PHP's `unserialize()` does. They are loaded right away, not lazily. In a reference cycle (A references B, B references A), `__unserialize()` of B gets the instance of A that is still being restored. A referenced object that was deleted or has expired is passed as `null`.
 - `__sleep()` and `__wakeup()` are not used.
 - To exclude properties of many classes at once, use a [property persistence policy](configuration.md#property-persistence-and-hydration-which-properties-are-written-and-loaded) instead.
 

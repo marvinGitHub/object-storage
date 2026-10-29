@@ -64,7 +64,8 @@ class SymfonyLockAdapter extends LockAdapterAbstract
      */
     public static function createFileLockAdapter(string $lockDir): self
     {
-        if (!is_dir($lockDir) && !mkdir($lockDir, 0777, true) && !is_dir($lockDir)) {
+        // another process may create the directory at the same time: check again instead of warning
+        if (!is_dir($lockDir) && !@mkdir($lockDir, 0777, true) && !is_dir($lockDir)) {
             throw new LockException('Unable to create lock directory: ' . $lockDir);
         }
 

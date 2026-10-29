@@ -56,9 +56,11 @@ $storage->store($counter, $uuid); // creates or updates, and releases the lock
 
 See [Inventory with concurrent updates](examples/inventory-concurrent-updates.md) for a complete example including error handling.
 
-### Referenced objects are not locked
+### Referenced objects
 
-`store()` locks the object you store, not the objects it references and writes along with it. If several processes update the same referenced object through different parents, load and store that object exclusively on its own.
+`store()` also locks each referenced object it writes along with it, but only while writing that object's files, so concurrent stores can't mix up its files. The referenced object is not locked from loading to storing: if several processes *modify* the same referenced object through different parents, the last store wins. Load and store that object exclusively on its own to avoid lost updates.
+
+If two processes store parents that write each other's referenced objects at the same time, one of them may wait for the lock timeout (10 seconds) and fail with a `LockException`.
 
 ## Locking manually
 

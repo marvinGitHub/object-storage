@@ -138,7 +138,8 @@ class Directory
             return true;
         }
 
-        if ($adapter->isDir($path) || $adapter->mkdir($path)) {
+        // check again after a failed mkdir: another process may have created the directory in the meantime
+        if ($adapter->isDir($path) || $adapter->mkdir($path) || $adapter->isDir($path)) {
             $registry->markAsVerified($path);
             return true;
         }

@@ -54,6 +54,9 @@ interface AdapterInterface
 
     public function fileSize(string $filename): bool|int;
 
+    /**
+     * @phpstan-impure the filesystem can change between two calls
+     */
     public function isDir(string $filename): bool;
 
     public function isFile(string $filename): bool;

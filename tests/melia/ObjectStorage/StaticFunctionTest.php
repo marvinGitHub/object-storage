@@ -9,7 +9,7 @@ class StaticFunctionTest extends TestCase
      *
      * @return array Returns an array of test cases, each represented as a sub-array.
      */
-    public function providerTestStaticFunction()
+    public static function providerTestStaticFunction()
     {
         return [
             ['foo'],

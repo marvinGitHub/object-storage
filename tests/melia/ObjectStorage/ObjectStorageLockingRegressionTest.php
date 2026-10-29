@@ -28,6 +28,29 @@ final class ObjectStorageLockingRegressionTest extends TestCase
         $this->assertFalse($storage->getLockAdapter()->isLockedByThisProcess($uuid));
     }
 
+    public function testReferencedObjectsAreLockedWhileTheyAreWritten(): void
+    {
+        $locked = [];
+        $this->storage->getEventDispatcher()->addListener(Events::EXCLUSIVE_LOCK_ACQUIRED, static function ($context) use (&$locked) {
+            $locked[] = $context->getUUID();
+        });
+
+        $child = new ChildObject('child', 1);
+        $parent = new ParentObject('parent', $child);
+        $parentUuid = $this->storage->store($parent);
+
+        $this->assertContains($parentUuid, $locked);
+        $this->assertContains($child->getUUID(), $locked, 'a new referenced object is locked while it is written');
+        $this->assertSame([], $this->storage->getLockAdapter()->getActiveLocks(), 'all locks are released after storing');
+
+        // unchanged referenced objects are not written, so they are not locked either
+        $locked = [];
+        $parent->name = 'changed parent';
+        $this->storage->store($parent);
+
+        $this->assertSame([$parentUuid], $locked);
+    }
+
     public function testExclusiveLoadReturnsCurrentStateInsteadOfCachedCopy(): void
     {
         $uuid = $this->storage->store(new ChildObject('stock', 100));

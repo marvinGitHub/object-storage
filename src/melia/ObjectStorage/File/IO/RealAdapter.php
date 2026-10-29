@@ -179,7 +179,9 @@ class RealAdapter implements AdapterInterface
 
     public function mkdir(string $dir, int $mode = 0777, bool $recursive = true): bool
     {
-        return mkdir($dir, $mode, $recursive);
+        // a failure is reported by the return value; the warning would also be raised when another
+        // process created the directory a moment earlier, which callers handle by checking again
+        return @mkdir($dir, $mode, $recursive);
     }
 
     public function rename(string $from, string $to, $context = null): bool

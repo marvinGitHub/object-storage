@@ -116,6 +116,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     private ?Reader $defaultReader = null;
 
     /**
+     * Objects whose __unserialize() is running, so a reference cycle gets the instance being restored
+     * instead of loading it again endlessly (as PHP's unserialize() does).
+     *
+     * @var array<string, object>
+     */
+    private array $restoring = [];
+
+    /**
      * The default checksum algorithm used for checksum validation.
      *
      * @var string
@@ -801,54 +809,70 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $writeMetadata = $checksumChanged || $classNameChanged || $lifetimeChanged;
             $writeCache = $checksumChanged || $classNameChanged || $lifetimeChanged;
 
-            if ($writeGraph) {
-                // the previous object must be loaded before the data file is overwritten, otherwise the
-                // new data would be validated against the old metadata (checksum mismatch → safe mode);
-                // it is read from the files, not the cache, which holds the object being stored, and is
-                // not cached, so it doesn't replace the current object there
-                $previousObject = null;
-                if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
+            // store() locks the object it stores, but not the referenced objects it writes along with it:
+            // lock an object while writing it, so concurrent writers can't mix up its files. The lock is only
+            // taken now, after its referenced objects are written, so no more than two locks are held at once.
+            $lockAdapter = $this->getLockAdapter();
+            $lockedHere = false;
+            if (($writeGraph || $writeMetadata) && null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock($uuid)) {
+                $lockAdapter->acquireExclusiveLock($uuid);
+                $lockedHere = true;
+            }
+
+            try {
+                if ($writeGraph) {
+                    // the previous object must be loaded before the data file is overwritten, otherwise the
+                    // new data would be validated against the old metadata (checksum mismatch → safe mode);
+                    // it is read from the files, not the cache, which holds the object being stored, and is
+                    // not cached, so it doesn't replace the current object there
+                    $previousObject = null;
+                    if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
+                        try {
+                            $previousObject = $this->loadFromStorage($uuid, addToCache: false);
+                        } catch (Throwable $e) {
+                            $this->getLogger()?->log($e);
+                        }
+                    }
+
+                    $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject);
+
+                    // data and metadata are written as a group, so a crash can't leave data without matching metadata
+                    [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
+
                     try {
-                        $previousObject = $this->loadFromStorage($uuid, addToCache: false);
+                        $this->getWriter()->atomicWriteAll([
+                            $filePathData => $serializedGraph,
+                            $filePathMetadata => $this->serializeMetadata($metadata),
+                        ]);
+                        $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                     } catch (Throwable $e) {
-                        $this->getLogger()?->log($e);
+                        $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
+                        throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
                     }
                 }
 
-                $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject);
-
-                // data and metadata are written as a group, so a crash can't leave data without matching metadata
-                [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
-
-                try {
-                    $this->getWriter()->atomicWriteAll([
-                        $filePathData => $serializedGraph,
-                        $filePathMetadata => $this->serializeMetadata($metadata),
-                    ]);
-                    $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
-                } catch (Throwable $e) {
-                    $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
-                    throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
+                if ($classNameChanged) {
+                    $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
                 }
-            }
 
-            if ($classNameChanged) {
-                $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassname, $metadata->getClassName()));
-            }
+                if ($writeGraph) {
+                    $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
+                    $this->cacheMetadata($metadata);
+                } elseif ($writeMetadata) {
+                    $this->saveMetadata($metadata);
+                }
 
-            if ($writeGraph) {
-                $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
-                $this->cacheMetadata($metadata);
-            } elseif ($writeMetadata) {
-                $this->saveMetadata($metadata);
-            }
+                if ($writeCache) {
+                    $this->addToCache($uuid, $object, $ttl);
+                }
 
-            if ($writeCache) {
-                $this->addToCache($uuid, $object, $ttl);
-            }
-
-            if ($writeStub) {
-                $this->createStub($className, $uuid);
+                if ($writeStub) {
+                    $this->createStub($className, $uuid);
+                }
+            } finally {
+                if ($lockedHere) {
+                    $lockAdapter->releaseLock($uuid);
+                }
             }
         } finally {
             unset($this->processingStack[$object]);
@@ -914,9 +938,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $strategy = $this->getStrategy();
 
         foreach ($properties as $propertyName => $value) {
-            if (false === is_string($propertyName)) {
-                throw new UnsupportedTypeException(sprintf('Property name must be a string. %s given.', gettype($propertyName)));
-            }
+            // __serialize() may return int keys (e.g. ArrayObject); JSON stores them as strings anyway
+            $propertyName = (string)$propertyName;
 
             try {
                 if ((($strategy?->getPolicyPropertyPersistence() ?? StrategyInterface::DEFAULT_POLICY_PROPERTY_PERSISTENCE) === PropertyPersistence::CALLBACK) && true !== $strategy->shouldPersistProperty($reflection, $propertyName, $value)) {
@@ -1266,7 +1289,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $object = $this->createInstance($metadata->getClassName());
 
         if (LifecycleGuard::supportsUnserialize($object)) {
-            LifecycleGuard::unserialize($object, $data);
+            // a cycle back to this object gets this instance, although it is not fully restored yet
+            $this->restoring[$uuid] = $object;
+            try {
+                LifecycleGuard::unserialize($object, $this->resolveReferences($data, $metadata));
+            } finally {
+                unset($this->restoring[$uuid]);
+            }
         } else {
             $this->processLoadedData($object, $data, $metadata);
         }
@@ -1414,7 +1443,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $strategy?->hydrateProperty($reflection, $propertyName, $finalValue);
             } catch (Throwable $e) {
                 throw new PropertyHydrationFailureException(
-                    sprintf('Unable to hydrate property "%s" of class "%s"', $propertyName, $className), null, $e);
+                    message: sprintf('Unable to hydrate property "%s" of class "%s"', $propertyName, $className),
+                    previous: $e,
+                );
             }
         }
 
@@ -1467,6 +1498,36 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         $this->lazyloadReferenceSupportCache[$type] = $result;
         return $result;
+    }
+
+    /**
+     * Replaces the references in the data passed to __unserialize() by the referenced objects, so it gets
+     * what __serialize() returned. Unlike properties, the data has no types to decide whether a
+     * LazyLoadReference fits, so the referenced objects are loaded right away.
+     *
+     * @param array $data The stored data, nested arrays included.
+     * @param Metadata $metadata The metadata holding the reserved reference name.
+     * @return array The data with the referenced objects, or null for objects that no longer exist.
+     * @throws ObjectLoadingFailureException If a referenced object cannot be loaded.
+     */
+    protected function resolveReferences(array $data, Metadata $metadata): array
+    {
+        $reserved = $metadata->getReservedReferenceName();
+
+        foreach ($data as $key => $value) {
+            if (false === is_array($value)) {
+                continue;
+            }
+
+            // invalid UUIDs are kept as they are, like processLoadedData() does
+            if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
+                $data[$key] = $this->restoring[$value[$reserved]] ?? $this->load($value[$reserved]);
+            } else {
+                $data[$key] = $this->resolveReferences($value, $metadata);
+            }
+        }
+
+        return $data;
     }
 
     /**

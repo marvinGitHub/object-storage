@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
 - Code creating `FileSystem` or `CachedLockAdapter` explicitly has to be migrated to `SymfonyLockAdapter`, see "Lock backends" in the Readme.
 
 ### Fixed
+- `store()` didn't lock the referenced objects it wrote along with the stored object. Two processes writing the same referenced object at once could commit each other's pending files, and one of the stores failed. Each referenced object is now locked exclusively while its files are written.
+- Several processes creating the same directory at once (shard or lock directory) could fail or emit `mkdir(): File exists` warnings.
+- `__serialize()` returning int keys (e.g. `ArrayObject`) failed with an `UnsupportedTypeException`.
+- **Breaking:** `__unserialize()` received the internal references (`['__reference' => '<uuid>']`) instead of the objects returned by `__serialize()`. The referenced objects are now loaded and passed as objects (`null` if deleted); reference cycles get the instance being restored. Code evaluating the reference arrays itself has to be adapted.
+- `PropertyHydrationFailureException` was created with `null` as code, which is deprecated.
+- PHPUnit configuration migrated to the PHPUnit 10 schema; data providers are static.
 - Loading a UUID under which nothing is stored (never stored or deleted) enabled safe mode for the whole storage and threw an exception. `load()` now returns `null` in this case; safe mode is only enabled for data without metadata. Missing metadata is no longer logged or reported as `IO_READ_FAILURE` / `METADATA_LOADING_FAILURE` either.
 - `ObjectPersistenceContext::getPreviousObject()` of the `OBJECT_SAVED` event returned the object being stored itself, taken from the cache, instead of its previous state. It now returns the previously stored state, read from disk before the data file is overwritten and without replacing the cached object.
 - An exclusive load (`load($uuid, true)`) returned the cached object if the process had one, which doesn't know about changes of other processes. A read-modify-write in a long-running process could therefore lose updates. An exclusive load now always reads the stored state and replaces the cached copy.
