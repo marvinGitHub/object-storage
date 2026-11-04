@@ -10,6 +10,7 @@ use melia\ObjectStorage\Exception\InvalidPolicyException;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
@@ -31,7 +32,11 @@ class Standard implements StrategyInterface
 
     private int $policyPropertyHydration = StrategyInterface::DEFAULT_POLICY_PROPERTY_HYDRATION;
 
+    private int $policyChildDeletion = StrategyInterface::DEFAULT_POLICY_CHILD_DELETION;
+
     private bool $checksumValidation = true;
+
+    private bool $optimisticLocking = false;
 
     public function enableLifetimeInheritance(): void
     {
@@ -161,6 +166,55 @@ class Standard implements StrategyInterface
             return false;
         }
         return true;
+    }
+
+    /**
+     * Retrieves the current child deletion policy.
+     *
+     * @return int ChildDeletion::ALWAYS, ChildDeletion::NEVER or ChildDeletion::CALLBACK
+     */
+    public function getPolicyChildDeletion(): int
+    {
+        return $this->policyChildDeletion;
+    }
+
+    /**
+     * Sets the deletion policy for referenced objects.
+     *
+     * @param int $policyChildDeletion ChildDeletion::ALWAYS, ChildDeletion::NEVER or ChildDeletion::CALLBACK.
+     * @return void
+     * @throws InvalidPolicyException Thrown if the provided deletion policy is invalid.
+     */
+    public function setPolicyChildDeletion(int $policyChildDeletion): void
+    {
+        if (!in_array($policyChildDeletion, [ChildDeletion::ALWAYS, ChildDeletion::NEVER, ChildDeletion::CALLBACK], true)) {
+            throw new InvalidPolicyException('Invalid child deletion policy.');
+        }
+        $this->policyChildDeletion = $policyChildDeletion;
+    }
+
+    /**
+     * Determines whether a referenced object is deleted along with the object referencing it.
+     * Override it for the policy ChildDeletion::CALLBACK; by default nothing is deleted.
+     */
+    public function shouldDeleteChild(string $parentUuid, string $parentClassName, string $childUuid, string $childClassName, array $path): bool
+    {
+        return false;
+    }
+
+    public function optimisticLockingEnabled(): bool
+    {
+        return $this->optimisticLocking;
+    }
+
+    public function enableOptimisticLocking(): void
+    {
+        $this->optimisticLocking = true;
+    }
+
+    public function disableOptimisticLocking(): void
+    {
+        $this->optimisticLocking = false;
     }
 
     public function checksumValidationEnabled(): bool

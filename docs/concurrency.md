@@ -44,6 +44,36 @@ if ($product->stock === 0) {
 }
 ```
 
+### Optimistic locking: detecting lost updates instead of waiting
+
+An exclusive load holds the lock from loading to storing, so other writers wait meanwhile. If an object is edited over a longer time, e.g. in a form, or conflicts are rare, use optimistic locking instead: nothing is locked in between, and `store()` fails if the object was stored by someone else since it was loaded.
+
+```php
+use melia\ObjectStorage\Exception\RevisionConflictException;
+
+$storage->getStrategy()->enableOptimisticLocking();
+
+$product = $storage->load($uuid);
+$product->stock--;
+
+try {
+    $storage->store($product);
+} catch (RevisionConflictException) {
+    // stored by another process in the meantime: load again and repeat, or report the conflict
+}
+```
+
+Every object has a **revision** in its metadata, which is incremented with every write of its data (not by lifetime changes). The storage remembers the revision each object instance was loaded or stored with, and compares it with the stored one under the exclusive lock while storing. `getRevision($uuid)` returns the stored revision, e.g. for HTTP `ETag` headers.
+
+- `RevisionConflictException` extends `ObjectSavingFailureException`; the event `REVISION_CONFLICT` is dispatched. Nothing is written.
+- The check covers the referenced objects written along as well (see [Child persistence](configuration.md#child-persistence-when-referenced-objects-are-written)).
+- Only object instances that were loaded or stored by this storage instance are checked. A new instance stored under an existing UUID overwrites the object, as does an object instance after `clearCache()`.
+- An object deleted in the meantime is created again by storing it, without a conflict.
+- `Transaction::store()` stores a copy of the object, which is not checked.
+- Objects stored before revisions existed have the revision `0`; their next write sets it to `1`.
+
+Optimistic locking is disabled by default: without it, the last `store()` wins as before.
+
 ### Creating an object only once
 
 If nothing is stored under the UUID, an exclusive load returns `null` but keeps the lock. This allows creating an object without another process creating it at the same time:

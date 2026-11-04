@@ -97,6 +97,49 @@ $storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
 | `NEVER` | never; references point to UUIDs only | referenced objects are always stored explicitly |
 | `CALLBACK` | if `shouldPersistChild()` of the strategy returns `true` | the decision depends on the object, see below |
 
+### Child deletion: whether referenced objects are deleted along
+
+```php
+use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
+
+$storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+```
+
+| Policy | When an object is deleted, the objects it references are … | Use when |
+|---|---|---|
+| `NEVER` (default) | kept | referenced objects are shared or live on their own |
+| `ALWAYS` | deleted as well, recursively | the referencing object owns its graph, e.g. an order and its lines |
+| `CALLBACK` | deleted if `shouldDeleteChild()` of the strategy returns `true` | only some references are owned, see below |
+
+The referenced objects are deleted after the object itself, each under its own lock. Circular references are followed only once, and objects already deleted are skipped. If some of them can't be deleted, the others are still deleted, and `delete()` throws an `ObjectDeletionFailureException` afterwards.
+
+Things to know:
+
+- **Shared objects are deleted too.** The storage doesn't know which other objects reference an object, so `ALWAYS` also deletes an object that another object still references, which then holds a reference to a deleted object (loaded as `null`). Use `ALWAYS` only for graphs owned by one object, and `CALLBACK` otherwise.
+- **Transactions** restore only the object passed to `delete()` on rollback, not the referenced objects deleted along with it.
+- A crash in the middle leaves referenced objects that are no longer referenced, never references to deleted objects.
+
+With `CALLBACK`, the strategy decides per reference. It gets the class names and the path of the reference within the stored data of the deleted object, e.g. `['lines', 0]`; the referenced objects aren't loaded. If the callback throws, the referenced object is kept.
+
+```php
+use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
+use melia\ObjectStorage\Strategy\Standard;
+
+final class OrderStrategy extends Standard
+{
+    public function __construct()
+    {
+        $this->setPolicyChildDeletion(ChildDeletion::CALLBACK);
+    }
+
+    // delete the lines of an order, but not its customer
+    public function shouldDeleteChild(string $parentUuid, string $parentClassName, string $childUuid, string $childClassName, array $path): bool
+    {
+        return $parentClassName === Order::class && $childClassName === OrderLine::class;
+    }
+}
+```
+
 ### Property persistence and hydration: which properties are written and loaded
 
 By default all properties are written and loaded. To decide per property, extend the strategy and use the `CALLBACK` policies:

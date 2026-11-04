@@ -45,4 +45,5 @@ interface Events
     public const OBJECT_LOADING_FAILURE = 'object-storage.object_loading_failure';
     public const OBJECT_DELETION_FAILURE = 'object-storage.object_deletion_failure';
     public const OBJECT_CORRUPTION_DETECTED = 'object-storage.object_corruption_detected';
+    public const REVISION_CONFLICT = 'object-storage.revision_conflict';
 }

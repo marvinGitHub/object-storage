@@ -4,6 +4,7 @@ namespace melia\ObjectStorage\Strategy;
 
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
 use melia\ObjectStorage\UUID\Generator\AwareInterface;
@@ -16,6 +17,7 @@ interface StrategyInterface extends AwareInterface
     public const int DEFAULT_POLICY_CHILD_PERSISTENCE = ChildPersistence::IF_NOT_EXIST;
     public const int DEFAULT_POLICY_PROPERTY_PERSISTENCE = PropertyPersistence::ALWAYS;
     public const int DEFAULT_POLICY_PROPERTY_HYDRATION = PropertyHydration::ALWAYS;
+    public const int DEFAULT_POLICY_CHILD_DELETION = ChildDeletion::NEVER;
 
     public function inheritLifetime(?GraphBuilderContext $context = null): bool;
 
@@ -36,6 +38,34 @@ interface StrategyInterface extends AwareInterface
     public function getPolicyPropertyPersistence() : int;
 
     public function getPolicyPropertyHydration(): int;
+
+    public function getPolicyChildDeletion(): int;
+
+    /**
+     * Whether storing an object fails with a RevisionConflictException when another process (or another
+     * instance) has stored it since this process loaded or stored it (optimistic locking).
+     */
+    public function optimisticLockingEnabled(): bool;
+
+    /**
+     * Determines whether a referenced object is deleted along with the object referencing it,
+     * used with the child deletion policy ChildDeletion::CALLBACK.
+     *
+     * @param string $parentUuid The UUID of the object being deleted.
+     * @param string $parentClassName The class name of the object being deleted.
+     * @param string $childUuid The UUID of the referenced object.
+     * @param string $childClassName The class name of the referenced object.
+     * @param array $path The path of the reference within the data of the deleted object, e.g. ['lines', 0].
+     *
+     * @return bool Returns true if the referenced object should be deleted, otherwise false.
+     */
+    public function shouldDeleteChild(
+        string $parentUuid,
+        string $parentClassName,
+        string $childUuid,
+        string $childClassName,
+        array  $path
+    ): bool;
 
     /**
      * Determines whether a child node should be persisted in the graph-building process.

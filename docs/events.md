@@ -30,14 +30,14 @@ The constants are defined in `melia\ObjectStorage\Event\Events`, the context cla
 | `BEFORE_STORE` | before an object is stored; the UUID is `null` for objects without a UUID yet | `ObjectPersistenceContext` |
 | `BEFORE_INITIAL_STORE` | before an object is stored for the first time | `ObjectPersistenceContext` |
 | `BEFORE_UPDATE` | before an existing object is stored again | `ObjectPersistenceContext` |
-| `OBJECT_SAVED` | after the object's data has been written; only if it changed | `ObjectPersistenceContext` with `getPreviousObject()` |
+| `OBJECT_SAVED` | after the object's data has been written; only if it changed | `ObjectPersistenceContext` with `getPreviousObject()`, `getRevision()` and `getPreviousRevision()` |
 | `METADATA_SAVED` | after the object's metadata has been written | `Context` |
 | `CLASSNAME_CHANGED` | an object was stored under a UUID that held an object of another class | `ClassnameChangeContext` |
 | `STUB_CREATED` | the object was added to the class index | `StubContext` |
 | `AFTER_UPDATE` | after an existing object has been stored | `ObjectPersistenceContext` |
 | `AFTER_STORE` | after an object has been stored and unlocked | `Context` |
 
-`ObjectPersistenceContext::getObject()` returns the stored object. `OBJECT_SAVED` is the event to react to actual changes: it is only dispatched when the stored data differs from what was stored before, and `getPreviousObject()` returns that previous state as a separate object (`null` for new objects). Reading the previous state costs a read, which only happens while a listener for `OBJECT_SAVED` is registered. See [An audit log from events](examples/audit-log-with-events.md).
+`ObjectPersistenceContext::getObject()` returns the stored object. `OBJECT_SAVED` is the event to react to actual changes: it is only dispatched when the stored data differs from what was stored before, and `getPreviousObject()` returns that previous state as a separate object (`null` for new objects). Reading the previous state costs a read, which only happens while a listener for `OBJECT_SAVED` is registered. `getRevision()` returns the [revision](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) the data was written with and `getPreviousRevision()` the one stored before (`null` for new objects). Revisions increase by one with every write, so a consumer, e.g. a replication or an audit log, can detect missed or duplicate changes. `OBJECT_WRITE_FAILED` provides the same values for the write that failed; the other events with an `ObjectPersistenceContext` return `null`. See [An audit log from events](examples/audit-log-with-events.md).
 
 ## Loading
 
@@ -87,7 +87,7 @@ The constants are defined in `melia\ObjectStorage\Event\Events`, the context cla
 | Event | When | Context |
 |---|---|---|
 | `OBJECT_SAVING_FAILURE` | storing an object failed | `Context` |
-| `OBJECT_WRITE_FAILED` | writing the object's files failed | `ObjectPersistenceContext` |
+| `OBJECT_WRITE_FAILED` | writing the object's files failed | `ObjectPersistenceContext` with `getRevision()` and `getPreviousRevision()` of the failed write |
 | `METADATA_WRITE_FAILED` | writing metadata failed | `Context` |
 | `STUB_WRITE_FAILED` | adding the object to the class index failed | `StubContext` |
 | `GRAPH_SERIALIZATION_FAILURE` | the object graph couldn't be serialized | `Context` |
@@ -96,5 +96,6 @@ The constants are defined in `melia\ObjectStorage\Event\Events`, the context cla
 | `IO_READ_FAILURE` | a file couldn't be read | `IOContext` with `getPath()` |
 | `JSON_DECODING_FAILURE` | a file didn't contain valid JSON | `IOContext` with `getPath()` |
 | `OBJECT_DELETION_FAILURE` | deleting an object failed | `Context` |
+| `REVISION_CONFLICT` | `store()` with [optimistic locking](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) found the object stored by someone else in the meantime | `Context` |
 | `CACHE_WRITE_FAILED` | putting an object into the cache failed | `Context` |
 | `OBJECT_CORRUPTION_DETECTED` | rebuilding the class index found an object without class name; it was moved aside | `Context` |

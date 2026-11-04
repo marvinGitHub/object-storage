@@ -11,7 +11,8 @@ use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 class Metadata implements JsonSerializable
 {
     public const RESERVED_REFERENCE_NAME_DEFAULT = '__reference';
-    public const VERSION = 1;
+    /** version of the metadata format; 2 added the revision */
+    public const VERSION = 2;
 
     use AwareTrait;
     use AlgorithmAwareTrait;
@@ -20,6 +21,9 @@ class Metadata implements JsonSerializable
     private float $timestampCreation;
     private int $version;
     private string $checksum;
+
+    /** incremented with every write of the data, 0 for objects stored before revisions existed */
+    private int $revision = 0;
 
     private ?float $timestampExpiresAt = null;
 
@@ -42,6 +46,10 @@ class Metadata implements JsonSerializable
 
         if (isset($data['version'])) {
             $metadata->setVersion($data['version']);
+        }
+
+        if (isset($data['revision'])) {
+            $metadata->setRevision((int)$data['revision']);
         }
 
         if (isset($data['checksum'])) {
@@ -154,6 +162,28 @@ class Metadata implements JsonSerializable
     }
 
     /**
+     * Retrieves the revision of the stored data: incremented with every write of the data,
+     * not by changes of the metadata only (e.g. the lifetime).
+     *
+     * @return int The revision, 0 for objects stored before revisions existed.
+     */
+    public function getRevision(): int
+    {
+        return $this->revision;
+    }
+
+    /**
+     * Sets the revision of the stored data.
+     *
+     * @param int $revision The revision.
+     * @return void
+     */
+    public function setRevision(int $revision): void
+    {
+        $this->revision = $revision;
+    }
+
+    /**
      * Retrieves the timestamp indicating when an event or action expires.
      *
      * @return float|null The expiration timestamp as a Unix timestamp or null if not set.
@@ -198,6 +228,7 @@ class Metadata implements JsonSerializable
             'className' => $this->className ?? '',
             'timestampCreation' => $this->timestampCreation ?? microtime(true),
             'version' => $this->version ?? self::VERSION,
+            'revision' => $this->revision,
             'checksum' => $this->checksum ?? '',
             'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,

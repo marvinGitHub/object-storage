@@ -5,9 +5,14 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Child deletion policy (`Strategy\Policy\ChildDeletion`, `Standard::setPolicyChildDeletion()`): `ALWAYS` deletes the objects referenced by a deleted object along with it, recursively; `CALLBACK` decides per reference via `shouldDeleteChild()` of the strategy. The default `NEVER` keeps them, as before.
+- Revisions: the metadata of every object holds a revision, incremented with every write of its data; read it with `ObjectStorage::getRevision()`. The context of `OBJECT_SAVED` and `OBJECT_WRITE_FAILED` provides it with `getRevision()` and `getPreviousRevision()`. Objects stored before have the revision `0`.
+- Optimistic locking (`Standard::enableOptimisticLocking()`, disabled by default): `store()` throws a `RevisionConflictException` (an `ObjectSavingFailureException`) and dispatches `REVISION_CONFLICT` if the object was stored by someone else since this storage loaded or stored it.
 - `SymfonyLockAdapter`: locking based on symfony/lock, usable with any of its stores (Flock, Redis, Memcached, PDO, Semaphore, …). Stores like Redis keep no lock files and free locks of crashed processes after a TTL.
 
 ### Changed
+- **Breaking:** `StrategyInterface` has new methods `getPolicyChildDeletion()`, `shouldDeleteChild()` and `optimisticLockingEnabled()`. Strategies extending `Standard` get them; custom implementations have to implement them.
+- The metadata format version (`Metadata::VERSION`) is now `2` (field `revision` added) and is written from the constant instead of a fixed `1`. Older metadata is still read; no migration is needed.
 - The default lock adapter is now `SymfonyLockAdapter` with file locks in `<storage dir>/locks` (previously `<uuid>.lock` files directly in the storage directory). The CLI uses the same location.
 - New dependency: `symfony/lock`.
 - Stores are crash-safe: data and metadata are written as a group by the writer (as pending files `<uuid>.obj.pending`, `<uuid>.metadata.pending` first, then committed by atomic renames, the data before the metadata). A store interrupted between both commits is completed when loading or deleting the object, instead of enabling safe mode.
@@ -29,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - Code creating `FileSystem` or `CachedLockAdapter` explicitly has to be migrated to `SymfonyLockAdapter`, see "Lock backends" in the Readme.
 
 ### Fixed
+- `setLifetime()` / `setExpiration()` wrote back cached metadata, which may be outdated if another process stored the object in the meantime; its checksum then no longer matched the data. The metadata is now read from disk under the lock.
 - `store()` didn't lock the referenced objects it wrote along with the stored object. Two processes writing the same referenced object at once could commit each other's pending files, and one of the stores failed. Each referenced object is now locked exclusively while its files are written.
 - Several processes creating the same directory at once (shard or lock directory) could fail or emit `mkdir(): File exists` warnings.
 - `__serialize()` returning int keys (e.g. `ArrayObject`) failed with an `UnsupportedTypeException`.

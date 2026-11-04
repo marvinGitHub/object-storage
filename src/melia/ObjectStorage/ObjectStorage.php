@@ -45,6 +45,7 @@ use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
 use melia\ObjectStorage\Exception\PropertyHydrationFailureException;
+use melia\ObjectStorage\Exception\RevisionConflictException;
 use melia\ObjectStorage\Exception\ResourceSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
@@ -75,6 +76,7 @@ use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
+use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyPersistence;
 use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
@@ -166,6 +168,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected WeakMap $identityMap;
     protected WeakMap $lazyloadReferenceSupportCache;
 
+    /**
+     * The revision each object was loaded or stored with by this instance, for optimistic locking.
+     *
+     * @var WeakMap<object, int>
+     */
+    protected WeakMap $revisions;
+
     /** @var array<string>|null */
     protected ?array $registeredClassNamesCache = null;
 
@@ -201,7 +210,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $lockAdapter?->acquireExclusiveLock($uuid);
 
         try {
-            $metadata = $this->loadMetadata($uuid);
+            // read from disk under the lock: cached metadata may be outdated (checksum, revision) if another
+            // process stored the object in the meantime, and writing it back would revert those values
+            $metadata = $this->reloadMetadata($uuid);
             if (null === $metadata) {
                 throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
             }
@@ -476,6 +487,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
         $this->lazyloadReferenceSupportCache = new WeakMap();
+        $this->revisions = new WeakMap();
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
@@ -599,6 +611,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $lockAdapter?->releaseLock($uuid);
             }
             $eventDispatcher?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
+
+            // passed on as it is (it is an ObjectSavingFailureException too), so callers can catch the conflict itself
+            if ($e instanceof RevisionConflictException) {
+                throw $e;
+            }
+
             throw new ObjectSavingFailureException(message: sprintf('Unable to store object with uuid: %s', $uuid), previous: $e);
         }
     }
@@ -780,7 +798,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $metadata->setTimestampCreation($timestampCreation = microtime(true));
             $metadata->setUuid($uuid);
             $metadata->setClassName($className = get_class($object));
-            $metadata->setVersion(1);
+            $metadata->setVersion(Metadata::VERSION);
             $metadata->setTimestampExpiresAt($ttl ? $timestampCreation + $ttl : null);
 
             $loadedMetadata = $this->loadMetadata($uuid);
@@ -825,6 +843,28 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             }
 
             try {
+                if ($writeGraph || $writeMetadata) {
+                    // the revision is read from disk under the lock: the cached metadata may be outdated
+                    $tracked = isset($this->revisions[$object]);
+                    $currentMetadata = ($exists || $tracked) ? $this->reloadMetadata($uuid) : null;
+                    $currentRevision = $currentMetadata?->getRevision() ?? 0;
+
+                    // optimistic locking: the object was stored since this instance loaded or stored it; an object
+                    // deleted in the meantime (by this or another process) is created again, which is no conflict
+                    if ($tracked && null !== $currentMetadata && true === $strategy?->optimisticLockingEnabled() && $this->revisions[$object] !== $currentRevision) {
+                        $expectedRevision = $this->revisions[$object];
+                        $eventDispatcher?->dispatch(Events::REVISION_CONFLICT, static fn() => new Context($uuid));
+                        throw new RevisionConflictException(sprintf(
+                            'Object with uuid %s has been changed in the meantime. Expected revision: %u Current: %u',
+                            $uuid,
+                            $expectedRevision,
+                            $currentRevision
+                        ));
+                    }
+
+                    $metadata->setRevision($writeGraph ? $currentRevision + 1 : $currentRevision);
+                }
+
                 if ($writeGraph) {
                     // the previous object must be loaded before the data file is overwritten, otherwise the
                     // new data would be validated against the old metadata (checksum mismatch → safe mode);
@@ -839,7 +879,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                         }
                     }
 
-                    $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject);
+                    $revision = $metadata->getRevision();
+                    $previousRevision = $currentMetadata?->getRevision();
+                    $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject, $revision, $previousRevision);
 
                     // data and metadata are written as a group, so a crash can't leave data without matching metadata
                     [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
@@ -865,6 +907,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $this->cacheMetadata($metadata);
                 } elseif ($writeMetadata) {
                     $this->saveMetadata($metadata);
+                }
+
+                if ($writeGraph || $writeMetadata) {
+                    $this->revisions[$object] = $metadata->getRevision();
                 }
 
                 if ($writeCache) {
@@ -1123,6 +1169,17 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @param string $uuid The unique identifier used to load the metadata.
      * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
      */
+    /**
+     * Retrieves the revision of a stored object: incremented with every write of its data.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return int|null The revision (0 for objects stored before revisions existed), or null if nothing is stored.
+     */
+    public function getRevision(string $uuid): ?int
+    {
+        return $this->loadMetadata($uuid)?->getRevision();
+    }
+
     public function getLifetime(string $uuid): ?float
     {
         return $this->loadMetadata($uuid)?->getLifetime();
@@ -1306,6 +1363,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         Helper::assign($object, $uuid);
+        $this->revisions[$object] = $metadata->getRevision();
 
         if ($addToCache) {
             $this->addToCache($uuid, $object, $metadata->getLifetime());
@@ -1626,6 +1684,48 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     public function delete(string $uuid): void
     {
+        // referenced objects are deleted after the object itself, each under its own lock, so at most one lock is
+        // held at once; a crash in between leaves unreferenced objects behind, never references to deleted ones
+        $pending = $this->deleteObject($uuid);
+        $visited = [$uuid => true];
+        $failures = [];
+
+        while (null !== ($childUuid = array_shift($pending))) {
+            if (isset($visited[$childUuid])) {
+                continue;
+            }
+            $visited[$childUuid] = true;
+
+            try {
+                array_push($pending, ...$this->deleteObject($childUuid));
+            } catch (ObjectDeletionFailureException $e) {
+                // deleted by another process in the meantime
+                if ($e->getPrevious() instanceof ObjectNotFoundException) {
+                    continue;
+                }
+                $this->getLogger()?->log($e);
+                $failures[] = $e;
+            }
+        }
+
+        if ([] !== $failures) {
+            throw new ObjectDeletionFailureException(
+                message: sprintf('Object with uuid %s was deleted, but %u referenced object(s) could not be deleted', $uuid, count($failures)),
+                previous: $failures[0]
+            );
+        }
+    }
+
+    /**
+     * Deletes a single object and determines which of the objects it references are deleted along with it,
+     * according to the child deletion policy of the strategy.
+     *
+     * @param string $uuid The unique identifier of the object to delete.
+     * @return string[] The UUIDs of the referenced objects to delete next.
+     * @throws ObjectDeletionFailureException
+     */
+    protected function deleteObject(string $uuid): array
+    {
         $eventDispatcher = $this->getEventDispatcher();
         $lockAdapter = $this->getLockAdapter();
         $adapter = $this->getIOAdapter();
@@ -1653,6 +1753,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $className = $this->getClassName($uuid);
             $filePath = $this->getFilePathData($uuid);
 
+            // read before the data file is gone; under the lock, so the references are the ones being deleted
+            $children = $this->findChildrenToDelete($uuid, (string)$className, $filePath);
+
             if (!$adapter->unlink($filePath)) {
                 throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
             }
@@ -1667,12 +1770,104 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $this->deleteStub($className, $uuid);
 
             $eventDispatcher?->dispatch(Events::AFTER_DELETE, static fn() => new Context($uuid));
+
+            return $children;
         } catch (Throwable $e) {
             $eventDispatcher?->dispatch(Events::OBJECT_DELETION_FAILURE, static fn() => new Context($uuid));
             throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
         } finally {
             if ($lockAdapter?->isLockedByThisProcess($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
+            }
+        }
+    }
+
+    /**
+     * Determines the referenced objects to delete along with an object, according to the child deletion policy.
+     * Data that can't be read or decoded yields no referenced objects, so a corrupted object can still be deleted.
+     *
+     * @param string $uuid The unique identifier of the object being deleted.
+     * @param string $className The class name of the object being deleted.
+     * @param string $filePath The path of its data file.
+     * @return string[] The UUIDs of the referenced objects to delete.
+     */
+    protected function findChildrenToDelete(string $uuid, string $className, string $filePath): array
+    {
+        $strategy = $this->getStrategy();
+        $policy = $strategy?->getPolicyChildDeletion() ?? StrategyInterface::DEFAULT_POLICY_CHILD_DELETION;
+
+        if (ChildDeletion::NEVER === $policy) {
+            return [];
+        }
+
+        $metadata = $this->loadMetadata($uuid);
+        $raw = $this->readFile($filePath);
+        if (null === $metadata || null === $raw) {
+            return [];
+        }
+
+        try {
+            $data = json_decode($raw, true, $strategy?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH, JSON_THROW_ON_ERROR);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return [];
+        }
+
+        if (false === is_array($data)) {
+            return [];
+        }
+
+        $children = [];
+        foreach (static::findReferences($data, $metadata->getReservedReferenceName()) as [$childUuid, $path]) {
+            if ($childUuid === $uuid || isset($children[$childUuid])) {
+                continue;
+            }
+
+            if (ChildDeletion::CALLBACK === $policy) {
+                $childClassName = $this->getClassName($childUuid);
+                if (null === $childClassName) {
+                    continue; // not stored (anymore)
+                }
+
+                try {
+                    $delete = $strategy->shouldDeleteChild($uuid, $className, $childUuid, $childClassName, $path);
+                } catch (Throwable $e) {
+                    $this->getLogger()?->log($e);
+                    $delete = false; // fail-closed: keep the referenced object
+                }
+
+                if (true !== $delete) {
+                    continue;
+                }
+            }
+
+            $children[$childUuid] = true;
+        }
+
+        return array_keys($children);
+    }
+
+    /**
+     * Finds the references to other objects in the stored data of an object.
+     *
+     * @param array $data The decoded data of the object.
+     * @param string $reserved The reserved reference name the data was written with.
+     * @param array $path The path of $data within the data of the object.
+     * @return Generator<array{0: string, 1: array}> Pairs of the referenced UUID and the path of the reference.
+     */
+    protected static function findReferences(array $data, string $reserved, array $path = []): Generator
+    {
+        foreach ($data as $key => $value) {
+            if (false === is_array($value)) {
+                continue;
+            }
+
+            $childPath = [...$path, $key];
+
+            if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
+                yield [$value[$reserved], $childPath];
+            } else {
+                yield from static::findReferences($value, $reserved, $childPath);
             }
         }
     }
@@ -1943,6 +2138,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
         $this->lazyloadReferenceSupportCache = new WeakMap();
+        $this->revisions = new WeakMap();
 
         $this->setStorageDir($storageDir);
         $this->setClassRenameMap(new ClassRenameMap());
