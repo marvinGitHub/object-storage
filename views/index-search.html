@@ -1,22 +1,21 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="container-fluid my-3">
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-        {% if classname %}
-        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0">Search <code>{{ classname }}</code></h5>
-        <span class="text-muted small">the index is chosen per search</span>
-        {% else %}
-        <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0">Search <code>{{ name }}</code></h5>
-        {% if engine %}<span class="badge text-bg-light border" title="engine">{{ engine }}</span>{% endif %}
-        {% endif %}
+<div>
+    {% set storageCrumb = {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true} %}
+    {% embed 'page-header.html' with {crumbs: classname
+        ? [storageCrumb, {label: classname, href: '?action=list-uuids&storage=' ~ storage|url_encode ~ '&classname=' ~ classname|url_encode, code: true}, {label: 'Search'}]
+        : [storageCrumb, {label: 'Search indexes', href: '?action=indexes&storage=' ~ storage|url_encode}, {label: name, href: '?action=index-edit&storage=' ~ storage|url_encode ~ '&name=' ~ name|url_encode, code: true}, {label: 'Search'}]
+    } %}
+        {% block title %}{% if classname %}Search objects{% else %}Search index <code>{{ name }}</code>{% endif %}{% endblock %}
+        {% block badges %}
+        {% if classname %}<span class="text-muted small">the index is chosen per search</span>{% elseif engine %}<span class="badge text-bg-light border" title="engine">{{ engine }}</span>{% endif %}
         {% if status == 'outdated' %}<span class="badge bg-warning text-dark" title="The definition changed; rebuild the index to use it">outdated: searching the previous build</span>{% endif %}
         {% if status == 'building' %}<span class="badge bg-info" title="Searches use the previous build until the build is complete">being rebuilt</span>{% endif %}
-    </div>
+        {% endblock %}
+    {% endembed %}
 
-    <form method="get" class="mb-3">
+    <form method="get" class="card card-body mb-3">
         {% if classname %}
         <input type="hidden" name="action" value="class-search">
         <input type="hidden" name="classname" value="{{ classname }}">

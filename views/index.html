@@ -61,19 +61,351 @@
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-dark">
-    <a class="navbar-brand">Object Storage Viewer</a>
-    <a class="btn btn-warning" href="{{baseUrl}}" role="button">Home</a>
-    <form class="form-inline">
-        <input aria-label="name of storage..." class="form-control mr-sm-2" name="storage" placeholder="name of storage..."
-               type="search">
-        <button class="btn btn-outline-success my-2 my-sm-0" type="submit">Select</button>
+<nav class="navbar navbar-dark bg-dark px-3 gap-2">
+    <a class="navbar-brand d-flex align-items-center gap-2 me-auto" href="{{baseUrl}}">
+        <img src="{{baseUrl}}/../assets/logo.svg" alt="" width="26" height="26" onerror="this.remove()">
+        Object Storage Viewer
+    </a>
+
+    <form class="storage-picker" id="storage-picker" autocomplete="off" role="search">
         <input name="action" type="hidden" value="list-classnames"/>
+        <div class="input-group input-group-sm">
+            <span class="input-group-text bg-secondary-subtle border-0"><i class="bi bi-database"></i></span>
+            <input class="form-control border-0" id="storage-input" name="storage" type="text" spellcheck="false"
+                   placeholder="Storage directory, e.g. appData/demo-storage" aria-label="Storage directory"
+                   value="{{ storage is defined ? storage : '' }}" required
+                   role="combobox" aria-expanded="false" aria-controls="storage-suggestions" aria-autocomplete="list">
+            <button class="btn btn-success" type="submit" title="Open the storage"><i class="bi bi-box-arrow-in-right"></i> Open</button>
+        </div>
+        <div class="storage-suggestions shadow" id="storage-suggestions" role="listbox" hidden></div>
     </form>
 </nav>
 
+<main class="app-main">
 {% block body %}
-
+<div class="page-narrow">
+    {% embed 'page-header.html' with {crumbs: [{label: 'Open a storage'}]} %}
+        {% block title %}Open a storage{% endblock %}
+        {% block intro %}<p class="page-intro">Enter the directory of a storage above, or choose one you opened before.</p>{% endblock %}
+    {% endembed %}
+    <div class="card">
+        <div class="card-header d-flex align-items-center">
+            <span class="me-auto">Recently opened</span>
+            <button class="btn btn-outline-danger btn-sm hidden" id="recent-storages-clear" type="button"><i class="bi bi-trash"></i> Forget all</button>
+        </div>
+        <div class="list-group list-group-flush" id="recent-storages"></div>
+        <div class="card-body text-muted small hidden" id="recent-storages-empty">No storages opened in this browser yet.</div>
+    </div>
+</div>
 {% endblock body %}
+</main>
+
+<style>
+    /* the look of all pages: a calm background, content on cards, one header per page */
+    body { background: var(--bs-tertiary-bg); }
+    .app-main { padding: 1rem 1.5rem 3rem; }
+    @media (max-width: 576px) { .app-main { padding: .75rem 1rem 2rem; } }
+    .page-narrow { max-width: 960px; margin: 0 auto; }
+
+    .page-header { margin-bottom: 1rem; }
+    .page-header .breadcrumb { margin-bottom: .25rem; font-size: .85rem; }
+    .page-header .breadcrumb a { text-decoration: none; }
+    .page-header .breadcrumb .font-monospace { font-size: .8rem; }
+    .page-header-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+    .page-title { font-size: 1.35rem; font-weight: 600; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+    .page-title code { font-size: .9em; }
+    .page-badges:empty { display: none; }
+    .page-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-left: auto; align-items: center; }
+    .page-intro { color: var(--bs-secondary-color); margin: .5rem 0 0; max-width: 80ch; }
+
+    .card { border-color: var(--bs-border-color-translucent); box-shadow: 0 1px 2px rgba(0, 0, 0, .04); }
+    .card + .card, .card + .alert, .alert + .card { margin-top: 1rem; }
+    .card-header { background: var(--bs-body-bg); font-weight: 600; }
+    .table > :not(caption) > * > * { padding-left: .75rem; padding-right: .75rem; }
+    .card > .table, .card > .table-responsive > .table { margin-bottom: 0; }
+    .card > .table thead th, .card > .table-responsive > .table thead th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--bs-secondary-color); font-weight: 600; }
+    .alert > .bi:first-child { margin-right: .35rem; }
+    .uuid { font-family: var(--bs-font-monospace); font-size: .875rem; }
+</style>
+
+<style>
+    .storage-picker { position: relative; width: min(460px, 100%); }
+    .storage-picker .form-control:focus { box-shadow: none; }
+    .storage-suggestions {
+        position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1050;
+        background: var(--bs-body-bg); border-radius: var(--bs-border-radius); overflow: hidden;
+        border: 1px solid var(--bs-border-color);
+    }
+    .storage-suggestions .header { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color); padding: .4rem .75rem .2rem; }
+    .storage-suggestion { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem .35rem .75rem; cursor: pointer; }
+    .storage-suggestion.active, .storage-suggestion:hover { background: var(--bs-primary-bg-subtle); }
+    .storage-suggestion .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--bs-font-monospace); font-size: .85rem; }
+    .storage-suggestion .path mark { padding: 0; background: var(--bs-warning-bg-subtle); }
+    .storage-suggestion .meta { font-size: .75rem; color: var(--bs-secondary-color); white-space: nowrap; }
+    .storage-suggestion .current { font-size: .7rem; }
+    .forget { border: 0; background: none; color: var(--bs-secondary-color); padding: 0 .35rem; line-height: 1; border-radius: .25rem; }
+    .forget:hover { color: var(--bs-danger); background: var(--bs-danger-bg-subtle); }
+    .storage-suggestions .footer { border-top: 1px solid var(--bs-border-color); padding: .25rem .75rem; text-align: right; }
+</style>
+
+<script>
+    /**
+     * The storages opened in this browser, newest first, kept in the localStorage of the browser only.
+     */
+    const RecentStorages = {
+        key: 'object-storage-viewer:recent-storages',
+        max: 10,
+
+        list() {
+            try {
+                const entries = JSON.parse(localStorage.getItem(this.key) ?? '[]');
+                return Array.isArray(entries) ? entries.filter(entry => typeof entry?.path === 'string') : [];
+            } catch (e) {
+                return [];
+            }
+        },
+
+        save(entries) {
+            try {
+                localStorage.setItem(this.key, JSON.stringify(entries.slice(0, this.max)));
+            } catch (e) {
+                // e.g. storage disabled: suggestions are a convenience only
+            }
+        },
+
+        remember(path) {
+            const entries = this.list();
+            const previous = entries.find(entry => entry.path === path);
+            this.save([
+                {path, lastUsed: Date.now(), count: (previous?.count ?? 0) + 1},
+                ...entries.filter(entry => entry.path !== path),
+            ]);
+        },
+
+        forget(path) {
+            this.save(this.list().filter(entry => entry.path !== path));
+        },
+
+        clear() {
+            this.save([]);
+        },
+    };
+
+    function timeAgo(timestamp) {
+        const seconds = Math.round((Date.now() - timestamp) / 1000);
+        const format = new Intl.RelativeTimeFormat('en', {numeric: 'auto'});
+        for (const [unit, size] of [['day', 86400], ['hour', 3600], ['minute', 60]]) {
+            if (Math.abs(seconds) >= size) {
+                return format.format(-Math.floor(seconds / size), unit);
+            }
+        }
+        return 'just now';
+    }
+
+    function openStorage(path) {
+        location.href = `?action=list-classnames&storage=${encodeURIComponent(path)}`;
+    }
+
+    /** the path with the typed text marked, built from text nodes so a path can't inject markup */
+    function markedPath(path, query) {
+        const span = document.createElement('span');
+        span.className = 'path flex-grow-1 text-truncate font-monospace';
+        span.title = path;
+        const at = query ? path.toLowerCase().indexOf(query.toLowerCase()) : -1;
+        if (at < 0) {
+            span.textContent = path;
+            return span;
+        }
+        const mark = document.createElement('mark');
+        mark.textContent = path.slice(at, at + query.length);
+        span.append(path.slice(0, at), mark, path.slice(at + query.length));
+        return span;
+    }
+
+    const currentStorage = {{ (storage is defined and storage and (exists is not defined or exists)) ? storage|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw : 'null' }};
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // a storage shown on this page is remembered; one that wasn't found isn't
+        if (currentStorage) {
+            RecentStorages.remember(currentStorage);
+        }
+
+        const form = document.getElementById('storage-picker');
+        const input = document.getElementById('storage-input');
+        const box = document.getElementById('storage-suggestions');
+        let active = -1;
+
+        const items = () => [...box.querySelectorAll('.storage-suggestion')];
+
+        const close = () => {
+            box.hidden = true;
+            input.setAttribute('aria-expanded', 'false');
+            active = -1;
+        };
+
+        const highlight = index => {
+            const all = items();
+            active = all.length === 0 ? -1 : (index + all.length) % all.length;
+            all.forEach((item, i) => item.classList.toggle('active', i === active));
+            all[active]?.scrollIntoView({block: 'nearest'});
+        };
+
+        const render = () => {
+            const query = input.value.trim();
+            // all while the field shows the current storage, otherwise those containing the typed text
+            const showAll = query === '' || query === currentStorage;
+            const entries = RecentStorages.list().filter(entry => showAll || entry.path.toLowerCase().includes(query.toLowerCase()));
+
+            box.replaceChildren();
+            active = -1;
+            if (entries.length === 0) {
+                close();
+                return;
+            }
+
+            const header = document.createElement('div');
+            header.className = 'header';
+            header.textContent = 'Recently opened';
+            box.append(header);
+
+            for (const entry of entries) {
+                const item = document.createElement('div');
+                item.className = 'storage-suggestion';
+                item.setAttribute('role', 'option');
+                item.dataset.path = entry.path;
+
+                const meta = document.createElement('span');
+                meta.className = 'meta';
+                meta.textContent = timeAgo(entry.lastUsed);
+                meta.title = `opened ${entry.count} × , last ${new Date(entry.lastUsed).toLocaleString()}`;
+
+                const forget = document.createElement('button');
+                forget.type = 'button';
+                forget.className = 'forget';
+                forget.title = 'Forget this storage (the storage itself is not affected)';
+                forget.innerHTML = '<i class="bi bi-x-lg"></i>';
+                forget.addEventListener('mousedown', event => event.preventDefault());
+                forget.addEventListener('click', event => {
+                    event.stopPropagation();
+                    RecentStorages.forget(entry.path);
+                    render();
+                    renderHome();
+                    input.focus();
+                });
+
+                item.append(markedPath(entry.path, showAll ? '' : query));
+                if (entry.path === currentStorage) {
+                    const current = document.createElement('span');
+                    current.className = 'badge text-bg-success current';
+                    current.textContent = 'open';
+                    item.append(current);
+                }
+                item.append(meta, forget);
+                item.addEventListener('mousedown', event => event.preventDefault());
+                item.addEventListener('click', () => openStorage(entry.path));
+                box.append(item);
+            }
+
+            const footer = document.createElement('div');
+            footer.className = 'footer';
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.className = 'btn btn-link btn-sm text-danger p-0';
+            clear.textContent = 'Forget all';
+            clear.addEventListener('mousedown', event => event.preventDefault());
+            clear.addEventListener('click', () => {
+                if (confirm('Forget all suggested storages? The storages themselves are not affected.')) {
+                    RecentStorages.clear();
+                    render();
+                    renderHome();
+                }
+            });
+            footer.append(clear);
+            box.append(footer);
+
+            box.hidden = false;
+            input.setAttribute('aria-expanded', 'true');
+        };
+
+        input.addEventListener('focus', () => {
+            input.select();
+            render();
+        });
+        input.addEventListener('input', render);
+        input.addEventListener('blur', close);
+        input.addEventListener('keydown', event => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                if (box.hidden) {
+                    render();
+                }
+                highlight(active + (event.key === 'ArrowDown' ? 1 : -1));
+            } else if (event.key === 'Enter' && active >= 0) {
+                event.preventDefault();
+                openStorage(items()[active].dataset.path);
+            } else if (event.key === 'Delete' && active >= 0 && event.shiftKey) {
+                // Shift+Delete forgets the highlighted suggestion, as in browsers
+                event.preventDefault();
+                RecentStorages.forget(items()[active].dataset.path);
+                const index = active;
+                render();
+                renderHome();
+                highlight(Math.min(index, items().length - 1));
+            } else if (event.key === 'Escape') {
+                close();
+            }
+        });
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            if (input.value.trim() !== '') {
+                openStorage(input.value.trim());
+            }
+        });
+
+        // the start page lists the recent storages as well
+        function renderHome() {
+            const list = document.getElementById('recent-storages');
+            if (!list) {
+                return;
+            }
+            const entries = RecentStorages.list();
+            list.replaceChildren(...entries.map(entry => {
+                const link = document.createElement('a');
+                link.className = 'list-group-item list-group-item-action d-flex align-items-center gap-2';
+                link.href = `?action=list-classnames&storage=${encodeURIComponent(entry.path)}`;
+
+                const icon = document.createElement('i');
+                icon.className = 'bi bi-database text-primary';
+                const meta = document.createElement('small');
+                meta.className = 'text-muted text-nowrap';
+                meta.textContent = `${timeAgo(entry.lastUsed)} · ${entry.count}×`;
+
+                const forget = document.createElement('button');
+                forget.type = 'button';
+                forget.className = 'forget';
+                forget.title = 'Forget this storage (the storage itself is not affected)';
+                forget.innerHTML = '<i class="bi bi-x-lg"></i>';
+                forget.addEventListener('click', event => {
+                    event.preventDefault();
+                    RecentStorages.forget(entry.path);
+                    renderHome();
+                });
+
+                link.append(icon, markedPath(entry.path, ''), meta, forget);
+                return link;
+            }));
+            document.getElementById('recent-storages-empty').classList.toggle('hidden', entries.length > 0);
+            document.getElementById('recent-storages-clear').classList.toggle('hidden', entries.length === 0);
+        }
+
+        document.getElementById('recent-storages-clear')?.addEventListener('click', () => {
+            if (confirm('Forget all suggested storages? The storages themselves are not affected.')) {
+                RecentStorages.clear();
+                renderHome();
+            }
+        });
+        renderHome();
+    });
+</script>
 </body>
 </html>

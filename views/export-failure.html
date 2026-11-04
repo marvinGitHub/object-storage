@@ -1,13 +1,17 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form>
-    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
-</form>
-{% if success %}
-{% else %}
-<div class="alert alert-danger" role="alert">
-    Record could not be exported.
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: uuid, href: '?action=view-record&storage=' ~ storage|url_encode ~ '&uuid=' ~ uuid|url_encode, code: true},
+    {label: 'Export'},
+]} %}
+    {% block title %}Export record{% endblock %}
+{% endembed %}
+
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be exported.</div>
+
+<div class="d-flex gap-2">
+    <button class="btn btn-secondary btn-sm" onclick="history.back()" type="button"><i class="bi bi-arrow-left"></i> Back</button>
 </div>
-{% endif %}
 {% endblock body %}

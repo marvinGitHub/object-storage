@@ -1,20 +1,30 @@
 {% extends 'index.html' %}
 
 {% block body %}
-{% if exists %}
-<div class="d-flex align-items-center gap-2 flex-wrap my-2">
-    <a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage|url_encode}}" role="button">Rebuild Stubs</a>
-    <a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage|url_encode}}" role="button">Rebuild Shards</a>
-    <a class="btn btn-primary btn-sm" href="?action=indexes&storage={{storage|url_encode}}" role="button"><i class="bi bi-search"></i> Search indexes</a>
-
-    <input type="text" class="form-control form-control-sm w-auto" id="input-uuid"
-           placeholder="uuid..." name="uuid" onclick="pasteUuidFromClipboard()">
-
-    <button type="button" class="btn btn-sm btn-primary"
-            onclick="const uuid = document.getElementById('input-uuid').value; if (uuid) { location.href = `?action=view-record&storage={{storage}}&uuid=${uuid}`; }">
-        View
-    </button>
-</div>
+{% embed 'page-header.html' with {crumbs: [{label: storage, code: true}]} %}
+    {% block title %}Classes{% endblock %}
+    {% block badges %}{% if exists and hasEntries %}<span class="badge text-bg-secondary">{{ classnames|length }}</span>{% endif %}{% endblock %}
+    {% block actions %}
+    {% if exists %}
+    <form class="input-group input-group-sm" style="width: 22rem"
+          onsubmit="event.preventDefault(); const uuid = this.uuid.value.trim(); if (uuid) { location.href = `?action=view-record&storage={{ storage|url_encode }}&uuid=${encodeURIComponent(uuid)}`; }">
+        <input type="text" class="form-control font-monospace" id="input-uuid" placeholder="Open a record by UUID…" name="uuid"
+               onclick="pasteUuidFromClipboard()" aria-label="UUID of a record">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-box-arrow-in-right"></i> Open</button>
+    </form>
+    <a class="btn btn-primary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button"><i class="bi bi-search"></i> Search indexes</a>
+    <div class="dropdown">
+        <button class="btn btn-warning btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-tools"></i> Maintenance
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="?action=rebuild-stubs&storage={{ storage|url_encode }}"><i class="bi bi-diagram-3"></i> Rebuild stubs</a></li>
+            <li><a class="dropdown-item" href="?action=rebuild-shards&storage={{ storage|url_encode }}"><i class="bi bi-grid-3x3"></i> Rebuild shards</a></li>
+        </ul>
+    </div>
+    {% endif %}
+    {% endblock %}
+{% endembed %}
 
 <script>
     async function pasteUuidFromClipboard() {
@@ -23,42 +33,36 @@
 
         try {
             const text = (await navigator.clipboard.readText()).trim();
-
-            if (!uuidRegex.test(text)) {
-               return;
+            if (uuidRegex.test(text)) {
+                input.value = text;
             }
-
-            input.value = text;
         } catch (e) {
-            console.log(e);
+            // reading the clipboard isn't allowed: the UUID is typed instead
         }
     }
 </script>
 
-{% if hasEntries %}
-<ul class="list-group">
-    <li class="list-group-item list-group-item-secondary">
-        <a href="?action=list-classnames&storage={{ storage|url_encode }}"> <span class="badge bg-dark">{{storage}}</span></a>
-    </li>
-    {% for classname in classnames %}
-    <li class="list-group-item">{{ classname }}&nbsp;<a class="btn btn-secondary btn-sm"
-                                                        href="?action=list-uuids&storage={{storage|url_encode}}&classname={{classname|url_encode}}"
-                                                        role="button">List</a>
-        {% if indexCounts[classname] is defined %}
-        <a class="btn btn-outline-primary btn-sm" href="?action=class-search&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}" role="button"
-           title="Search the objects of the class; the index is chosen per search"><i class="bi bi-search"></i> Search <span class="badge text-bg-light border">{{ indexCounts[classname] }} {{ indexCounts[classname] == 1 ? 'index' : 'indexes' }}</span></a>
-        {% endif %}
-    </li>
-    {% endfor %}
-</ul>
+{% if not exists %}
+<div class="alert alert-warning" role="alert"><i class="bi bi-exclamation-triangle"></i> Storage not found.</div>
+{% elseif not hasEntries %}
+<div class="alert alert-info" role="alert"><i class="bi bi-info-circle"></i> The storage has no objects yet.</div>
 {% else %}
-<div class="alert alert-warning" role="alert">
-    No entries found.
-</div>
-{% endif %}
-{% else %}
-<div class="alert alert-warning" role="alert">
-    Storage not found.
+<div class="card">
+    <div class="list-group list-group-flush">
+        {% for classname in classnames %}
+        <div class="list-group-item d-flex align-items-center gap-2 flex-wrap">
+            <a class="me-auto text-decoration-none font-monospace small" href="?action=list-uuids&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}">
+                <i class="bi bi-box text-primary"></i> {{ classname }}
+            </a>
+            {% if indexCounts[classname] is defined %}
+            <a class="btn btn-outline-primary btn-sm" href="?action=class-search&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}" role="button"
+               title="Search the objects of the class; the index is chosen per search"><i class="bi bi-search"></i> Search
+                <span class="badge text-bg-light border">{{ indexCounts[classname] }} {{ indexCounts[classname] == 1 ? 'index' : 'indexes' }}</span></a>
+            {% endif %}
+            <a class="btn btn-secondary btn-sm" href="?action=list-uuids&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}" role="button"><i class="bi bi-list-ul"></i> Objects</a>
+        </div>
+        {% endfor %}
+    </div>
 </div>
 {% endif %}
 {% endblock body %}

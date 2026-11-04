@@ -1,11 +1,13 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="container-fluid my-3" style="max-width: 900px">
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0">Rebuild shards <span class="badge bg-dark">{{ storage }}</span></h5>
-    </div>
+<div class="page-narrow">
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: 'Rebuild shards'},
+    ]} %}
+        {% block title %}Rebuild shards{% endblock %}
+    {% endembed %}
 
     <p class="text-muted">
         Moves the object files into the directories of the chosen shard depth (currently <strong>{{ currentDepth ?? '?' }}</strong>).

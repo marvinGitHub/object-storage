@@ -1,16 +1,19 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="container-fluid my-3">
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0 me-auto">Search indexes <span class="badge bg-dark">{{ storage }}</span></h5>
+<div>
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: 'Search indexes'},
+    ]} %}
+        {% block title %}Search indexes{% endblock %}
+        {% block badges %}{% if indexes is not empty %}<span class="badge text-bg-secondary">{{ indexes|length }}</span>{% endif %}{% endblock %}
+        {% block actions %}
         {% if searchAvailable %}
-        <a class="btn btn-primary btn-sm" href="?action=index-edit&storage={{ storage|url_encode }}" role="button">
-            <i class="bi bi-plus-lg"></i> New index
-        </a>
+        <a class="btn btn-primary btn-sm" href="?action=index-edit&storage={{ storage|url_encode }}" role="button"><i class="bi bi-plus-lg"></i> New index</a>
         {% endif %}
-    </div>
+        {% endblock %}
+    {% endembed %}
 
     {% if not searchAvailable %}
     <div class="alert alert-warning">
@@ -24,15 +27,16 @@
     <div id="action-error" class="alert alert-danger hidden"></div>
 
     {% if searchAvailable and indexes is empty %}
-    <p class="text-muted">
-        No search indexes yet. An index makes the objects of one class searchable by full text and filterable
+    <p class="alert alert-info">
+        <i class="bi bi-info-circle"></i> No search indexes yet. An index makes the objects of one class searchable by full text and filterable
         by their fields. Indexes are stored in <code>{{ storage }}/indexes/</code>.
     </p>
     {% endif %}
 
     {% if indexes is not empty %}
+    <div class="card">
     <div class="table-responsive">
-    <table class="table table-sm align-middle">
+    <table class="table table-sm table-hover align-middle">
         <thead>
         <tr>
             <th>Name</th>
@@ -114,6 +118,7 @@
         {% endfor %}
         </tbody>
     </table>
+    </div>
     </div>
     {% endif %}
 </div>

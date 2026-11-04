@@ -1,11 +1,20 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="container-fluid my-3">
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-        <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0">{% if isNew %}New search index{% else %}Edit search index <code>{{ name }}</code>{% endif %}</h5>
-    </div>
+<div>
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: 'Search indexes', href: '?action=indexes&storage=' ~ storage|url_encode},
+        {label: isNew ? 'New' : name, code: not isNew},
+    ]} %}
+        {% block title %}{% if isNew %}New search index{% else %}Search index <code>{{ name }}</code>{% endif %}{% endblock %}
+        {% block actions %}
+        {% if not isNew %}
+        <a class="btn btn-outline-primary btn-sm" href="?action=index-search&storage={{ storage|url_encode }}&name={{ name|url_encode }}"><i class="bi bi-search"></i> Search</a>
+        <a class="btn btn-outline-secondary btn-sm" href="?action=index-build&storage={{ storage|url_encode }}&name={{ name|url_encode }}&start=1"><i class="bi bi-arrow-repeat"></i> Rebuild</a>
+        {% endif %}
+        {% endblock %}
+    {% endembed %}
 
     {% if not searchAvailable %}
     <div class="alert alert-warning">Search indexes need the package <code>loupe/loupe</code> and the PHP extensions <code>intl</code> and <code>pdo_sqlite</code>.</div>
@@ -19,7 +28,7 @@
     </div>
     {% endif %}
 
-    <form method="post" action="?action=index-save" id="index-form">
+    <form method="post" action="?action=index-save" id="index-form" class="card card-body">
         <input type="hidden" name="action" value="index-save">
         <input type="hidden" name="storage" value="{{ storage }}">
         <input type="hidden" name="isNew" value="{{ isNew ? '1' : '0' }}">

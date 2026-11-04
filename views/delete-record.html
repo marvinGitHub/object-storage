@@ -1,16 +1,21 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form>
-    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
-</form>
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: uuid, code: true},
+]} %}
+    {% block title %}Delete record{% endblock %}
+{% endembed %}
+
 {% if success %}
-<div class="alert alert-success" role="alert">
-    Record deleted.
-</div>
+<div class="alert alert-success" role="alert"><i class="bi bi-check-circle"></i> Record <span class="uuid">{{ uuid }}</span> deleted.</div>
 {% else %}
-<div class="alert alert-danger" role="alert">
-    Record could not be deleted.
-</div>
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record <span class="uuid">{{ uuid }}</span> could not be deleted.</div>
 {% endif %}
+
+<div class="d-flex gap-2">
+    <button class="btn btn-secondary btn-sm" onclick="history.back()" type="button"><i class="bi bi-arrow-left"></i> Back</button>
+    <a class="btn btn-outline-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}"><i class="bi bi-database"></i> Classes of the storage</a>
+</div>
 {% endblock body %}

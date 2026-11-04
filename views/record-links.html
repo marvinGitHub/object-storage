@@ -3,10 +3,10 @@
     Variables: storage, uuid (optional: without it, only the storage link).
 #}
 <a class="btn btn-outline-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button" title="Classes of the storage" data-leave-record>
-    <i class="bi bi-database"></i> Storage <span class="badge bg-dark">{{ storage }}</span>
+    <i class="bi bi-database"></i> Storage
 </a>
 {% if uuid is defined and uuid %}
 <a class="btn btn-outline-secondary btn-sm" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}" role="button" title="The record, without unsaved changes" data-leave-record>
-    <i class="bi bi-file-earmark-text"></i> Record
+    <i class="bi bi-file-earmark-text"></i> Back to the record
 </a>
 {% endif %}

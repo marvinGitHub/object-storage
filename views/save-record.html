@@ -1,13 +1,16 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="d-flex align-items-center gap-2 flex-wrap my-2">
-    {% include 'record-links.html' with {storage: storage, uuid: uuid} %}
-</div>
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: uuid, href: '?action=view-record&storage=' ~ storage|url_encode ~ '&uuid=' ~ uuid|url_encode, code: true},
+    {label: 'Save'},
+]} %}
+    {% block title %}Save record{% endblock %}
+    {% block actions %}{% include 'record-links.html' with {storage: storage, uuid: uuid} %}{% endblock %}
+{% endembed %}
 {% if success %}
-<div class="alert alert-success" role="alert">
-    Record saved.
-</div>
+<div class="alert alert-success" role="alert"><i class="bi bi-check-circle"></i> Record saved.</div>
 
 {% if updatedIndexes is not empty %}
 <div class="alert alert-info py-2" role="alert">
@@ -28,8 +31,6 @@
 {% endif %}
 
 {% else %}
-<div class="alert alert-danger" role="alert">
-    Record could not be saved.
-</div>
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be saved.</div>
 {% endif %}
 {% endblock body %}

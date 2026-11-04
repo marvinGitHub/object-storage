@@ -1,57 +1,52 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="d-flex align-items-center gap-2 flex-wrap my-2">
-    {% include 'button-back.html' %}
-</div>
-{% if pages > 1 %}
-<nav aria-label="Pagination">
-    <ul class="pagination">
-        {% if page > 1 %}
-        <li class="page-item"><a class="page-link"
-                                 href="?action=list-uuids&storage={{storage}}&classname={{classname}}&page={{page-1}}">Previous</a>
-        </li>
-        {% endif %}
-        {% for i in 1..pages %}
-        <li class="page-item"><a class="page-link {% if page == i %}active{% endif %}"
-                                 href="?action=list-uuids&storage={{storage}}&classname={{classname}}&page={{i}}">{{i}}</a>
-        </li>
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: classname, code: true},
+]} %}
+    {% block title %}Objects{% endblock %}
+    {% block badges %}{% if hasEntries %}<span class="badge text-bg-secondary">{{ total|number_format(0, '.', ' ') }}</span>{% endif %}{% endblock %}
+{% endembed %}
+
+{% if hasEntries %}
+<div class="card">
+    <div class="card-header d-flex align-items-center small fw-normal text-muted">
+        <span class="me-auto">{{ offset|number_format(0, '.', ' ') }} – {{ end|number_format(0, '.', ' ') }} of {{ total|number_format(0, '.', ' ') }}</span>
+    </div>
+    <div class="list-group list-group-flush">
+        {% for uuid in uuids %}
+        <div class="list-group-item d-flex align-items-center gap-2 flex-wrap">
+            <a class="uuid me-auto text-decoration-none" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}">{{ uuid }}</a>
+            <button type="button" class="btn btn-success btn-sm" title="Copy UUID" aria-label="Copy UUID"
+                    onclick="copyToClipboard('{{ uuid }}')"><i class="bi bi-clipboard"></i></button>
+            <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}" role="button" title="Duplicate"><i class="bi bi-copy"></i></a>
+            <a class="btn btn-dark btn-sm" href="?action=export-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}" role="button" title="Export"><i class="bi bi-download"></i></a>
+            <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}" role="button" title="Delete"
+               onclick="return confirm('Are you sure you want to delete this record?');"><i class="bi bi-trash"></i></a>
+            <a class="btn btn-secondary btn-sm" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}" role="button"><i class="bi bi-eye"></i> View</a>
+        </div>
         {% endfor %}
-        {% if page < pages %}
-        <li class="page-item"><a class="page-link"
-                                 href="?action=list-uuids&storage={{storage}}&classname={{classname}}&page={{page+1}}">Next</a>
-        </li>
+    </div>
+</div>
+
+{% if pages > 1 %}
+{% set link = '?action=list-uuids&storage=' ~ storage|url_encode ~ '&classname=' ~ classname|url_encode ~ '&page=' %}
+<nav aria-label="Pagination" class="mt-3">
+    <ul class="pagination pagination-sm flex-wrap">
+        <li class="page-item {% if page <= 1 %}disabled{% endif %}"><a class="page-link" href="{{ link }}{{ page - 1 }}"><i class="bi bi-chevron-left"></i></a></li>
+        {% for i in 1..pages %}
+        {% if i <= 2 or i > pages - 2 or (i - page)|abs <= 2 %}
+        <li class="page-item {% if page == i %}active{% endif %}"><a class="page-link" href="{{ link }}{{ i }}">{{ i }}</a></li>
+        {% elseif i == 3 or i == pages - 2 %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
         {% endif %}
+        {% endfor %}
+        <li class="page-item {% if page >= pages %}disabled{% endif %}"><a class="page-link" href="{{ link }}{{ page + 1 }}"><i class="bi bi-chevron-right"></i></a></li>
     </ul>
 </nav>
 {% endif %}
-{% if hasEntries %}
-<ul class="list-group">
-    <li class="list-group-item list-group-item-secondary d-flex justify-content-between align-items-start">
-        <div class="ms-2 me-auto">
-            <a href="?action=list-classnames&storage={{ storage|url_encode }}"> <span class="badge bg-dark">{{storage}}</span></a>
-            <span class="badge bg-secondary">{{classname}}</span>
-        </div>
-        <span class="badge bg-primary rounded-pill">{{offset}} - {{end}} of {{total}}</span>
-    </li>
-    {% for uuid in uuids %}
-    <li class="list-group-item">
-        {{ uuid }}&nbsp;
-        <button type="button" class="btn btn-success btn-sm" title="Copy UUID" aria-label="Copy UUID"
-                onclick="copyToClipboard('{{ uuid }}')"><i class="bi bi-clipboard"></i></button>
-        <a class="btn btn-danger btn-sm"
-           href="?action=delete-record&storage={{storage}}&uuid={{uuid}}"
-           role="button"
-           onclick="return confirm('Are you sure you want to delete this UUID?');">Delete</a>
-        <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}" role="button">Duplicate</a>
-        <a class="btn btn-dark btn-sm" href="?action=export-record&storage={{storage}}&uuid={{uuid}}" role="button">Export</a>
-        <a class="btn btn-secondary btn-sm" href="?action=view-record&storage={{storage}}&uuid={{uuid}}" role="button">View</a>
-    </li>
-    {% endfor %}
-</ul>
 {% else %}
-<div class="alert alert-warning" role="alert">
-    No entries found.
-</div>
+<div class="alert alert-info" role="alert"><i class="bi bi-info-circle"></i> No objects of this class.</div>
 {% endif %}
 {% endblock body %}

@@ -1,0 +1,35 @@
+{#
+    The head of every page: where it is (breadcrumb), what it is (title) and what can be done (actions).
+    Used with embed, so pages fill the blocks:
+
+    {% embed 'page-header.html' with {crumbs: [{label: storage, href: '?action=…'}, {label: 'Search indexes'}]} %}
+        {% block title %}Search indexes{% endblock %}
+        {% block actions %}<a class="btn btn-primary btn-sm" …>…</a>{% endblock %}
+    {% endembed %}
+
+    Variables: crumbs (list of {label, href (optional), code (optional: monospace), leave (optional: asks before
+    leaving a record being edited)}); the last crumb is the current page.
+#}
+<header class="page-header">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="?" title="Home"><i class="bi bi-house-door"></i></a></li>
+            {% for crumb in crumbs|default([]) %}
+            <li class="breadcrumb-item {% if loop.last %}active{% endif %}" {% if loop.last %}aria-current="page"{% endif %}>
+                {% if crumb.href is defined and crumb.href and not loop.last %}
+                <a href="{{ crumb.href }}" {% if crumb.leave is defined and crumb.leave %}data-leave-record{% endif %}
+                   class="{% if crumb.code is defined and crumb.code %}font-monospace{% endif %}">{{ crumb.label }}</a>
+                {% else %}
+                <span class="{% if crumb.code is defined and crumb.code %}font-monospace{% endif %}">{{ crumb.label }}</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ol>
+    </nav>
+    <div class="page-header-row">
+        <h1 class="page-title">{% block title %}{% endblock %}</h1>
+        <div class="page-badges">{% block badges %}{% endblock %}</div>
+        <div class="page-actions">{% block actions %}{% endblock %}</div>
+    </div>
+    {% block intro %}{% endblock %}
+</header>

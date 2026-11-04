@@ -1,11 +1,13 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="container-fluid my-3" style="max-width: 900px">
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0">Rebuild stubs <span class="badge bg-dark">{{ storage }}</span></h5>
-    </div>
+<div class="page-narrow">
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: 'Rebuild stubs'},
+    ]} %}
+        {% block title %}Rebuild stubs{% endblock %}
+    {% endembed %}
 
     <p class="text-muted">
         Rebuilds the class index (the stubs), which lists the objects of every class: first a stub is created for

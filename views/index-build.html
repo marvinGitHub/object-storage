@@ -1,11 +1,15 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<div class="container-fluid my-3" style="max-width: 900px">
-    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-        <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
-        <h5 class="mb-0">Build search index <code>{{ index.name ?? '' }}</code></h5>
-    </div>
+<div class="page-narrow">
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: 'Search indexes', href: '?action=indexes&storage=' ~ storage|url_encode},
+        {label: index.name ?? '', href: '?action=index-edit&storage=' ~ storage|url_encode ~ '&name=' ~ (index.name ?? '')|url_encode, code: true},
+        {label: 'Build'},
+    ]} %}
+        {% block title %}Build search index <code>{{ index.name ?? '' }}</code>{% endblock %}
+    {% endembed %}
 
     {% if not searchAvailable or index is null %}
     <div class="alert alert-warning">Search indexes need the package <code>loupe/loupe</code> and the PHP extensions <code>intl</code> and <code>pdo_sqlite</code>.</div>

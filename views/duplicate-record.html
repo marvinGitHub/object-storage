@@ -1,22 +1,26 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form>
-    <input class="btn btn-secondary btn-sm" onclick="history.back()" type="button" value="Back"/>
-</form>
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: 'Duplicate'},
+]} %}
+    {% block title %}Duplicate record{% endblock %}
+{% endembed %}
+
 {% if success %}
-<div class="alert alert-success" id="alert-record-duplicated" role="alert">
-    Record has been duplicated. {{uuidNew}}
+<div class="alert alert-success" role="alert">
+    <i class="bi bi-check-circle"></i> Record duplicated. The copy is
+    <a class="uuid" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuidNew|url_encode }}">{{ uuidNew }}</a>.
 </div>
-<script>
-    document.addEventListener('DOMContentLoaded', function (event) {
-        const alertRecordDuplicated = document.getElementById('alert-record-duplicated');
-        alertRecordDuplicated.innerHTML = ReferenceLinkGenerator.generate(alertRecordDuplicated.innerHTML);
-    });
-</script>
 {% else %}
-<div class="alert alert-danger" role="alert">
-    Record could not be duplicated.
-</div>
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be duplicated.</div>
 {% endif %}
+
+<div class="d-flex gap-2">
+    {% if success %}
+    <a class="btn btn-primary btn-sm" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuidNew|url_encode }}"><i class="bi bi-eye"></i> View the copy</a>
+    {% endif %}
+    <button class="btn btn-secondary btn-sm" onclick="history.back()" type="button"><i class="bi bi-arrow-left"></i> Back</button>
+</div>
 {% endblock body %}
