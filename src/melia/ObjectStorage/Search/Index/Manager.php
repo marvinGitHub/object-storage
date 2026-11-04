@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\Search\Index;
 
+use Generator;
 use InvalidArgumentException;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
@@ -13,7 +14,11 @@ use melia\ObjectStorage\Search\Exception\EngineNotFoundException;
 use melia\ObjectStorage\Search\Exception\IndexAlreadyExistsException;
 use melia\ObjectStorage\Search\Exception\IndexNotFoundException;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
+use melia\ObjectStorage\Search\Exception\NoSuitableIndexException;
 use melia\ObjectStorage\Search\Exception\SearchException;
+use melia\ObjectStorage\Search\Field;
+use melia\ObjectStorage\Search\Request;
+use melia\ObjectStorage\Search\Result;
 use Throwable;
 
 /**
@@ -186,6 +191,139 @@ final class Manager implements ManagerInterface
             $this->storage->getLogger()?->log($e);
         }
         return $indexes;
+    }
+
+    public function explain(string $className, Request $request): Plan
+    {
+        $usable = [];
+        $unusable = [];
+
+        foreach ($this->getIndexesForClass($className) as $name => $index) {
+            $candidate = $this->consider($index, $request);
+            if ($candidate->isUsable()) {
+                $usable[] = $candidate;
+            } else {
+                $unusable[] = $candidate;
+            }
+        }
+
+        // like a query planner: indexes searching the current definition first; for full text, the one searching
+        // the most fields; then the smallest one; the name keeps the choice stable
+        $fullText = '' !== trim($request->query);
+        usort($usable, static fn(Candidate $a, Candidate $b): int => [
+                IndexInterface::STATUS_READY === $a->status ? 0 : 1,
+                $fullText ? -$a->searchableFields : 0,
+                $a->fields,
+                $a->name,
+            ] <=> [
+                IndexInterface::STATUS_READY === $b->status ? 0 : 1,
+                $fullText ? -$b->searchableFields : 0,
+                $b->fields,
+                $b->name,
+            ]);
+
+        $ranked = [];
+        foreach ($usable as $position => $candidate) {
+            $ranked[] = $candidate->withRank($position + 1);
+        }
+
+        return new Plan($className, [...$ranked, ...$unusable]);
+    }
+
+    public function search(string $className, Request $request): Result
+    {
+        return $this->choose($className, $request)->search($request);
+    }
+
+    public function searchObjects(string $className, Request $request): Generator
+    {
+        return $this->choose($className, $request)->searchObjects($request);
+    }
+
+    /**
+     * The index that answers a search of a class, see explain().
+     *
+     * @throws NoSuitableIndexException
+     * @throws SearchException
+     */
+    public function choose(string $className, Request $request): Index
+    {
+        $plan = $this->explain($className, $request);
+        $chosen = $plan->getChosen();
+
+        if (null === $chosen) {
+            throw NoSuitableIndexException::forPlan($plan);
+        }
+
+        return $this->get($chosen->name);
+    }
+
+    /**
+     * Checks whether an index can answer a search: the definition it searches (the one of its last build) has to
+     * have the fields the search uses.
+     */
+    private function consider(Index $index, Request $request): Candidate
+    {
+        $reasons = [];
+        $engine = '?';
+        $status = '?';
+        $searchable = $filterable = $sortable = $fields = [];
+
+        try {
+            $engine = $index->getEngineName();
+            $status = $index->getStatus();
+            $definition = $index->getActiveDefinition();
+
+            if (null === $definition) {
+                $reasons[] = 'not built yet';
+            } else {
+                $fields = $definition->fieldNames(static fn(): bool => true);
+                $searchable = $definition->fieldNames(static fn(Field $field): bool => $field->searchable);
+                // the UUID and the expiration can always be filtered
+                $filterable = ['uuid', 'expiresAt', ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable)];
+                $sortable = $definition->fieldNames(static fn(Field $field): bool => $field->sortable);
+            }
+        } catch (Throwable $e) {
+            $reasons[] = 'unavailable: ' . $e->getMessage();
+        }
+
+        if ([] === $reasons) {
+            if ('' !== trim($request->query)) {
+                if ([] === $searchable) {
+                    $reasons[] = 'no searchable fields for the query';
+                }
+                if ([] !== ($missing = array_diff($request->searchOn, $searchable))) {
+                    $reasons[] = 'not searchable: ' . implode(', ', $missing);
+                }
+            }
+
+            if (null !== $request->filter && '' !== trim($request->filter)) {
+                try {
+                    $used = $this->getEngine($engine)->filterAttributes($request->filter);
+                    if ([] !== ($missing = array_diff($used, $filterable))) {
+                        $reasons[] = 'not filterable: ' . implode(', ', $missing);
+                    }
+                } catch (Throwable $e) {
+                    // e.g. a filter in the language of another engine
+                    $reasons[] = 'filter not understood: ' . $e->getMessage();
+                }
+            }
+
+            // names starting with "_" are special sorts of the engine, e.g. Loupe's "_relevance"
+            $sortFields = array_filter(
+                array_map(static fn(string $criterion): string => explode(':', $criterion)[0], $request->sort),
+                static fn(string $field): bool => !str_starts_with($field, '_')
+            );
+            if ([] !== ($missing = array_diff($sortFields, $sortable))) {
+                $reasons[] = 'not sortable: ' . implode(', ', $missing);
+            }
+
+            if ([] !== ($missing = array_diff($request->facets, $filterable))) {
+                $reasons[] = 'no facets for: ' . implode(', ', $missing);
+            }
+        }
+
+        return new Candidate($index->getName(), $engine, $status, array_values($reasons), null, count($searchable), count($fields));
     }
 
     public function create(Definition $definition): Index

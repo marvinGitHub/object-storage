@@ -40,9 +40,10 @@
             <th>Engine</th>
             <th>Status</th>
             <th class="text-end">Documents</th>
+            <th class="text-end" title="Space on disk; while an index is rebuilt, the previous and the new build">Size</th>
             <th class="text-end">Pending changes</th>
             <th>Fields</th>
-            <th>Last build</th>
+            <th title="The last update of the documents: build, sync or removal of expired objects">Last update</th>
             <th></th>
         </tr>
         </thead>
@@ -51,7 +52,7 @@
         {% if index.broken is defined %}
         <tr>
             <td>{{ index.name }}</td>
-            <td colspan="7" class="text-danger">{{ index.broken }}</td>
+            <td colspan="8" class="text-danger">{{ index.broken }}</td>
             <td class="text-end">
                 <button class="btn btn-outline-danger btn-sm" onclick="dropIndex('{{ index.name|e('js') }}')"><i class="bi bi-trash"></i> Drop</button>
             </td>
@@ -71,7 +72,8 @@
                 <span class="badge bg-danger" title="{{ index.errors|join('\n') }}">{{ index.errors|length }} errors</span>
                 {% endif %}
             </td>
-            <td class="text-end">{{ index.documents ?? '–' }}</td>
+            <td class="text-end">{{ index.documents is null ? '–' : index.documents|number_format(0, '.', ' ') }}</td>
+            <td class="text-end text-nowrap" title="{{ index.size|number_format(0, '.', ' ') }} bytes">{{ index.size|bytes }}</td>
             <td class="text-end">{{ index.pending }}</td>
             <td>
                 {% for field in index.fields %}
@@ -83,7 +85,18 @@
                 </span>
                 {% endfor %}
             </td>
-            <td class="text-nowrap"><small>{{ index.lastBuildAt ? index.lastBuildAt|date('Y-m-d H:i') : 'never' }}</small></td>
+            <td class="text-nowrap small">
+                {% if index.lastUpdatedAt %}
+                <span title="{{ index.lastUpdatedAt|date('Y-m-d H:i:s') }}">{{ index.lastUpdatedAt|date('Y-m-d H:i') }}</span>
+                {% if index.lastUpdate %}{% include 'index-update-kind.html' with {update: index.lastUpdate} %}{% endif %}
+                {% else %}
+                <span class="text-muted">never</span>
+                {% endif %}
+                <div class="text-muted">
+                    build {{ index.lastBuildAt ? index.lastBuildAt|date('Y-m-d H:i') : 'never' }}
+                    {% if index.lastSyncAt %} · sync {{ index.lastSyncAt|date('Y-m-d H:i') }}{% endif %}
+                </div>
+            </td>
             <td class="text-end text-nowrap">
                 <a class="btn btn-outline-primary btn-sm {% if index.documents is null %}disabled{% endif %}"
                    href="?action=index-search&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}"><i class="bi bi-search"></i> Search</a>

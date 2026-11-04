@@ -42,8 +42,13 @@
     </li>
     {% for classname in classnames %}
     <li class="list-group-item">{{ classname }}&nbsp;<a class="btn btn-secondary btn-sm"
-                                                        href="?action=list-uuids&storage={{storage}}&classname={{classname}}"
-                                                        role="button">List</a></li>
+                                                        href="?action=list-uuids&storage={{storage|url_encode}}&classname={{classname|url_encode}}"
+                                                        role="button">List</a>
+        {% if indexCounts[classname] is defined %}
+        <a class="btn btn-outline-primary btn-sm" href="?action=class-search&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}" role="button"
+           title="Search the objects of the class; the index is chosen per search"><i class="bi bi-search"></i> Search <span class="badge text-bg-light border">{{ indexCounts[classname] }} {{ indexCounts[classname] == 1 ? 'index' : 'indexes' }}</span></a>
+        {% endif %}
+    </li>
     {% endfor %}
 </ul>
 {% else %}

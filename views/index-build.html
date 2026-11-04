@@ -16,6 +16,8 @@
         Searches use the previous build until this one is complete.
     </p>
 
+    {% include 'index-size.html' %}
+
     {% include 'step-progress.html' with {unit: 'Indexed', showFailed: true} %}
 
     <div class="d-flex gap-2 mb-3">
@@ -41,6 +43,15 @@
                     return li;
                 }));
                 document.getElementById('errors-wrapper').classList.toggle('hidden', progress.errors.length === 0);
+
+                // documents of the searchable build, size of all builds on disk
+                const size = document.getElementById('index-size');
+                if (progress.size) {
+                    size.querySelector('[data-size]').textContent = progress.size;
+                }
+                if (progress.documents !== null && progress.documents !== undefined) {
+                    size.querySelector('[data-documents]').textContent = progress.documents.toLocaleString('en').replaceAll(',', ' ');
+                }
             },
             onDone(progress) {
                 runner.finish(`Done: ${progress.documents ?? progress.processed} documents in the index.`, true);

@@ -157,6 +157,10 @@ final class LoupeEngineIndex implements EngineIndexInterface
         }
 
         $searchable = $this->definition->fieldNames(static fn(Field $field): bool => $field->searchable);
+        if ([] !== $request->searchOn) {
+            $parameters = $parameters->withAttributesToSearchOn($request->searchOn);
+            $searchable = array_values(array_intersect($searchable, $request->searchOn));
+        }
         if ($request->highlight && '' !== $request->query && [] !== $searchable) {
             $parameters = $parameters->withAttributesToHighlight($searchable, $request->highlightStartTag, $request->highlightEndTag);
         }

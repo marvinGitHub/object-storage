@@ -12,6 +12,7 @@
     {% else %}
 
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    {% if index is defined and index is not null %}{% include 'index-size.html' %}{% endif %}
     {% if not isNew %}
     <div class="alert alert-info py-2">
         Saving rebuilds the index. Searches keep using the previous definition until the build is complete.

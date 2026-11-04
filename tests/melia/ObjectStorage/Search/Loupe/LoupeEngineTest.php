@@ -4,6 +4,7 @@ namespace Tests\melia\ObjectStorage\Search\Loupe;
 
 use Loupe\Loupe\SearchParameters;
 use Loupe\Loupe\SearchResult as LoupeSearchResult;
+use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
 use melia\ObjectStorage\Search\Exception\SearchException;
 use melia\ObjectStorage\Search\Exception\UnsupportedQueryException;
@@ -78,6 +79,19 @@ class LoupeEngineTest extends TestCase
         $this->assertSame('loupe', $index->getDefinition()->engine);
         $this->assertFileExists($index->getDirectory() . DIRECTORY_SEPARATOR . 'data-1' . DIRECTORY_SEPARATOR . 'loupe.db');
         $this->assertStringEndsWith('indexes' . DIRECTORY_SEPARATOR . 'loupe' . DIRECTORY_SEPARATOR . 'products', $index->getDirectory());
+    }
+
+    public function testSizeIsTheSpaceOfTheIndexOnDisk(): void
+    {
+        $index = $this->createIndex();
+        $this->assertSame(0, $index->getSize(), 'nothing on disk before the first build');
+
+        $this->storage->store(new Product('Apple', str_repeat('A crunchy red fruit. ', 50)));
+        $index->build();
+        $size = $index->getSize();
+
+        $this->assertGreaterThan(0, $size);
+        $this->assertSame(Directory::size($index->getDirectory()), $size);
     }
 
     public function testFiltersSortingAndFacetsInLoupesLanguage(): void
@@ -158,6 +172,31 @@ class LoupeEngineTest extends TestCase
         // Loupe finds the expired documents by a filter on "expiresAt"
         $this->assertSame(1, $index->purgeExpired());
         $this->assertSame([$permanent], $this->find($index));
+    }
+
+    public function testFilterAttributesAreReadWithLoupesLexer(): void
+    {
+        $engine = new LoupeEngine();
+
+        $this->assertSame(
+            ['price', 'tags', 'name', 'active'],
+            $engine->filterAttributes("price < 10 AND (tags IN ('price', 'name') OR name = 'O''Neill') AND active = true")
+        );
+        $this->assertSame(['price'], $engine->filterAttributes('price BETWEEN 1 AND 2'));
+    }
+
+    public function testClassSearchChoosesAnIndexWithLoupe(): void
+    {
+        $chair = $this->storage->store(new Product('Chair', 'Oak furniture', 49, ['wood']));
+        $this->storage->store(new Product('Apple', 'Fresh fruit', 1, ['fruit']));
+        $this->createIndex()->build(); // name, description, price (sortable), tags, category, active
+        $this->search->create(new Definition('names', Product::class, [new Field('name', 'name')]))->build();
+
+        $plan = $this->search->explain(Product::class, new Request('oak', filter: "tags IN ('wood')", sort: ['_relevance:desc', 'price:asc']));
+        $this->assertSame('products', $plan->getChosen()->name);
+        $this->assertSame(['not filterable: tags', 'not sortable: price'], $plan->candidates[1]->reasons);
+
+        $this->assertSame([$chair], $this->search->search(Product::class, new Request('oak', filter: "tags IN ('wood')"))->getUuids());
     }
 
     public function testPaging(): void

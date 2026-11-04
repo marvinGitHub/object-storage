@@ -2,6 +2,10 @@
 
 namespace melia\ObjectStorage\Search\Index;
 
+use Generator;
+use melia\ObjectStorage\Search\Exception\NoSuitableIndexException;
+use melia\ObjectStorage\Search\Request;
+use melia\ObjectStorage\Search\Result;
 use melia\ObjectStorage\Search\Engine\EngineInterface;
 use melia\ObjectStorage\Search\Exception\EngineNotFoundException;
 use melia\ObjectStorage\Search\Exception\IndexAlreadyExistsException;
@@ -41,6 +45,37 @@ interface ManagerInterface
      * @throws SearchException
      */
     public function get(string $name): IndexInterface;
+
+    /**
+     * Searches the objects of a class: the manager chooses the index, like a database chooses the index of a table,
+     * see explain().
+     *
+     * @throws NoSuitableIndexException If no index of the class can answer the search.
+     * @throws SearchException
+     */
+    public function search(string $className, Request $request): Result;
+
+    /**
+     * Searches the objects of a class and loads the found ones, see search() and IndexInterface::searchObjects().
+     *
+     * @return Generator<string, object> UUID => object
+     * @throws NoSuitableIndexException If no index of the class can answer the search.
+     * @throws SearchException
+     */
+    public function searchObjects(string $className, Request $request): Generator;
+
+    /**
+     * Which index of a class answers a search, and why the others don't.
+     *
+     * An index can answer it if it has been built, and the definition it was built with has: searchable fields
+     * for a full-text query (all those of searchOn), filterable fields for the filter and the facets, sortable
+     * fields for the sort. Of those, indexes built with their current definition come first; for a full-text query
+     * the one searching the most fields (so the query covers as much as it can); then the smallest one; then the
+     * name.
+     *
+     * @throws SearchException
+     */
+    public function explain(string $className, Request $request): Plan;
 
     /**
      * Creates an index with the engine of the definition (the default engine if it names none); it is empty

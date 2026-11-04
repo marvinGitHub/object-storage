@@ -74,6 +74,12 @@ interface IndexInterface
     public function countDocuments(): ?int;
 
     /**
+     * The space the index occupies on disk in bytes: all generations in its directory, so while it is rebuilt the
+     * previous and the new build. Data an engine keeps elsewhere, e.g. on a server, isn't included.
+     */
+    public function getSize(): int;
+
+    /**
      * Searches the index.
      *
      * @param Request|object $request A Request, or a query object of the engine for its own features.

@@ -3,17 +3,28 @@
 {% block body %}
 <div class="container-fluid my-3">
     <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        {% if classname %}
+        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0">Search <code>{{ classname }}</code></h5>
+        <span class="text-muted small">the index is chosen per search</span>
+        {% else %}
         <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
         <h5 class="mb-0">Search <code>{{ name }}</code></h5>
         {% if engine %}<span class="badge text-bg-light border" title="engine">{{ engine }}</span>{% endif %}
+        {% endif %}
         {% if status == 'outdated' %}<span class="badge bg-warning text-dark" title="The definition changed; rebuild the index to use it">outdated: searching the previous build</span>{% endif %}
         {% if status == 'building' %}<span class="badge bg-info" title="Searches use the previous build until the build is complete">being rebuilt</span>{% endif %}
     </div>
 
     <form method="get" class="mb-3">
+        {% if classname %}
+        <input type="hidden" name="action" value="class-search">
+        <input type="hidden" name="classname" value="{{ classname }}">
+        {% else %}
         <input type="hidden" name="action" value="index-search">
-        <input type="hidden" name="storage" value="{{ storage }}">
         <input type="hidden" name="name" value="{{ name }}">
+        {% endif %}
+        <input type="hidden" name="storage" value="{{ storage }}">
         <input type="hidden" name="run" value="1">
 
         <div class="row g-2">
@@ -36,6 +47,11 @@
         </div>
         <div class="d-flex gap-2 align-items-end mt-2">
             <div>
+                <label class="form-label small mb-0" for="searchOn">Search on</label>
+                <input class="form-control form-control-sm font-monospace" id="searchOn" name="searchOn" value="{{ form.searchOn }}" placeholder="all searchable fields" style="width: 14rem"
+                       title="comma-separated searchable fields the query covers{% if classname %}; the chosen index must have them{% endif %}">
+            </div>
+            <div>
                 <label class="form-label small mb-0" for="hitsPerPage">Hits per page</label>
                 <input class="form-control form-control-sm" id="hitsPerPage" name="hitsPerPage" type="number" min="1" max="1000" value="{{ form.hitsPerPage }}" style="width: 7rem">
             </div>
@@ -43,6 +59,28 @@
             <button class="btn btn-link btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#help">Syntax</button>
         </div>
     </form>
+
+    {% if plan is not null %}
+    <div class="card mb-3">
+        <div class="card-header py-1 small"><strong>Plan</strong> <span class="text-muted">— which index answers this search, like EXPLAIN of a database</span></div>
+        <table class="table table-sm small mb-0">
+            <thead><tr><th></th><th>Index</th><th>Engine</th><th>Status</th><th>Usable</th></tr></thead>
+            <tbody>
+            {% for candidate in plan %}
+            <tr class="{% if candidate.rank == 1 %}table-success{% endif %}">
+                <td>{% if candidate.rank == 1 %}<i class="bi bi-check-lg" title="chosen"></i>{% endif %}</td>
+                <td><a href="?action=index-search&storage={{ storage|url_encode }}&name={{ candidate.name|url_encode }}">{{ candidate.name }}</a></td>
+                <td>{{ candidate.engine }}</td>
+                <td>{{ candidate.status }}</td>
+                <td>{% if candidate.rank is not null %}yes, rank {{ candidate.rank }}{% else %}<span class="text-danger">{{ candidate.reasons|join('; ') }}</span>{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-muted">No search index exists for this class.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
 
     <div class="collapse mb-3" id="help">
         <div class="card card-body small">
@@ -128,6 +166,12 @@
     </nav>
     {% endif %}
     {% endif %}
+    {% endif %}
+
+    {% if timings is defined %}
+    <p class="text-muted small mt-3 mb-0" title="Time of the steps of this page on the server; also sent as Server-Timing for the dev tools of the browser">
+        <i class="bi bi-stopwatch"></i> <!--timings-->
+    </p>
     {% endif %}
 </div>
 {% endblock body %}

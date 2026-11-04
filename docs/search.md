@@ -253,6 +253,47 @@ foreach ($search->get('products')->searchObjects(new Request('apple')) as $uuid 
 
 Searching an index that has never been built throws an `IndexNotReadyException`.
 
+`searchOn` limits the full-text query to some of the searchable fields: `new Request('oak', searchOn: ['name'])`.
+
+### Searching a class: the index is chosen per search
+
+A class can have several indexes, e.g. a small one for names and a larger one with prices and tags. Like a database chooses among the indexes of a table, the manager chooses the index for a search; the application only names the class:
+
+```php
+$result = $search->search(Product::class, new Request('oak', filter: 'price < 100', sort: ['price:asc']));
+
+foreach ($search->searchObjects(Product::class, new Request('oak')) as $uuid => $product) {
+    // ...
+}
+```
+
+An index can answer a search if
+
+- it has been built (an index being rebuilt or outdated is searched in its previous build),
+- for a query, it has searchable fields, and every field of `searchOn` is searchable,
+- every field of the filter is filterable (`uuid` and `expiresAt` always are; the engine reads the fields from the filter in its language),
+- every field of `sort` is sortable (names starting with `_`, like `_relevance`, are features of the engine) and every facet is filterable.
+
+Of the usable indexes, an index that is up to date comes before an outdated or one being rebuilt; for a query, more searchable fields come first, since they find more; then fewer fields in total, since a smaller index is faster; then the name, so the choice is stable. If no index is usable, a `NoSuitableIndexException` is thrown, with the plan and the reasons.
+
+`explain()` shows the plan, like `EXPLAIN` of a database, without searching:
+
+```php
+$plan = $search->explain(Product::class, new Request('oak', filter: "tags IN ('wood')"));
+
+$plan->getChosen()?->name;   // 'products', or null
+foreach ($plan->candidates as $candidate) {
+    $candidate->rank;        // 1 for the chosen index, null if it can't answer the search
+    $candidate->reasons;     // e.g. ['not filterable: tags']
+}
+echo $plan->describe();
+// Search indexes of Product:
+// * products (loupe, ready): usable, rank 1
+// - names (loupe, ready): not filterable: tags
+```
+
+To use a particular index, load it by name with `get()`. In the viewer, **Search** next to a class in the list of classes searches it this way and shows the plan.
+
 ### Features of an engine
 
 For features beyond `Request`, pass a query object of the engine instead; `$result->raw` holds the result of the engine. An engine rejects query objects it doesn't know with an `UnsupportedQueryException`.
@@ -305,6 +346,9 @@ final class MyEngine implements EngineInterface
     // reject definitions the engine can't handle, e.g. field names
     public function validate(Definition $definition): void {}
 
+    // the field names a filter uses, so the manager can choose an index for a search of a class
+    public function filterAttributes(string $filter): array { /* … */ }
+
     // the documents of a generation; $directory is unique per index and generation
     public function open(string $directory, Definition $definition): EngineIndexInterface { /* … */ }
 
@@ -332,6 +376,8 @@ Documents arrive with the attributes `uuid`, `revision`, `expiresAt` and one per
 
 The [viewer](maintenance.md#the-web-viewer) manages the indexes of a storage under **Search indexes**:
 
+- The list, the edit page and the build page show the size of an index: the number of documents and the space on disk (`IndexInterface::getSize()`, in bytes; while an index is rebuilt, the previous and the new build). The build page updates both while it builds.
+- They also show when the documents were updated last; the edit and build pages list the last updates (at most 20) with what they did and the number of documents afterwards. The state of an index records them (`State::$updates`, `State::getLastUpdate()`): completed builds, syncs that changed documents and removals of expired objects; a sync without changes isn't recorded.
 - **New index** / **Edit**: choose the class and the engine; **Suggest fields** fills in the fields from a stored object of the class, with types and options guessed from the values. Saving builds the index.
 - **Rebuild** builds the index again, **Sync** applies the pending changes and removes expired objects, **Drop** removes it.
 - The build page shows the progress (indexed objects, failed ones, elapsed and remaining time) while it indexes the objects step by step; it can be left and continued.

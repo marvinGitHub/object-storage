@@ -1,0 +1,6 @@
+{# what an update of an index did, as a badge; expects "update" (see State::addUpdate()) #}
+{% set color = {'build': 'primary', 'sync': 'secondary', 'expired': 'warning'}[update.kind] ?? 'secondary' %}
+<span class="badge text-bg-{{ color }} bg-opacity-75" title="{% if update.kind == 'build' %}{{ update.changed }} objects indexed{% else %}{{ update.changed }} changed objects applied, {{ update.expired }} expired removed{% endif %}">
+    {{ update.kind }}
+    {% if update.kind == 'build' %}{{ update.changed|number_format(0, '.', ' ') }}{% else %}{% if update.changed > 0 %}{{ update.changed|number_format(0, '.', ' ') }} changed{% endif %}{% if update.changed > 0 and update.expired > 0 %}, {% endif %}{% if update.expired > 0 %}{{ update.expired|number_format(0, '.', ' ') }} expired{% endif %}{% endif %}
+</span>

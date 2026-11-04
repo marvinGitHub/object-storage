@@ -28,6 +28,21 @@ class DirectoryTest extends TestCase
         $this->assertFalse(Directory::remove($path), 'nothing left to remove');
     }
 
+    public function testSizeCountsTheFilesOfAllSubdirectories(): void
+    {
+        $path = $this->reserveRandomDirectory();
+        mkdir($path . '/a/b', 0777, true);
+        mkdir($path . '/empty');
+        file_put_contents($path . '/top.txt', str_repeat('x', 100));
+        file_put_contents($path . '/a/b/deep.bin', str_repeat('y', 2048));
+
+        $this->assertSame(2148, Directory::size($path));
+        $this->assertSame(0, Directory::size($path . '/empty'));
+        $this->assertSame(0, Directory::size($path . '/missing'), 'no directory, no size');
+
+        Directory::remove($path);
+    }
+
     public function testTeardownNonExistentDirectory()
     {
         $directory = new Directory('/some/non/existent/directory');

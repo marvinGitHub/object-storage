@@ -1,0 +1,33 @@
+{# the size of an index: documents and space on disk; expects "index" from $describeIndex #}
+<div class="d-flex gap-3 flex-wrap small mb-3" id="index-size">
+    <span title="Documents in the searchable build">
+        <i class="bi bi-file-earmark-text"></i>
+        <strong data-documents>{{ index.documents is null ? '–' : index.documents|number_format(0, '.', ' ') }}</strong> documents
+    </span>
+    <span title="{{ index.size|number_format(0, '.', ' ') }} bytes on disk; while the index is rebuilt, the previous and the new build">
+        <i class="bi bi-hdd"></i> <strong data-size>{{ index.size|bytes }}</strong> on disk
+    </span>
+    {% if index.pending > 0 %}
+    <span title="Changes of objects not yet applied to the index"><i class="bi bi-hourglass-split"></i> {{ index.pending|number_format(0, '.', ' ') }} pending changes</span>
+    {% endif %}
+    <span title="The last update of the documents"><i class="bi bi-clock-history"></i>
+        last update <strong>{{ index.lastUpdatedAt ? index.lastUpdatedAt|date('Y-m-d H:i:s') : 'never' }}</strong></span>
+</div>
+
+{% if index.updates is not empty %}
+<details class="mb-3 small">
+    <summary>Last updates <span class="text-muted">({{ index.updates|length }}, at most {{ constant('melia\\ObjectStorage\\Search\\Index\\State::MAX_UPDATES') }})</span></summary>
+    <table class="table table-sm mt-2 mb-0">
+        <thead><tr><th>Time</th><th>Update</th><th class="text-end">Documents afterwards</th></tr></thead>
+        <tbody>
+        {% for update in index.updates %}
+        <tr>
+            <td class="text-nowrap">{{ update.at|date('Y-m-d H:i:s') }}</td>
+            <td>{% include 'index-update-kind.html' %}</td>
+            <td class="text-end">{{ update.documents is null ? '–' : update.documents|number_format(0, '.', ' ') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endif %}

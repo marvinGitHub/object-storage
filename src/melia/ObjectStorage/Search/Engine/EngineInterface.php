@@ -29,6 +29,15 @@ interface EngineInterface
     public function validate(Definition $definition): void;
 
     /**
+     * The attributes a filter in the language of the engine uses, e.g. ['price', 'tags'] for
+     * "price < 10 AND tags IN ('a')". Used to choose an index whose filterable fields cover a filter.
+     *
+     * @return string[]
+     * @throws SearchException If the filter isn't valid in the language of the engine.
+     */
+    public function filterAttributes(string $filter): array;
+
+    /**
      * Opens (and creates if needed) the documents of a generation of an index. A generation is built once with
      * one definition; a changed definition is built into a new generation.
      *

@@ -55,6 +55,20 @@ $logger->pushHandler(new StreamHandler($logfile));
 $loader = new FilesystemLoader(__DIR__ . '/views');
 $twig = new Environment($loader);
 $twig->addGlobal('baseUrl', $_SERVER['PHP_SELF']);
+// sizes in bytes, readable: 512 B, 3.4 KB, 12.1 MB (1 KB = 1024 bytes)
+$twig->addFilter(new \Twig\TwigFilter('bytes', $formatBytes = static function (?int $bytes): string {
+    if (null === $bytes) {
+        return '–';
+    }
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $unit = 0;
+    $value = (float)$bytes;
+    while ($value >= 1024 && $unit < count($units) - 1) {
+        $value /= 1024;
+        $unit++;
+    }
+    return 0 === $unit ? sprintf('%d B', $bytes) : sprintf('%.1f %s', $value, $units[$unit]);
+}));
 
 $action = $_GET['action'] ?? $_POST['action'] ?? 'index';
 
@@ -139,11 +153,18 @@ $describeIndex = static function (IndexInterface $index): array {
         'className' => $definition->className,
         'status' => $index->getStatus(),
         'documents' => $index->countDocuments(),
+        'size' => $index->getSize(),
         'pending' => $index->countPendingChanges(),
         'fields' => array_map(static fn(Field $field): array => $field->toArray(), $definition->fields),
         'languages' => $definition->languages,
         'lastBuildAt' => $state->lastBuildAt,
         'lastSyncAt' => $state->lastSyncAt,
+        'updates' => $state->updates,
+        'lastUpdate' => $state->getLastUpdate(),
+        // states stored before the updates were recorded only know the last build and sync
+        'lastUpdatedAt' => $state->getLastUpdate()['at'] ?? (array_filter([$state->lastBuildAt, $state->lastSyncAt])
+            ? max(array_map('strtotime', array_filter([$state->lastBuildAt, $state->lastSyncAt])))
+            : null),
         'errors' => $state->errors,
         'progress' => $index->getProgress($state),
     ];
@@ -211,8 +232,22 @@ try {
             }
             sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
 
+            // the number of search indexes per class, to search a class
+            $indexCounts = [];
+            if ($exists && null !== ($search = $searchFor($buildStorage($storageDir)))) {
+                try {
+                    foreach ($search->list() as $index) {
+                        $indexClass = $index->getDefinition()->className;
+                        $indexCounts[$indexClass] = ($indexCounts[$indexClass] ?? 0) + 1;
+                    }
+                } catch (Throwable $e) {
+                    $logger->error($e);
+                }
+            }
+
             echo $twig->render('list-classnames.html', [
                 'storage' => $storageDir,
+                'indexCounts' => $indexCounts,
                 'classnames' => $classnames,
                 'exists' => $exists,
                 'hasEntries' => count($classnames) > 0,
@@ -613,8 +648,11 @@ try {
             sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
 
             $definition = null;
+            $described = null;
             if (null !== $name && null !== $search) {
-                $definition = $search->get($name)->getDefinition()->toArray();
+                $index = $search->get($name);
+                $definition = $index->getDefinition()->toArray();
+                $described = $describeIndex($index);
             }
 
             $classname = $_GET['classname'] ?? $definition['className'] ?? '';
@@ -635,6 +673,7 @@ try {
                 'types' => array_map(static fn(FieldType $type): string => $type->value, FieldType::cases()),
                 'engines' => $engineNames,
                 'engine' => $definition['engine'] ?? null,
+                'index' => $described,
                 'error' => null,
             ]);
             break;
@@ -719,6 +758,11 @@ try {
                     })(),
                 };
 
+                // the build page shows the size growing
+                if (str_starts_with($action, 'index-build-')) {
+                    $result['size'] = $formatBytes($index->getSize());
+                }
+
                 $jsonResponse(['ok' => true, 'result' => $result]);
             } catch (Throwable $e) {
                 $logger->error($e);
@@ -726,10 +770,21 @@ try {
             }
             break;
         case 'index-search':
+        case 'class-search':
+            // where the time of the page goes: shown on the page and sent as Server-Timing for the browser's dev tools
+            $timings = ['bootstrap' => (microtime(true) - $_SERVER['REQUEST_TIME_FLOAT']) * 1000];
+            $timer = microtime(true);
+            $lap = static function (string $step) use (&$timings, &$timer): void {
+                $now = microtime(true);
+                $timings[$step] = ($timings[$step] ?? 0) + ($now - $timer) * 1000;
+                $timer = $now;
+            };
+
             $storageDir = $_GET['storage'] ?? null;
             $name = $_GET['name'] ?? '';
             $storage = $buildStorage($storageDir);
             $search = $searchFor($storage);
+            $lap('storage');
 
             $form = [
                 'query' => (string)($_GET['q'] ?? ''),
@@ -738,6 +793,7 @@ try {
                 'facets' => (string)($_GET['facets'] ?? ''),
                 'page' => max(1, (int)($_GET['page'] ?? 1)),
                 'hitsPerPage' => max(1, min(1000, (int)($_GET['hitsPerPage'] ?? 20))),
+                'searchOn' => (string)($_GET['searchOn'] ?? ''),
             ];
 
             $result = null;
@@ -745,28 +801,60 @@ try {
             $index = null;
             $definition = null;
 
+            // searching a class: the index manager chooses the index, like a database the index of a table
+            $classname = 'class-search' === $action ? (string)($_GET['classname'] ?? '') : null;
+            $plan = null;
+
             try {
                 if (null === $search) {
                     throw new RuntimeException('Search is not available.');
                 }
+
+                $split = static fn(string $list): array => array_values(array_filter(array_map('trim', explode(',', $list))));
+
+                // engine-independent; only the filter is written in the language of the engine
+                $request = new Request(
+                    query: $form['query'],
+                    filter: '' === trim($form['filter']) ? null : $form['filter'],
+                    sort: $split($form['sort']),
+                    facets: $split($form['facets']),
+                    page: $form['page'],
+                    hitsPerPage: $form['hitsPerPage'],
+                    highlight: true,
+                    highlightStartTag: '<mark>',
+                    highlightEndTag: '</mark>',
+                    searchOn: $split($form['searchOn']),
+                );
+
+                if (null !== $classname) {
+                    $explained = $search->explain($classname, $request);
+                    $plan = array_map(static fn($candidate): array => [
+                        'name' => $candidate->name,
+                        'engine' => $candidate->engine,
+                        'status' => $candidate->status,
+                        'rank' => $candidate->rank,
+                        'reasons' => $candidate->reasons,
+                    ], $explained->candidates);
+
+                    // the chosen index, or, before searching or without one, any index of the class for the help
+                    $name = $explained->getChosen()?->name ?? array_key_first($search->getIndexesForClass($classname)) ?? '';
+                    if ('' === $name) {
+                        throw new RuntimeException(sprintf('No search index exists for %s.', $classname));
+                    }
+                    $lap('plan');
+                    if (isset($_GET['run']) && null === $explained->getChosen()) {
+                        throw new RuntimeException('No index of the class can answer this search, see the plan.');
+                    }
+                }
+
                 $index = $search->get($name);
                 $definition = $index->getActiveDefinition() ?? $index->getDefinition();
+                $lap('index');
 
                 if (isset($_GET['run'])) {
-                    $split = static fn(string $list): array => array_values(array_filter(array_map('trim', explode(',', $list))));
-
-                    // engine-independent; only the filter is written in the language of the engine
-                    $searchResult = $index->search(new Request(
-                        query: $form['query'],
-                        filter: '' === trim($form['filter']) ? null : $form['filter'],
-                        sort: $split($form['sort']),
-                        facets: $split($form['facets']),
-                        page: $form['page'],
-                        hitsPerPage: $form['hitsPerPage'],
-                        highlight: true,
-                        highlightStartTag: '<mark>',
-                        highlightEndTag: '</mark>',
-                    ));
+                    $searchResult = $index->search($request);
+                    $lap('search');
+                    $timings['engine'] = (float)$searchResult->processingTimeMs;
 
                     $hits = [];
                     foreach ($searchResult->hits as $hit) {
@@ -809,9 +897,11 @@ try {
                 $error = $e->getMessage();
             }
 
-            echo $twig->render('index-search.html', [
+            $variables = [
                 'storage' => $storageDir,
                 'name' => $name,
+                'classname' => $classname,
+                'plan' => $plan,
                 'form' => $form,
                 'result' => $result,
                 'error' => $error,
@@ -819,7 +909,27 @@ try {
                 'engine' => $index?->getEngineName(),
                 'fields' => null === $definition ? [] : array_map(static fn(Field $field): array => $field->toArray(), $definition->fields),
                 'queryString' => http_build_query(array_diff_key($_GET, ['page' => true])),
-            ]);
+            ];
+            $lap('prepare');
+
+            // rendered first, so its time is known and the header can be sent before the page
+            $variables['timings'] = $timings;
+            $html = $twig->render('index-search.html', $variables);
+            $lap('render');
+            $timings['total'] = (microtime(true) - $_SERVER['REQUEST_TIME_FLOAT']) * 1000;
+
+            $serverTiming = [];
+            foreach ($timings as $step => $ms) {
+                // the time inside the engine is part of "search", not a step of its own
+                $serverTiming[] = sprintf('%s;%sdur=%.1f', $step, 'engine' === $step ? 'desc="inside the engine";' : '', $ms);
+            }
+            header('Server-Timing: ' . implode(', ', $serverTiming));
+
+            echo str_replace('<!--timings-->', htmlspecialchars(implode(' · ', array_map(
+                static fn(string $step, float $ms): string => sprintf('%s %.0f ms', $step, $ms),
+                array_keys($timings),
+                $timings
+            ))), $html);
             break;
         case 'rebuild-shards':
             // the page runs the rebuild step by step via the JSON actions below, showing the progress

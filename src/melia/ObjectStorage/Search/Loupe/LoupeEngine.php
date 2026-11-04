@@ -4,6 +4,7 @@ namespace melia\ObjectStorage\Search\Loupe;
 
 use Closure;
 use Loupe\Loupe\Configuration;
+use Loupe\Loupe\Internal\Filter\Lexer;
 use Loupe\Loupe\LoupeFactory;
 use Loupe\Loupe\LoupeFactoryInterface;
 use melia\ObjectStorage\Search\Engine\EngineIndexInterface;
@@ -54,6 +55,24 @@ final class LoupeEngine implements EngineInterface
                 throw new InvalidIndexDefinitionException(message: sprintf('Loupe doesn\'t accept the field name "%s".', $field->name), previous: $e);
             }
         }
+    }
+
+    public function filterAttributes(string $filter): array
+    {
+        // the tokens of Loupe's own filter lexer: attribute names are told apart from keywords and quoted strings
+        $lexer = new Lexer();
+        $lexer->setInput($filter);
+        $lexer->moveNext();
+
+        $attributes = [];
+        while (null !== $lexer->lookahead) {
+            $lexer->moveNext();
+            if (Lexer::T_ATTRIBUTE_NAME === $lexer->token?->type) {
+                $attributes[(string)$lexer->token->value] = true;
+            }
+        }
+
+        return array_keys($attributes);
     }
 
     public function open(string $directory, Definition $definition): EngineIndexInterface

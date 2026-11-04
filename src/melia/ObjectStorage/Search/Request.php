@@ -22,6 +22,9 @@ final readonly class Request
      * @param bool $highlight Whether to return the searchable fields with the matches marked, see Hit.
      * @param string $highlightStartTag Inserted before each match.
      * @param string $highlightEndTag Inserted after each match.
+     * @param string[] $searchOn The searchable fields the full-text query covers; empty for all searchable fields
+     *                           of the index. When an index is chosen for a class, it must have these fields
+     *                           searchable, so the result doesn't depend on the choice.
      */
     public function __construct(
         public string  $query = '',
@@ -33,6 +36,7 @@ final readonly class Request
         public bool    $highlight = false,
         public string  $highlightStartTag = '<mark>',
         public string  $highlightEndTag = '</mark>',
+        public array   $searchOn = [],
     )
     {
         if ($page < 1) {
@@ -40,6 +44,11 @@ final readonly class Request
         }
         if ($hitsPerPage < 0) {
             throw new InvalidArgumentException('The number of hits per page can\'t be negative.');
+        }
+        foreach ($searchOn as $field) {
+            if (!is_string($field) || '' === $field) {
+                throw new InvalidArgumentException('The fields to search on must be field names.');
+            }
         }
         foreach ($sort as $criterion) {
             if (!is_string($criterion) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$/', $criterion)) {

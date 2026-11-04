@@ -10,6 +10,7 @@ use melia\ObjectStorage\Search\Exception\IndexBuildInProgressException;
 use melia\ObjectStorage\Search\Exception\IndexNotFoundException;
 use melia\ObjectStorage\Search\Exception\IndexNotReadyException;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
+use melia\ObjectStorage\Search\Exception\NoSuitableIndexException;
 use melia\ObjectStorage\Search\Exception\UnsupportedQueryException;
 use melia\ObjectStorage\Search\Field;
 use melia\ObjectStorage\Search\FieldType;
@@ -141,6 +142,130 @@ class IndexManagerTest extends TestCase
         $this->assertSame(['a', 'b'], $this->search->notifyChanged($uuid));
         $this->assertTrue($b->hasPendingChange($uuid));
         $this->assertFalse($categories->hasPendingChange($uuid));
+    }
+
+    /**
+     * Indexes of Product with different abilities, like several indexes of a table.
+     *
+     * @return array<string, string> name => UUID of the stored products
+     */
+    private function createPlannedIndexes(): array
+    {
+        $products = [
+            'apple' => $this->storage->store(new Product('Apple', 'Fresh fruit', 1)),
+            'chair' => $this->storage->store(new Product('Chair', 'Oak furniture', 2)),
+        ];
+
+        // full text over the name only
+        $this->search->create(new Definition('names', Product::class, [new Field('name', 'name')]))->build();
+        // full text over name and description, filters and sorting by price
+        $this->search->create(new Definition('full', Product::class, [
+            new Field('name', 'name'),
+            new Field('description', 'description'),
+            new Field('price', 'price', FieldType::NUMBER, searchable: false, filterable: true, sortable: true),
+        ]))->build();
+        // only the price
+        $this->search->create(new Definition('prices', Product::class, [
+            new Field('price', 'price', FieldType::NUMBER, searchable: false, filterable: true, sortable: true),
+        ]))->build();
+        // never built
+        $this->search->create(new Definition('unbuilt', Product::class, [new Field('name', 'name')]));
+        // another class
+        $this->search->create(new Definition('categories', Category::class, [new Field('title', 'title')]))->build();
+
+        return $products;
+    }
+
+    /**
+     * @return array<string, int|string[]> name => rank, or the reasons it can't be used
+     */
+    private function planOf(Request $request): array
+    {
+        $plan = [];
+        foreach ($this->search->explain(Product::class, $request)->candidates as $candidate) {
+            $plan[$candidate->name] = $candidate->rank ?? $candidate->reasons;
+        }
+        return $plan;
+    }
+
+    public function testFullTextChoosesTheIndexSearchingTheMostFields(): void
+    {
+        $products = $this->createPlannedIndexes();
+
+        $this->assertSame([
+            'full' => 1,
+            'names' => 2,
+            'prices' => ['no searchable fields for the query'],
+            'unbuilt' => ['not built yet'],
+        ], $this->planOf(new Request('oak')));
+
+        // "oak" is only in a description: the index searching the most fields finds it
+        $this->assertSame([$products['chair']], $this->search->search(Product::class, new Request('oak'))->getUuids());
+        $objects = iterator_to_array($this->search->searchObjects(Product::class, new Request('oak')));
+        $this->assertInstanceOf(Product::class, $objects[$products['chair']]);
+    }
+
+    public function testFieldsToSearchOnMustBeSearchable(): void
+    {
+        $this->createPlannedIndexes();
+
+        $plan = $this->planOf(new Request('apple', searchOn: ['description']));
+
+        $this->assertSame(1, $plan['full']);
+        $this->assertSame(['not searchable: description'], $plan['names']);
+    }
+
+    public function testFilterAndSortChooseTheSmallestIndexThatCanAnswer(): void
+    {
+        $products = $this->createPlannedIndexes();
+
+        // without full text, the index with the fewest fields
+        $this->assertSame([
+            'prices' => 1,
+            'full' => 2,
+            'names' => ['not filterable: price'],
+            'unbuilt' => ['not built yet'],
+        ], $this->planOf(new Request(filter: "price = '1'")));
+        $this->assertSame([$products['apple']], $this->search->search(Product::class, new Request(filter: "price = '1'"))->getUuids());
+
+        $this->assertSame(1, $this->planOf(new Request(sort: ['price:desc']))['prices']);
+        $this->assertSame(['not sortable: price'], $this->planOf(new Request(sort: ['price:desc']))['names']);
+        $this->assertSame(['no facets for: price'], $this->planOf(new Request(facets: ['price']))['names']);
+
+        // the UUID can always be filtered
+        $this->assertSame(1, $this->planOf(new Request(filter: sprintf("uuid = '%s'", $products['apple'])))['names']);
+    }
+
+    public function testIndexesWithTheirCurrentDefinitionComeFirst(): void
+    {
+        $this->createPlannedIndexes();
+
+        // outdated: searches use the definition of its last build, which still searches the description
+        $this->search->update(new Definition('full', Product::class, [new Field('name', 'name')]));
+
+        $plan = $this->search->explain(Product::class, new Request('apple'));
+        $this->assertSame('names', $plan->getChosen()->name, 'ready before outdated');
+        $this->assertSame([['names', 1, 'ready'], ['full', 2, 'outdated']], array_map(
+            static fn($candidate) => [$candidate->name, $candidate->rank, $candidate->status],
+            array_values(array_filter($plan->candidates, static fn($candidate) => $candidate->isUsable()))
+        ));
+    }
+
+    public function testNoSuitableIndexExplainsWhy(): void
+    {
+        $this->createPlannedIndexes();
+
+        try {
+            $this->search->search(Product::class, new Request(filter: "name = 'Apple'"));
+            $this->fail('NoSuitableIndexException expected');
+        } catch (NoSuitableIndexException $e) {
+            $this->assertNull($e->getPlan()->getChosen());
+            $this->assertStringContainsString('names (array, ready): not filterable: name', $e->getMessage());
+        }
+
+        $this->expectException(NoSuitableIndexException::class);
+        $this->expectExceptionMessage('No search index exists for stdClass.');
+        $this->search->search(stdClass::class, new Request('apple'));
     }
 
     public function testIndexIsLoadedByNameInAnotherProcess(): void
@@ -371,6 +496,47 @@ class IndexManagerTest extends TestCase
         $this->assertNull($index->search(new Request('avocado'))->hits[0]->document['expiresAt'], 'updated instead of removed');
 
         $this->assertSame(0, $index->purgeExpired(), 'nothing left to remove');
+    }
+
+    public function testTheLastUpdatesAreRecorded(): void
+    {
+        $this->storage->store(new Product('Apple'));
+        $expiring = $this->storage->store(new Product('Apricot'));
+        $index = $this->search->create($this->createDefinition());
+        $this->assertNull($index->getState()->getLastUpdate(), 'never updated');
+
+        $index->build();
+        $this->assertSame(['kind' => 'build', 'changed' => 2, 'expired' => 0, 'documents' => 2], array_diff_key($index->getState()->getLastUpdate(), ['at' => true]));
+
+        // a sync without changes is no update
+        $this->assertSame(0, $index->sync());
+        $this->assertCount(1, $index->getState()->updates);
+
+        $this->search->attach();
+        $this->storage->store(new Product('Banana'));
+        $this->assertSame(['kind' => 'sync', 'changed' => 1, 'expired' => 0, 'documents' => 3], array_diff_key($index->getState()->getLastUpdate(), ['at' => true]));
+
+        // the index learns the expiration, the object expires later
+        $this->storage->setLifetime($expiring, 0.2);
+        $this->search->detach();
+        usleep(400_000);
+        $this->assertSame(1, $index->purgeExpired());
+
+        $updates = $index->getState()->updates;
+        $this->assertSame(['expired', 'sync', 'sync', 'build'], array_column($updates, 'kind'), 'newest first');
+        $this->assertSame([1, 2], [$updates[0]['expired'], $updates[0]['documents']]);
+        $this->assertNotFalse(\DateTimeImmutable::createFromFormat(DATE_ATOM, $updates[0]['at']));
+    }
+
+    public function testOnlyTheLastUpdatesAreKept(): void
+    {
+        $state = new State('products');
+        for ($i = 1; $i <= State::MAX_UPDATES + 5; $i++) {
+            $state->addUpdate(State::UPDATE_SYNC, $i);
+        }
+
+        $this->assertCount(State::MAX_UPDATES, $state->updates);
+        $this->assertSame(State::MAX_UPDATES + 5, $state->getLastUpdate()['changed']);
     }
 
     public function testObjectsOfOtherClassesAreNotIndexed(): void

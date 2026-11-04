@@ -107,6 +107,34 @@ class Directory
     }
 
     /**
+     * The size of the files of a directory, including those of its subdirectories; symbolic links are not followed.
+     *
+     * @param string $path The directory.
+     * @return int The size in bytes, 0 if there is no such directory.
+     */
+    public static function size(string $path): int
+    {
+        if (!is_dir($path)) {
+            return 0;
+        }
+
+        $size = 0;
+        $files = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::LEAVES_ONLY,
+            RecursiveIteratorIterator::CATCH_GET_CHILD
+        );
+        foreach ($files as $file) {
+            // files may vanish meanwhile, e.g. the journal of a database
+            if ($file->isFile() && !$file->isLink()) {
+                $size += (int)@$file->getSize();
+            }
+        }
+
+        return $size;
+    }
+
+    /**
      * Reserves a temporary directory with a random name in the system's temporary directory.
      *
      * @return bool Returns true if the temporary directory was successfully created or reserved, false otherwise.
