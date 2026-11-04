@@ -1,0 +1,22 @@
+{% extends 'index.html' %}
+
+{% block body %}
+{% set crumbs = storage ? [{label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true}, {label: 'Error'}] : [{label: 'Error'}] %}
+{% embed 'page-header.html' with {crumbs: crumbs} %}
+    {% block title %}Something went wrong{% endblock %}
+{% endembed %}
+
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> {{ error }}</div>
+
+{% if isConfiguration %}
+<p class="text-muted">
+    The configuration of the storage can't be applied, e.g. its lock backend or cache is unreachable, or the
+    configuration was deleted. Fix the configuration, or assign another one to the storage.
+</p>
+{% endif %}
+
+<div class="d-flex gap-2">
+    <button class="btn btn-secondary btn-sm" onclick="history.back()" type="button"><i class="bi bi-arrow-left"></i> Back</button>
+    <a class="btn btn-primary btn-sm" href="?action=configurations{% if storage %}&storage={{ storage|url_encode }}{% endif %}"><i class="bi bi-gear"></i> Configurations</a>
+</div>
+{% endblock body %}

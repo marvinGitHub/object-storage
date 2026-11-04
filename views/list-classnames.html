@@ -14,6 +14,20 @@
     </form>
     <a class="btn btn-primary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button"><i class="bi bi-search"></i> Search indexes</a>
     <div class="dropdown">
+        <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="The configuration of the storage: locks, cache, strategy">
+            <i class="bi bi-gear"></i> {{ configuration ?? 'Default configuration' }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li><h6 class="dropdown-header">Configuration of the storage</h6></li>
+            {% for name in configurationNames %}
+            <li><button class="dropdown-item {% if name == configuration %}active{% endif %}" type="button" onclick="assignConfiguration('{{ name|e('js') }}')">{{ name }}</button></li>
+            {% endfor %}
+            <li><button class="dropdown-item {% if configuration is null %}active{% endif %}" type="button" onclick="assignConfiguration('')">Defaults <small class="text-muted">(file locks, cache in memory)</small></button></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="?action=configurations&storage={{ storage|url_encode }}"><i class="bi bi-sliders"></i> Manage configurations…</a></li>
+        </ul>
+    </div>
+    <div class="dropdown">
         <button class="btn btn-warning btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
             <i class="bi bi-tools"></i> Maintenance
         </button>
@@ -26,7 +40,32 @@
     {% endblock %}
 {% endembed %}
 
+<div id="action-error" class="alert alert-danger hidden"></div>
+
 <script>
+    const currentConfiguration = {{ (configuration ?? '')|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }};
+
+    async function assignConfiguration(name) {
+        if (name === currentConfiguration) {
+            return;
+        }
+        if (!confirm(`Use ${name ? `the configuration "${name}"` : 'the defaults'} for this storage?\n\nAll processes using the storage must use the same locks: switch while nothing else uses it.`)) {
+            return;
+        }
+        const body = new FormData();
+        body.append('action', 'configuration-assign');
+        body.append('storage', {{ storage|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }});
+        body.append('name', name);
+        const data = await (await fetch('?action=configuration-assign', {method: 'POST', body})).json();
+        if (!data.ok) {
+            const error = document.getElementById('action-error');
+            error.textContent = data.error;
+            error.classList.remove('hidden');
+            return;
+        }
+        location.reload();
+    }
+
     async function pasteUuidFromClipboard() {
         const input = document.getElementById('input-uuid');
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -44,6 +83,27 @@
 
 {% if not exists %}
 <div class="alert alert-warning" role="alert"><i class="bi bi-exclamation-triangle"></i> Storage not found.</div>
+<form class="card" method="post" action="?action=storage-create" onsubmit="return confirm('Create the storage ' + this.storage.value + '?');">
+    <div class="card-header">Create the storage</div>
+    <div class="card-body d-flex flex-wrap align-items-end gap-3">
+        <input type="hidden" name="action" value="storage-create">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <div>
+            <div class="form-label mb-1">Directory</div>
+            <code>{{ storage }}</code>
+        </div>
+        <div>
+            <label class="form-label mb-1" for="create-configuration">Configuration</label>
+            <select class="form-select form-select-sm" id="create-configuration" name="configuration">
+                <option value="">Defaults (file locks, cache in memory)</option>
+                {% for name in configurationNames %}
+                <option value="{{ name }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-plus-lg"></i> Create storage</button>
+    </div>
+</form>
 {% elseif not hasEntries %}
 <div class="alert alert-info" role="alert"><i class="bi bi-info-circle"></i> The storage has no objects yet.</div>
 {% else %}

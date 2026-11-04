@@ -6,6 +6,8 @@ use DateTimeImmutable;
 use Generator;
 use JsonException;
 use melia\ObjectStorage\Exception\LockException;
+use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
+use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Metadata\Metadata;
@@ -684,7 +686,7 @@ final class Index implements IndexInterface
 
         foreach (array_unique($uuids) as $uuid) {
             try {
-                $stored = $this->readStored($uuid);
+                $stored = $this->readObject($uuid);
                 if (null === $stored || $stored[0]->getClassName() !== $definition->className) {
                     $remove[] = $uuid;
                     continue;
@@ -715,38 +717,29 @@ final class Index implements IndexInterface
     }
 
     /**
-     * Reads the metadata and data of an object as stored, bypassing the caches of the storage, which may be
-     * outdated in long-running processes.
+     * Reads the metadata and data of an object as stored (ObjectStorage::readRaw()): from the files, not the caches
+     * of the storage, which may be outdated in long-running processes, under its lock, with the checksum verified
+     * and interrupted writes completed, as when loading. The object isn't loaded, so its class needn't be available.
      *
      * @return array{0: Metadata, 1: array}|null Null if nothing (or an expired object) is stored.
+     * @throws ObjectLoadingFailureException If the object can't be read, e.g. its data doesn't match its checksum.
      * @throws JsonException
      */
-    private function readStored(string $uuid): ?array
+    private function readObject(string $uuid): ?array
     {
-        $adapter = $this->storage->getIOAdapter();
-        $filePathMetadata = $this->storage->getFilePathMetadata($uuid);
-        $filePathData = $this->storage->getFilePathData($uuid);
-
-        if (!$adapter->isFile($filePathMetadata) || !$adapter->isFile($filePathData)) {
+        try {
+            $object = $this->storage->readRaw($uuid);
+        } catch (ObjectNotFoundException) {
             return null;
         }
 
-        $metadataRaw = $adapter->fileGetContents($filePathMetadata);
-        $dataRaw = $adapter->fileGetContents($filePathData);
-        if (false === $metadataRaw || false === $dataRaw) {
+        if ($object->isExpired()) {
             return null;
         }
 
-        $metadata = Metadata::createFromArray(json_decode($metadataRaw, true, 512, JSON_THROW_ON_ERROR));
+        $data = json_decode($object->data, true, 512, JSON_THROW_ON_ERROR);
 
-        $lifetime = $metadata->getLifetime();
-        if (null !== $lifetime && $lifetime <= 0) {
-            return null;
-        }
-
-        $data = json_decode($dataRaw, true, 512, JSON_THROW_ON_ERROR);
-
-        return [$metadata, is_array($data) ? $data : []];
+        return [$object->metadata, is_array($data) ? $data : []];
     }
 
     /**

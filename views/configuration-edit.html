@@ -1,0 +1,195 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="page-narrow">
+    {% set crumbs = (storage ? [{label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true}] : [])
+        |merge([{label: 'Configurations', href: '?action=configurations' ~ (storage ? '&storage=' ~ storage|url_encode : '')}, {label: isNew ? 'New' : values.name, code: not isNew}]) %}
+    {% embed 'page-header.html' with {crumbs: crumbs} %}
+        {% block title %}{% if isNew %}New configuration{% else %}Configuration <code>{{ values.name }}</code>{% endif %}{% endblock %}
+    {% endembed %}
+
+    {% if error %}<div class="alert alert-danger"><i class="bi bi-exclamation-octagon"></i> {{ error }}</div>{% endif %}
+    {% if not isNew %}
+    <div class="alert alert-info py-2"><i class="bi bi-info-circle"></i> Storages already open keep the previous settings until they are opened again.</div>
+    {% endif %}
+
+    {% set lock = values.lock %}
+    {% set cache = values.cache %}
+    <form method="post" action="?action=configuration-save" id="configuration-form">
+        <input type="hidden" name="action" value="configuration-save">
+        <input type="hidden" name="isNew" value="{{ isNew ? '1' : '0' }}">
+        {% if storage %}<input type="hidden" name="storage" value="{{ storage }}">{% endif %}
+
+        <div class="card mb-3">
+            <div class="card-header">General</div>
+            <div class="card-body row g-3">
+                <div class="col-md-4">
+                    <label class="form-label" for="name">Name</label>
+                    <input class="form-control" id="name" name="name" value="{{ values.name }}" required pattern="[a-z0-9][a-z0-9_\-]{0,63}" placeholder="shared-redis"
+                           {% if not isNew %}readonly{% endif %}>
+                    <div class="form-text">Unique; lowercase letters, digits, <code>_</code> and <code>-</code>.</div>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label" for="description">Description</label>
+                    <input class="form-control" id="description" name="description" value="{{ values.description }}" placeholder="e.g. production, several hosts">
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-lock"></i> Locks</div>
+            <div class="card-body row g-3">
+                <div class="col-md-5">
+                    <label class="form-label" for="lock-type">Backend</label>
+                    <select class="form-select" id="lock-type" name="lock[type]" data-switch="lock">
+                        {% for type, label in choices.lockTypes %}
+                        <option value="{{ type }}" {% if type == lock.type %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">Several hosts sharing a storage need Redis, Memcached or a database.</div>
+                </div>
+                <div class="col-md-7" data-lock="redis memcached pdo dsn">
+                    <label class="form-label" for="lock-dsn">Connection</label>
+                    <input class="form-control font-monospace" id="lock-dsn" name="lock[dsn]" value="{{ lock.dsn }}" placeholder="redis://localhost:6379">
+                    <div class="form-text">E.g. <code>redis://user:%env(REDIS_PASSWORD)%@redis:6379</code>, <code>memcached://localhost:11211</code>, <code>mysql:host=db;dbname=app</code>. <code>%env(NAME)%</code> is replaced by an environment variable, so secrets aren't stored here.</div>
+                </div>
+                <div class="col-md-7" data-lock="file">
+                    <label class="form-label" for="lock-directory">Directory</label>
+                    <input class="form-control font-monospace" id="lock-directory" name="lock[directory]" value="{{ lock.directory }}" placeholder="the locks directory of the storage">
+                </div>
+                <div class="col-md-3" data-lock="pdo">
+                    <label class="form-label" for="lock-username">User</label>
+                    <input class="form-control" id="lock-username" name="lock[username]" value="{{ lock.username }}" autocomplete="off">
+                </div>
+                <div class="col-md-4" data-lock="pdo">
+                    <label class="form-label" for="lock-password">Password</label>
+                    <input class="form-control font-monospace" id="lock-password" name="lock[password]" value="{{ lock.password }}" autocomplete="off" placeholder="%env(DB_PASSWORD)%">
+                    <div class="form-text">Stored as typed; prefer <code>%env(NAME)%</code>.</div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="lock-ttl">Lock lifetime (s)</label>
+                    <input class="form-control" id="lock-ttl" name="lock[ttl]" type="number" min="0.1" step="any" value="{{ lock.ttl }}" placeholder="none">
+                    <div class="form-text">Frees locks of crashed processes (Redis, Memcached, database).</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="lock-prefix">Prefix</label>
+                    <input class="form-control font-monospace" id="lock-prefix" name="lock[prefix]" value="{{ lock.prefix }}">
+                    <div class="form-text">The same for all hosts of one storage.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-lightning"></i> Cache of objects and metadata</div>
+            <div class="card-body row g-3">
+                <div class="col-md-5">
+                    <label class="form-label" for="cache-type">Backend</label>
+                    <select class="form-select" id="cache-type" name="cache[type]" data-switch="cache">
+                        {% for type, label in choices.cacheTypes %}
+                        <option value="{{ type }}" {% if type == cache.type %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text" data-cache="apcu filesystem redis memcached">A shared cache isn't updated when another process changes an object without going through the same cache.</div>
+                </div>
+                <div class="col-md-7" data-cache="redis memcached">
+                    <label class="form-label" for="cache-dsn">Connection</label>
+                    <input class="form-control font-monospace" id="cache-dsn" name="cache[dsn]" value="{{ cache.dsn }}" placeholder="redis://localhost:6379">
+                </div>
+                <div class="col-md-7" data-cache="filesystem">
+                    <label class="form-label" for="cache-directory">Directory</label>
+                    <input class="form-control font-monospace" id="cache-directory" name="cache[directory]" value="{{ cache.directory }}" placeholder="the system's temporary directory">
+                </div>
+                <div class="col-md-3" data-cache="apcu filesystem redis memcached">
+                    <label class="form-label" for="cache-lifetime">Lifetime (s)</label>
+                    <input class="form-control" id="cache-lifetime" name="cache[defaultLifetime]" type="number" min="0" value="{{ cache.defaultLifetime }}">
+                    <div class="form-text">0: as long as the cache keeps entries.</div>
+                </div>
+                <div class="col-md-4" data-cache="apcu filesystem redis memcached">
+                    <label class="form-label" for="cache-namespace">Namespace</label>
+                    <input class="form-control font-monospace" id="cache-namespace" name="cache[namespace]" value="{{ cache.namespace }}" placeholder="derived from the directory">
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-sliders"></i> Strategy and writing</div>
+            <div class="card-body row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" for="shardDepth">Shard depth</label>
+                    <input class="form-control" id="shardDepth" name="shardDepth" type="number" min="0" max="16" value="{{ values.shardDepth }}" placeholder="default (2)">
+                    <div class="form-text">For new storages; existing ones keep the depth of their files.</div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="maxDepth">Maximum depth</label>
+                    <input class="form-control" id="maxDepth" name="maxDepth" type="number" min="1" value="{{ values.maxDepth }}" placeholder="default (512)">
+                    <div class="form-text">Of an object graph.</div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="childPersistence">Children stored</label>
+                    <select class="form-select" id="childPersistence" name="childPersistence">
+                        <option value="">default</option>
+                        {% for value, label in choices.childPersistence %}
+                        <option value="{{ value }}" {% if values.childPersistence is not null and value == values.childPersistence %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="childDeletion">Children deleted</label>
+                    <select class="form-select" id="childDeletion" name="childDeletion">
+                        <option value="">default</option>
+                        {% for value, label in choices.childDeletion %}
+                        <option value="{{ value }}" {% if values.childDeletion is not null and value == values.childDeletion %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12 d-flex flex-wrap gap-4">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checksumValidation" name="checksumValidation" {% if values.checksumValidation %}checked{% endif %}>
+                        <label class="form-check-label" for="checksumValidation">Validate checksums</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="fsync" name="fsync" {% if values.fsync %}checked{% endif %}>
+                        <label class="form-check-label" for="fsync">Flush writes to disk (fsync)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="optimisticLocking" name="optimisticLocking" {% if values.optimisticLocking %}checked{% endif %}>
+                        <label class="form-check-label" for="optimisticLocking">Optimistic locking</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="lifetimeInheritance" name="lifetimeInheritance" {% if values.lifetimeInheritance %}checked{% endif %}>
+                        <label class="form-check-label" for="lifetimeInheritance">Referenced objects inherit the lifetime</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save</button>
+            {% if storage %}
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="assign" name="assign" {% if isNew %}checked{% endif %}>
+                <label class="form-check-label" for="assign">Assign to <code>{{ storage }}</code></label>
+            </div>
+            {% endif %}
+            <a class="btn btn-outline-secondary" href="?action=configurations{% if storage %}&storage={{ storage|url_encode }}{% endif %}">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+    // only the settings of the chosen backends are shown
+    function toggle(group) {
+        const type = document.querySelector(`[data-switch="${group}"]`).value;
+        document.querySelectorAll(`[data-${group}]`).forEach(element => {
+            const shown = element.dataset[group].split(' ').includes(type);
+            element.classList.toggle('hidden', !shown);
+            element.querySelectorAll('input').forEach(input => input.disabled = !shown);
+        });
+    }
+
+    for (const group of ['lock', 'cache']) {
+        document.querySelector(`[data-switch="${group}"]`).addEventListener('change', () => toggle(group));
+        toggle(group);
+    }
+</script>
+{% endblock body %}

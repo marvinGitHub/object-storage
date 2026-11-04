@@ -103,12 +103,14 @@ Continue with [Getting started](docs/getting-started.md) for the details of stor
 | [Querying](docs/querying.md) | Listing, counting and filtering objects |
 | [Search indexes](docs/search.md) | Full-text search, filters and facets with exchangeable engines (Loupe included), managed in the viewer |
 | [Lifetime](docs/lifetime.md) | Expiring objects, e.g. for caches |
+| [Copying and moving](docs/transfer.md) | Copying and moving objects between storages, in code, the CLI and the viewer |
 | [Concurrency](docs/concurrency.md) | Locks, read-modify-write, lock backends, multiple processes |
 | [Durability and safe mode](docs/durability.md) | Crash-safe writes, checksums, recovery and safe mode |
 | [Configuration](docs/configuration.md) | Constructor options, caches, strategy and persistence policies |
 | [Events](docs/events.md) | Reacting to storage operations |
 | [Serialization](docs/serialization.md) | Which objects can be stored, hooks, renamed classes |
 | [Maintenance and tools](docs/maintenance.md) | CLI, viewer, rebuilding indexes, migrations |
+| [Internals](docs/internals.md) | For contributors: how loading and storing work, the naming of the methods |
 
 ## Examples
 

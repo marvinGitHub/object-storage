@@ -2,6 +2,15 @@
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Configuration\CacheSettings;
+use melia\ObjectStorage\Configuration\Configuration;
+use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
+use melia\ObjectStorage\Configuration\Factory as ConfigurationFactory;
+use melia\ObjectStorage\Configuration\LockSettings;
+use melia\ObjectStorage\Configuration\Registry as ConfigurationRegistry;
+use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
+use melia\ObjectStorage\Transfer\ObjectTransfer;
+use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
@@ -83,8 +92,12 @@ $createCacheKeyShardDepth = static function (string $storageDir): string {
     return 'shard_depth_' . sha1($storageDir);
 };
 
-$buildStorage = static function (string $storageDir) use ($psr16, $createCacheKeyShardDepth): ObjectStorage {
-    $storage = new ObjectStorage($storageDir);
+// named configurations of storages (lock backend, caches, strategy), assigned to storages in the viewer
+$configurations = new ConfigurationRegistry($appDataDir . DIRECTORY_SEPARATOR . 'configurations');
+
+$buildStorage = static function (string $storageDir) use ($psr16, $createCacheKeyShardDepth, $configurations): ObjectStorage {
+    // with the configuration assigned to the storage, the defaults without one
+    $storage = $configurations->open($storageDir);
 
     $depth = $psr16->get($key = $createCacheKeyShardDepth($storageDir));
 
@@ -93,7 +106,10 @@ $buildStorage = static function (string $storageDir) use ($psr16, $createCacheKe
         $psr16->set($key, $depth, 3600);
     }
 
-    $storage->getStrategy()->setShardDepth($depth);
+    // the depth of the files found wins; an empty storage keeps the configured (or default) depth
+    if (null !== $depth && $depth > 0) {
+        $storage->getStrategy()->setShardDepth($depth);
+    }
 
     return $storage;
 };
@@ -216,10 +232,292 @@ $definitionFromRequest = static function (array $input): Definition {
     );
 };
 
+/* the configuration from the posted form */
+$configurationFromRequest = static function (array $input): Configuration {
+    $lock = $input['lock'] ?? [];
+    $cache = $input['cache'] ?? [];
+
+    return Configuration::fromArray([
+        'name' => trim((string)($input['name'] ?? '')),
+        'description' => (string)($input['description'] ?? ''),
+        'lock' => [
+            'type' => (string)($lock['type'] ?? LockSettings::TYPE_FILE),
+            'dsn' => trim((string)($lock['dsn'] ?? '')),
+            'directory' => trim((string)($lock['directory'] ?? '')),
+            'ttl' => trim((string)($lock['ttl'] ?? '')),
+            'prefix' => (string)($lock['prefix'] ?? LockSettings::PREFIX_DEFAULT),
+            'username' => trim((string)($lock['username'] ?? '')),
+            'password' => (string)($lock['password'] ?? ''),
+        ],
+        'cache' => [
+            'type' => (string)($cache['type'] ?? CacheSettings::TYPE_MEMORY),
+            'dsn' => trim((string)($cache['dsn'] ?? '')),
+            'directory' => trim((string)($cache['directory'] ?? '')),
+            'defaultLifetime' => (int)($cache['defaultLifetime'] ?? 0),
+            'namespace' => trim((string)($cache['namespace'] ?? '')),
+        ],
+        'shardDepth' => trim((string)($input['shardDepth'] ?? '')),
+        'maxDepth' => trim((string)($input['maxDepth'] ?? '')),
+        'lifetimeInheritance' => isset($input['lifetimeInheritance']),
+        'checksumValidation' => isset($input['checksumValidation']),
+        'optimisticLocking' => isset($input['optimisticLocking']),
+        'childPersistence' => trim((string)($input['childPersistence'] ?? '')),
+        'childDeletion' => trim((string)($input['childDeletion'] ?? '')),
+        'fsync' => isset($input['fsync']),
+    ]);
+};
+
+/* the choices of the configuration form */
+$configurationChoices = [
+    'lockTypes' => [
+        LockSettings::TYPE_FILE => 'Files (one host)',
+        LockSettings::TYPE_SEMAPHORE => 'Semaphores (one host, Linux)',
+        LockSettings::TYPE_REDIS => 'Redis',
+        LockSettings::TYPE_MEMCACHED => 'Memcached',
+        LockSettings::TYPE_PDO => 'Database (PDO)',
+        LockSettings::TYPE_DSN => 'Other symfony/lock connection',
+    ],
+    'cacheTypes' => [
+        CacheSettings::TYPE_MEMORY => 'In memory of the process',
+        CacheSettings::TYPE_NONE => 'No cache',
+        CacheSettings::TYPE_APCU => 'APCu (one server)',
+        CacheSettings::TYPE_FILESYSTEM => 'Files (one host)',
+        CacheSettings::TYPE_REDIS => 'Redis',
+        CacheSettings::TYPE_MEMCACHED => 'Memcached',
+    ],
+    'childPersistence' => [
+        ChildPersistence::IF_NOT_EXIST => 'IF_NOT_EXIST',
+        ChildPersistence::ALWAYS => 'ALWAYS',
+        ChildPersistence::NEVER => 'NEVER',
+    ],
+    'childDeletion' => [
+        ChildDeletion::NEVER => 'NEVER',
+        ChildDeletion::ALWAYS => 'ALWAYS',
+    ],
+];
+
+/* a configuration for lists: name, description and short summaries */
+$describeConfiguration = static function (Configuration $configuration): array {
+    $strategy = array_filter([
+        null === $configuration->shardDepth ? null : 'shard depth ' . $configuration->shardDepth,
+        null === $configuration->maxDepth ? null : 'max depth ' . $configuration->maxDepth,
+        $configuration->lifetimeInheritance ? 'lifetime inheritance' : null,
+        $configuration->checksumValidation ? null : 'no checksum validation',
+        $configuration->optimisticLocking ? 'optimistic locking' : null,
+        null === $configuration->childPersistence ? null : 'children stored ' . ([ChildPersistence::ALWAYS => 'ALWAYS', ChildPersistence::NEVER => 'NEVER', ChildPersistence::IF_NOT_EXIST => 'IF_NOT_EXIST'][$configuration->childPersistence] ?? '?'),
+        null === $configuration->childDeletion ? null : 'children deleted ' . ([ChildDeletion::ALWAYS => 'ALWAYS', ChildDeletion::NEVER => 'NEVER'][$configuration->childDeletion] ?? '?'),
+        $configuration->fsync ? null : 'no fsync',
+    ]);
+
+    return [
+        'name' => $configuration->name,
+        'description' => $configuration->description,
+        'lock' => $configuration->lock->describe(),
+        'lockType' => $configuration->lock->type,
+        'cache' => $configuration->cache->describe(),
+        'cacheType' => $configuration->cache->type,
+        'strategy' => [] === $strategy ? 'defaults' : implode(', ', $strategy),
+    ];
+};
+
 try {
     switch ($action) {
         case 'index':
             echo $twig->render('index.html');
+            break;
+        case 'transfer':
+            // copy or move the chosen objects into another storage; the page runs the transfer in batches via
+            // transfer-step, showing the progress, and retries failed or skipped objects
+            $storageDir = (string)($_GET['storage'] ?? '');
+            $uuids = array_values(array_unique(array_filter(array_map('strval', (array)($_GET['uuids'] ?? [])), static fn(string $uuid): bool => '' !== $uuid)));
+
+            $configurationNames = [];
+            try {
+                $configurationNames = array_keys($configurations->list());
+            } catch (Throwable $e) {
+                $logger->error($e);
+            }
+
+            echo $twig->render('transfer.html', [
+                'storage' => $storageDir,
+                'uuids' => $uuids,
+                'mode' => 'move' === ($_GET['mode'] ?? '') ? 'move' : 'copy',
+                'configurationNames' => $configurationNames,
+            ]);
+            break;
+        case 'transfer-step':
+            // one batch of a transfer: the posted UUIDs
+            try {
+                $requirePost();
+                $storageDir = (string)($_POST['storage'] ?? '');
+                $targetDir = trim((string)($_POST['target'] ?? ''));
+                $move = 'move' === ($_POST['mode'] ?? '');
+                $batch = array_slice(array_values(array_filter(array_map('strval', (array)($_POST['uuids'] ?? [])))), 0, 500);
+
+                if ('' === $targetDir) {
+                    throw new RuntimeException('Choose the target storage.');
+                }
+                if (!is_dir($targetDir)) {
+                    if (!isset($_POST['create'])) {
+                        throw new RuntimeException(sprintf('The target storage %s doesn\'t exist; choose to create it.', $targetDir));
+                    }
+                    $targetConfiguration = trim((string)($_POST['configuration'] ?? ''));
+                    if ('' !== $targetConfiguration) {
+                        $configurations->assign($targetDir, $targetConfiguration);
+                    }
+                }
+
+                $source = $buildStorage($storageDir);
+                $target = $buildStorage($targetDir); // with its configuration and its search indexes attached
+                $transfer = new ObjectTransfer($source, $target);
+
+                $result = $move
+                    ? $transfer->move($batch, isset($_POST['withReferences']), (string)($_POST['onConflict'] ?? ObjectTransfer::CONFLICT_FAIL))
+                    : $transfer->copy($batch, isset($_POST['withReferences']), (string)($_POST['onConflict'] ?? ObjectTransfer::CONFLICT_FAIL));
+
+                $jsonResponse(['ok' => true, 'result' => $result->toArray()]);
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
+            break;
+        case 'storage-create':
+            // creates the directory of a storage, assigned the chosen configuration
+            $requirePost();
+            $storageDir = trim((string)($_POST['storage'] ?? ''));
+            $configurationName = trim((string)($_POST['configuration'] ?? ''));
+            if ('' === $storageDir) {
+                throw new RuntimeException('No storage directory given.');
+            }
+            if (is_dir($storageDir)) {
+                throw new RuntimeException(sprintf('The storage %s exists already.', $storageDir));
+            }
+
+            // the configuration first: the storage is created with its settings, e.g. the shard depth
+            if ('' !== $configurationName) {
+                $configurations->assign($storageDir, $configurationName);
+            }
+            $configurations->open($storageDir);
+
+            header('Location: ?action=list-classnames&storage=' . rawurlencode($storageDir));
+            break;
+        case 'configurations':
+            // the named configurations; with a storage, also which one it is assigned
+            $storageDir = $_GET['storage'] ?? null;
+            $error = null;
+            $list = [];
+            try {
+                foreach ($configurations->list() as $configuration) {
+                    $list[] = $describeConfiguration($configuration);
+                }
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $error = $e->getMessage();
+            }
+
+            $assigned = null;
+            if (null !== $storageDir && '' !== $storageDir) {
+                try {
+                    $assigned = ConfigurationRegistry::getAssignedName($storageDir);
+                } catch (Throwable $e) {
+                    $error = $e->getMessage();
+                }
+            }
+
+            echo $twig->render('configurations.html', [
+                'storage' => $storageDir,
+                'exists' => false,
+                'configurations' => $list,
+                'assigned' => $assigned,
+                'directory' => $configurations->getDirectory(),
+                'error' => $error,
+                'message' => $_GET['message'] ?? null,
+            ]);
+            break;
+        case 'configuration-edit':
+        case 'configuration-save':
+            // create (no name) or edit a configuration; saving validates it and returns to the list
+            $isSave = 'configuration-save' === $action;
+            $input = $isSave ? $_POST : $_GET;
+            $storageDir = $input['storage'] ?? null;
+            $name = $isSave ? null : ($_GET['name'] ?? null);
+            $isNew = $isSave ? '1' === ($_POST['isNew'] ?? '1') : null === $name;
+            $error = null;
+            $values = null;
+
+            if ($isSave) {
+                $requirePost();
+                try {
+                    $configuration = $configurationFromRequest($_POST);
+                    $isNew ? $configurations->create($configuration) : $configurations->update($configuration);
+
+                    $message = sprintf('Configuration %s saved.', $configuration->name);
+                    if (isset($_POST['assign']) && null !== $storageDir && '' !== $storageDir) {
+                        $configurations->assign($storageDir, $configuration->name);
+                        $message .= sprintf(' Assigned to %s.', $storageDir);
+                    }
+                    header('Location: ?action=configurations&message=' . rawurlencode($message) . (null === $storageDir || '' === $storageDir ? '' : '&storage=' . rawurlencode($storageDir)));
+                    break;
+                } catch (Throwable $e) {
+                    $logger->error($e);
+                    $error = $e->getMessage();
+                    // the form as posted, so nothing typed is lost
+                    $values = $_POST + ['lock' => [], 'cache' => []];
+                    $values['lifetimeInheritance'] = isset($_POST['lifetimeInheritance']);
+                    $values['checksumValidation'] = isset($_POST['checksumValidation']);
+                    $values['optimisticLocking'] = isset($_POST['optimisticLocking']);
+                    $values['fsync'] = isset($_POST['fsync']);
+                }
+            } elseif (null !== $name) {
+                $values = $configurations->get($name)->toArray();
+            }
+
+            $values ??= (new Configuration('new'))->toArray();
+            if ($isNew && !$isSave) {
+                $values['name'] = (string)($_GET['newName'] ?? '');
+            }
+
+            echo $twig->render('configuration-edit.html', [
+                'storage' => $storageDir,
+                'exists' => false,
+                'isNew' => $isNew,
+                'values' => $values,
+                'choices' => $configurationChoices,
+                'error' => $error,
+            ]);
+            break;
+        case 'configuration-delete':
+        case 'configuration-check':
+        case 'configuration-assign':
+            // JSON actions, called by the pages
+            try {
+                $requirePost();
+                $name = (string)($_POST['name'] ?? '');
+                $storageDir = (string)($_POST['storage'] ?? '');
+
+                $result = match ($action) {
+                    'configuration-delete' => ['deleted' => $configurations->delete($name)],
+                    // takes a lock and uses the cache, in the directory of the chosen storage or a temporary one
+                    'configuration-check' => (new ConfigurationFactory())->check(
+                        $configurations->get($name),
+                        '' !== $storageDir && is_dir($storageDir) ? $storageDir : sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'object-storage-viewer-check'
+                    ),
+                    'configuration-assign' => (static function () use ($configurations, $storageDir, $name, $psr16, $createCacheKeyShardDepth): array {
+                        if ('' === $storageDir || !is_dir($storageDir)) {
+                            throw new RuntimeException('Storage not found.');
+                        }
+                        $configurations->assign($storageDir, '' === $name ? null : $name);
+                        // the shard depth may come from the configuration now: detect it again
+                        $psr16->delete($createCacheKeyShardDepth($storageDir));
+                        return ['assigned' => '' === $name ? null : $name];
+                    })(),
+                };
+
+                $jsonResponse(['ok' => true, 'result' => $result]);
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
             break;
         case 'list-classnames':
             $storageDir = $_GET['storage'] ?? null;
@@ -245,8 +543,18 @@ try {
                 }
             }
 
+            // the configuration of the storage, to show and change it
+            $configurationNames = [];
+            try {
+                $configurationNames = array_keys($configurations->list());
+            } catch (Throwable $e) {
+                $logger->error($e);
+            }
+
             echo $twig->render('list-classnames.html', [
                 'storage' => $storageDir,
+                'configuration' => $exists ? ConfigurationRegistry::getAssignedName($storageDir) : null,
+                'configurationNames' => $configurationNames,
                 'indexCounts' => $indexCounts,
                 'classnames' => $classnames,
                 'exists' => $exists,
@@ -975,4 +1283,14 @@ try {
     }
 } catch (Throwable $e) {
     $logger->error($e);
+    // e.g. the configuration of a storage can't be applied: say so instead of an empty page
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo $twig->render('error.html', [
+        'storage' => $_GET['storage'] ?? $_POST['storage'] ?? null,
+        'error' => $e->getMessage(),
+        'isConfiguration' => $e instanceof ConfigurationException,
+        'exists' => false, // not remembered as a recent storage
+    ]);
 }

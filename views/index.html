@@ -66,6 +66,9 @@
         <img src="{{baseUrl}}/../assets/logo.svg" alt="" width="26" height="26" onerror="this.remove()">
         Object Storage Viewer
     </a>
+    <a class="btn btn-sm btn-outline-light" href="?action=configurations{% if storage is defined and storage %}&storage={{ storage|url_encode }}{% endif %}" title="Named configurations of storages: locks, cache, strategy">
+        <i class="bi bi-gear"></i> Configurations
+    </a>
 
     <form class="storage-picker" id="storage-picker" autocomplete="off" role="search">
         <input name="action" type="hidden" value="list-classnames"/>

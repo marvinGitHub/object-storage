@@ -1,0 +1,247 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="page-narrow">
+    {% set crumbs = [{label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true}] %}
+    {% if uuids|length == 1 %}
+    {% set crumbs = crumbs|merge([{label: uuids[0], href: '?action=view-record&storage=' ~ storage|url_encode ~ '&uuid=' ~ uuids[0]|url_encode, code: true}]) %}
+    {% endif %}
+    {% embed 'page-header.html' with {crumbs: crumbs|merge([{label: 'Copy / Move'}])} %}
+        {% block title %}Copy or move {{ uuids|length|number_format(0, '.', ' ') }} object{{ uuids|length == 1 ? '' : 's' }}{% endblock %}
+        {% block intro %}
+        <p class="page-intro">
+            {% if uuids|length == 1 %}The record <code>{{ uuids[0] }}</code>{% else %}{{ uuids|length }} chosen records{% endif %}
+            of <code>{{ storage }}</code>, as stored: UUID, revision, lifetime and checksum are kept.
+        </p>
+        {% endblock %}
+    {% endembed %}
+
+    {% if uuids is empty %}
+    <div class="alert alert-info"><i class="bi bi-info-circle"></i> No objects chosen: check them in the list of a class.</div>
+    {% else %}
+    <form class="card mb-3" id="transfer-form">
+        <div class="card-body row g-3">
+            <div class="col-12">
+                <div class="btn-group" role="group" aria-label="Copy or move">
+                    <input type="radio" class="btn-check" name="mode" id="mode-copy" value="copy" {% if mode == 'copy' %}checked{% endif %}>
+                    <label class="btn btn-outline-info" for="mode-copy"><i class="bi bi-copy"></i> Copy</label>
+                    <input type="radio" class="btn-check" name="mode" id="mode-move" value="move" {% if mode == 'move' %}checked{% endif %}>
+                    <label class="btn btn-outline-warning" for="mode-move"><i class="bi bi-arrow-right-square"></i> Move</label>
+                </div>
+                <div class="form-text" id="mode-help"></div>
+            </div>
+            <div class="col-md-7">
+                <label class="form-label" for="target">Target storage</label>
+                <input class="form-control font-monospace" id="target" name="target" list="target-suggestions" required placeholder="e.g. appData/archive" autocomplete="off">
+                <datalist id="target-suggestions"></datalist>
+                <div class="form-text">Opened with the configuration assigned to it.</div>
+            </div>
+            <div class="col-md-5">
+                <label class="form-label" for="onConflict">If an object exists in the target</label>
+                <select class="form-select" id="onConflict" name="onConflict">
+                    {% for value, label in {fail: 'Report it as failed', skip: 'Skip it (keep the target\'s)', overwrite: 'Overwrite it'} %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="withReferences" name="withReferences" checked>
+                    <label class="form-check-label" for="withReferences">Copy referenced objects as well</label>
+                    <div class="form-text mt-0">So the copies don't refer to missing objects; when moving, they stay in the source too.</div>
+                </div>
+            </div>
+            <div class="col-12 border-top pt-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="create" name="create">
+                    <label class="form-check-label" for="create">Create the target storage if it doesn't exist</label>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-2">
+                    <label class="form-label mb-0 small" for="configuration">with the configuration</label>
+                    <select class="form-select form-select-sm w-auto" id="configuration" name="configuration">
+                        <option value="">Defaults</option>
+                        {% for name in configurationNames %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="card-footer d-flex gap-2 align-items-center">
+            <button class="btn btn-primary" type="submit" id="start"><i class="bi bi-play-fill"></i> <span id="start-label">Copy</span></button>
+            <div class="dropdown hidden" id="retry">
+                <button class="btn btn-outline-danger dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-arrow-clockwise"></i> Retry
+                </button>
+                <ul class="dropdown-menu" style="min-width: 18rem">
+                    <li><button class="dropdown-item" type="button" id="retry-failed">Retry failed <span class="badge text-bg-danger" id="retry-failed-count">0</span></button></li>
+                    <li><button class="dropdown-item" type="button" id="retry-skipped">Retry skipped <span class="badge text-bg-warning" id="retry-skipped-count">0</span></button></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><span class="dropdown-item-text small text-muted">With the settings above, e.g. "Overwrite it" for objects existing in the target.</span></li>
+                </ul>
+            </div>
+            <button class="btn btn-secondary ms-auto" type="button" onclick="history.back()">Back</button>
+        </div>
+    </form>
+
+    <div id="progress-section" class="hidden">
+        <div class="progress mb-2" role="progressbar" style="height: 1.75rem" aria-label="Progress">
+            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">0 %</div>
+        </div>
+        <div class="d-flex gap-3 flex-wrap mb-3 small">
+            <span id="progress-phase" class="fw-semibold">Working…</span>
+            <span>Transferred: <strong id="count-transferred">0</strong></span>
+            <span>Referenced objects: <strong id="count-references">0</strong></span>
+            <span>Skipped: <strong id="count-skipped">0</strong></span>
+            <span>Failed: <strong id="count-failed">0</strong></span>
+        </div>
+        <div id="progress-error" class="alert alert-danger hidden"></div>
+        <div class="card hidden" id="issues-card">
+            <div class="card-header">Skipped and failed</div>
+            <ul class="list-group list-group-flush small" id="issues"></ul>
+        </div>
+        <div class="d-flex gap-2 mt-3 hidden" id="links">
+            <a class="btn btn-primary btn-sm" id="open-target" href="#"><i class="bi bi-database"></i> Open the target</a>
+            <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}"><i class="bi bi-arrow-left"></i> Back to the source</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if uuids is not empty %}
+<script>
+    // after the page is parsed: RecentStorages is defined further down, in the base template
+    document.addEventListener('DOMContentLoaded', () => {
+        const source = {{ storage|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }};
+        const chosen = {{ uuids|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }};
+        const batchSize = 50;
+        const form = document.getElementById('transfer-form');
+        const $ = id => document.getElementById(id);
+
+        // storages opened before (see the storage picker), except the source
+        $('target-suggestions').replaceChildren(...RecentStorages.list()
+            .filter(entry => entry.path !== source)
+            .map(entry => Object.assign(document.createElement('option'), {value: entry.path})));
+
+        const help = {
+            copy: 'The objects stay in the source.',
+            move: 'Each object is deleted in the source after it was copied; only the object itself, not the objects it references.',
+        };
+        const updateMode = () => {
+            const mode = new FormData(form).get('mode');
+            $('mode-help').textContent = help[mode];
+            $('start-label').textContent = mode === 'move' ? 'Move' : 'Copy';
+            $('start').className = `btn ${mode === 'move' ? 'btn-warning' : 'btn-info'}`;
+        };
+        form.querySelectorAll('[name=mode]').forEach(radio => radio.addEventListener('change', updateMode));
+        updateMode();
+
+        // the outcome of the last run: what can be retried
+        let counts, failed, skipped, total;
+
+        const addIssue = (uuid, text, kind) => {
+            const item = document.createElement('li');
+            item.className = `list-group-item d-flex gap-2 ${kind === 'failed' ? 'text-danger' : 'text-warning-emphasis'}`;
+            item.append(
+                Object.assign(document.createElement('span'), {className: 'badge ' + (kind === 'failed' ? 'text-bg-danger' : 'text-bg-warning'), textContent: kind}),
+                Object.assign(document.createElement('span'), {className: 'uuid', textContent: uuid}),
+                document.createTextNode(text)
+            );
+            $('issues').append(item);
+            $('issues-card').classList.remove('hidden');
+        };
+
+        const render = done => {
+            const handled = counts.transferred + counts.skipped + counts.failed;
+            const percent = done ? 100 : Math.min(100, Math.round(handled / total * 100));
+            const bar = $('progress-bar');
+            bar.style.width = `${percent}%`;
+            bar.textContent = `${percent} %`;
+            bar.className = done
+                ? `progress-bar ${counts.failed ? 'bg-danger' : counts.skipped ? 'bg-warning' : 'bg-success'}`
+                : 'progress-bar progress-bar-striped progress-bar-animated';
+            for (const [key, value] of Object.entries(counts)) {
+                $(`count-${key}`).textContent = value;
+            }
+        };
+
+        async function step(settings, batch) {
+            const body = new FormData();
+            settings.forEach(([key, value]) => body.append(key, value));
+            body.append('action', 'transfer-step');
+            body.append('storage', source);
+            batch.forEach(uuid => body.append('uuids[]', uuid));
+
+            const data = await (await fetch('?action=transfer-step', {method: 'POST', body})).json();
+            if (!data.ok) {
+                throw new Error(data.error);
+            }
+            const result = data.result;
+            counts.transferred += result.transferred.length;
+            counts.references += result.references.length;
+            counts.skipped += Object.keys(result.skipped).length;
+            counts.failed += Object.keys(result.failed).length;
+            Object.entries(result.skipped).forEach(([uuid, reason]) => { skipped.push(uuid); addIssue(uuid, reason, 'skipped'); });
+            Object.entries(result.failed).forEach(([uuid, error]) => { failed.push(uuid); addIssue(uuid, error, 'failed'); });
+            render(false);
+        }
+
+        /** transfers the objects in batches with the settings of the form, showing the progress */
+        async function run(uuids) {
+            const settings = [...new FormData(form).entries()]; // before disabling: disabled fields aren't part of it
+            const mode = new FormData(form).get('mode');
+            const target = form.target.value.trim();
+            if (!form.reportValidity()) {
+                return;
+            }
+            if (mode === 'move' && !confirm(`Move ${uuids.length} object(s) to ${target}? They are deleted here after copying.`)) {
+                return;
+            }
+
+            counts = {transferred: 0, references: 0, skipped: 0, failed: 0};
+            failed = [];
+            skipped = [];
+            total = uuids.length;
+            $('issues').replaceChildren();
+            $('issues-card').classList.add('hidden');
+            $('progress-error').classList.add('hidden');
+            $('retry').classList.add('hidden');
+            $('progress-phase').textContent = 'Working…';
+            $('progress-section').classList.remove('hidden');
+            render(false);
+
+            const controls = [...form.querySelectorAll('input, select, button')];
+            controls.forEach(element => element.disabled = true);
+
+            try {
+                for (let i = 0; i < uuids.length; i += batchSize) {
+                    await step(settings, uuids.slice(i, i + batchSize));
+                }
+                $('progress-phase').textContent = `Done: ${counts.transferred} object(s) ${mode === 'move' ? 'moved' : 'copied'}.`;
+                RecentStorages.remember(target);
+            } catch (e) {
+                $('progress-error').textContent = e.message;
+                $('progress-error').classList.remove('hidden');
+                $('progress-phase').textContent = 'Stopped.';
+            }
+
+            render(true);
+            // the settings can be changed for a retry, e.g. to overwrite objects existing in the target
+            controls.forEach(element => element.disabled = false);
+            $('retry-failed-count').textContent = failed.length;
+            $('retry-skipped-count').textContent = skipped.length;
+            $('retry-failed').disabled = failed.length === 0;
+            $('retry-skipped').disabled = skipped.length === 0;
+            $('retry').classList.toggle('hidden', failed.length + skipped.length === 0);
+            $('open-target').href = `?action=list-classnames&storage=${encodeURIComponent(target)}`;
+            $('links').classList.remove('hidden');
+        }
+
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            run(chosen);
+        });
+        $('retry-failed').addEventListener('click', () => run([...failed]));
+        $('retry-skipped').addEventListener('click', () => run([...skipped]));
+    });
+</script>
+{% endif %}
+{% endblock body %}

@@ -50,7 +50,12 @@ abstract class SteppedMaintenance
     public function getInternalStorage(): ObjectStorage
     {
         if (null === $this->internal) {
-            $internal = new ObjectStorage($this->internalDirectory(), logger: $this->getObjectStorage()->getLogger());
+            // the same locks as the storage, so processes on all hosts coordinate
+            $internal = new ObjectStorage(
+                $this->internalDirectory(),
+                logger: $this->getObjectStorage()->getLogger(),
+                configuration: $this->getObjectStorage()->getConfiguration()?->forInternalStorage()
+            );
             // other processes continue the task: always read the stored state
             $internal->setCache(null);
             $this->internal = $internal;

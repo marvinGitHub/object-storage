@@ -8,16 +8,17 @@ use DateTimeInterface;
 use Exception as PHPDefaultException;
 use FilterIterator;
 use Generator;
-use JsonException;
 use GlobIterator;
 use Iterator;
 use IteratorAggregate;
 use melia\ObjectStorage\Cache\InMemoryCache;
+use melia\ObjectStorage\Configuration\Configuration;
+use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
+use melia\ObjectStorage\Configuration\Factory as ConfigurationFactory;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
 use melia\ObjectStorage\Event\Context\Context;
-use melia\ObjectStorage\Event\Context\IOContext;
 use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Context\ObjectPersistenceContext;
@@ -39,6 +40,7 @@ use melia\ObjectStorage\Exception\MemoryConsumptionDetectionFailureException;
 use melia\ObjectStorage\Exception\MetadataNotFoundException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\MetataDeletionFailureException;
+use melia\ObjectStorage\Transfer\RawAccessTrait;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectExistenceEvaluationFailureException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
@@ -58,6 +60,8 @@ use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
+use melia\ObjectStorage\File\JsonFileReader;
+use melia\ObjectStorage\File\JsonFileWriter;
 use melia\ObjectStorage\File\Reader;
 use melia\ObjectStorage\File\ReaderAwareTrait;
 use melia\ObjectStorage\File\ReaderInterface;
@@ -98,24 +102,48 @@ use Traversable;
 use WeakMap;
 
 /**
- * Class responsible for storing, caching, and retrieving objects in a persistent storage system.
- * Handles serialization, metadata processing, and nested structures.
- * Supports handling circular references, maximum nesting levels, and in-memory caching.
+ * Stores, loads and deletes objects as files: one data file (the serialized object graph) and one metadata file
+ * (class, checksum, revision, expiration) per object, sharded by UUID, with locks, caches and events.
+ *
+ * The methods are grouped in sections, in this order. The verbs have one meaning each:
+ *
+ * - load / store / delete: objects, with caches, locks and events — the public API
+ *     load()   → loadFromFiles() → readObjectFiles() → hydrateObject() → hydrateProperties() / hydrateArray()
+ *     store()  → storeObject() (per object of the graph) → serializeGraph() → writeObjectFiles() / writeMetadata()
+ *     delete() → deleteObject() (per object, following the child deletion policy)
+ * - readRaw / writeRaw: objects as stored, unchanged, e.g. to copy them (Transfer\RawAccessTrait)
+ * - read… / write…: files, without caches: readObjectFiles() and writeObjectFiles() are shared by load() and
+ *   readRaw(), store() and writeRaw(); they verify checksums and complete interrupted writes
+ * - hydrate… / serialize…: converting between stored data and objects
+ * - loadMetadata() reads metadata through its cache, reloadMetadata() from the file
+ *
+ * See docs/internals.md for the details.
  */
 class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionInterface
 {
     use AdapterAwareTrait;
+
     use WriterAwareTrait;
+
     use ReaderAwareTrait;
+
     use DispatcherAwareTrait;
+
     use Cache\AwareTrait;
+
     use MetadataCacheAwareTrait;
+
     use ClassRenameMapAwareTrait;
+
+    use RawAccessTrait;
+
+ // readRaw(), writeRaw(): objects as stored, e.g. to copy them into another storage
 
     /**
      * The writer and reader created by default, which follow the IO adapter of the storage (see setIOAdapter()).
      */
     private ?Writer $defaultWriter = null;
+
     private ?Reader $defaultReader = null;
 
     /**
@@ -167,6 +195,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @var WeakMap<object, string>
      */
     protected WeakMap $identityMap;
+
     protected WeakMap $lazyloadReferenceSupportCache;
 
     /**
@@ -179,170 +208,238 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     /** @var array<string>|null */
     protected ?array $registeredClassNamesCache = null;
 
+    // ---------------------------------------------------------------------------------------------------------
+    // Creating and configuring the storage
+    // ---------------------------------------------------------------------------------------------------------
+
     /**
-     * Sets the expiration date and time for the specified UUID. If no expiration is provided,
-     * the lifetime will be unset or considered indefinite.
+     * Constructs the object storage handler by initializing directory, file settings,
+     * caching, and maximum nesting level configurations.
      *
-     * @param string $uuid The unique identifier for which the expiration is being set.
-     * @param DateTimeInterface|null $expiresAt The date and time at which the UUID should expire, or null for no expiration.
+     * @param string $storageDir The directory path where objects will be stored.
+     * @param LoggerInterface|null $logger
+     * @param LockAdapterInterface|null $lockAdapter
+     * @param StateHandler|null $stateHandler
+     * @param DispatcherInterface|null $eventDispatcher
+     * @param CacheInterface|null $cache
+     * @param CacheInterface|null $metadataCache
+     * @param AdapterInterface|null $adapter
+     * @param StrategyInterface|null $strategy
+     * @param Configuration|null $configuration Settings to create the lock adapter and the caches from, and to
+     *        apply to the strategy and the writer; arguments passed explicitly take precedence. See Registry for
+     *        named configurations.
+     * @throws IOException If the storage directory cannot be created.
+     * @throws ConfigurationException If the lock adapter or a cache of the configuration can't be created.
+     */
+    public function __construct(
+        private string                  $storageDir,
+        protected ?LoggerInterface      $logger = null,
+        protected ?LockAdapterInterface $lockAdapter = null,
+        protected ?StateHandler         $stateHandler = null,
+        ?DispatcherInterface            $eventDispatcher = null,
+        ?CacheInterface                 $cache = null,
+        ?CacheInterface                 $metadataCache = null,
+        ?AdapterInterface               $adapter = null,
+        ?StrategyInterface              $strategy = null,
+        private ?Configuration          $configuration = null,
+    )
+    {
+        $factory = null === $configuration ? null : new ConfigurationFactory();
+        $strategyPassed = null !== $strategy;
+        $this->identityMap = new WeakMap();
+        $this->processingStack = new WeakMap();
+        $this->lazyloadReferenceSupportCache = new WeakMap();
+        $this->revisions = new WeakMap();
+
+        $this->setStorageDir($storageDir);
+        $this->setClassRenameMap(new ClassRenameMap());
+
+        if (null === $adapter) {
+            $adapter = new RealAdapter();
+        }
+        $this->setIOAdapter($adapter);
+
+        if (null === $strategy) {
+            $strategy = new Standard();
+        }
+        $this->setStrategy($strategy);
+
+        if (null === $cache) {
+            $cache = null === $configuration ? new InMemoryCache() : $factory->createCache($configuration->cache, $this->getStorageDir(), ConfigurationFactory::CACHE_OBJECTS);
+        }
+        $this->setCache($cache);
+
+        if (null === $metadataCache) {
+            $metadataCache = null === $configuration ? new InMemoryCache() : $factory->createCache($configuration->cache, $this->getStorageDir(), ConfigurationFactory::CACHE_METADATA);
+        }
+        $this->setMetadataCache($metadataCache);
+
+        if (null === $eventDispatcher) {
+            $eventDispatcher = new Dispatcher();
+        }
+        $this->setEventDispatcher($eventDispatcher);
+
+        if (null === $stateHandler) {
+            $stateHandler = new StateHandler($this->getStorageDir());
+            $stateHandler->setEventDispatcher($eventDispatcher);
+        }
+        $this->setStateHandler($stateHandler);
+
+        if (null === $lockAdapter) {
+            $lockAdapter = null === $configuration
+                ? SymfonyLockAdapter::createFileLockAdapter($this->getLockDir())
+                : $factory->createLockAdapter($configuration->lock, $this->getStorageDir());
+            $lockAdapter->setStateHandler($stateHandler);
+            $lockAdapter->setLogger($this->logger);
+            $lockAdapter->setEventDispatcher($eventDispatcher);
+        }
+        $this->setLockAdapter($lockAdapter);
+
+        // a strategy passed explicitly keeps its settings
+        $factory?->apply($this, $configuration, applyStrategy: !$strategyPassed);
+    }
+
+    /**
+     * The configuration the storage was created with, null if none.
+     */
+    public function getConfiguration(): ?Configuration
+    {
+        return $this->configuration;
+    }
+
+    /**
+     * @param string $storageDir
      * @return void
-     * @throws MetadataNotFoundException
-     * @throws MetadataSavingFailureException
+     * @throws IOException
      */
-    public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
+    public function setStorageDir(string $storageDir): void
     {
-        $this->setLifetime($uuid, $expiresAt ? $expiresAt->getTimestamp() - microtime(true) : null);
+        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
+        $this->createDirectoryIfNotExist($this->storageDir);
     }
 
     /**
-     * Sets the lifetime (time-to-live) for the given UUID, updating its expiration timestamp
-     * in the metadata and dispatching an event to notify listeners of the change.
+     * Retrieves the directory of the storage.
      *
-     * @param string $uuid The unique identifier whose lifetime is to be set.
-     * @param int|float|null $ttl The time-to-live (in seconds) to set for the UUID.
+     * @return string The storage directory path as a string.
+     */
+    public function getStorageDir(): string
+    {
+        return $this->storageDir;
+    }
+
+    /**
+     * Sets the IO adapter of the storage, which the default writer and reader use as well. A writer or reader set
+     * explicitly keeps its own adapter.
+     *
+     * @param AdapterInterface|null $ioAdapter
+     * @return void
+     */
+    public function setIOAdapter(?AdapterInterface $ioAdapter): void
+    {
+        $this->ioAdapter = $ioAdapter;
+
+        if (null !== $this->defaultWriter && $this->writer === $this->defaultWriter) {
+            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
+        }
+
+        if (null !== $this->defaultReader && $this->reader === $this->defaultReader) {
+            $this->defaultReader->setIOAdapter($this->getIOAdapter());
+        }
+    }
+
+    /**
+     * Returns the writer; unless one was set, a default writer is created once, using the IO adapter of the storage.
+     *
+     * @return WriterInterface
+     */
+    public function getWriter(): WriterInterface
+    {
+        if (null === $this->writer) {
+            $this->defaultWriter = new Writer();
+            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
+            $this->writer = $this->defaultWriter;
+        }
+
+        return $this->writer;
+    }
+
+    /**
+     * Returns the reader; unless one was set, a default reader is created once, using the IO adapter of the storage.
+     *
+     * @return ReaderInterface
+     */
+    public function getReader(): ReaderInterface
+    {
+        if (null === $this->reader) {
+            $this->defaultReader = new Reader();
+            $this->defaultReader->setIOAdapter($this->getIOAdapter());
+            $this->reader = $this->defaultReader;
+        }
+
+        return $this->reader;
+    }
+
+    /**
+     * Releases all active locks held by the lock adapter before object destruction.
      *
      * @return void
-     * @throws MetadataNotFoundException
-     * @throws MetadataSavingFailureException
      */
-    public function setLifetime(string $uuid, null|int|float $ttl): void
+    public function __destruct()
     {
-        $lockAdapter = $this->getLockAdapter();
-        $lockAdapter?->acquireExclusiveLock($uuid);
+        $this->getLockAdapter()?->releaseActiveLocks();
+    }
 
-        try {
-            // read from disk under the lock: cached metadata may be outdated (checksum, revision) if another
-            // process stored the object in the meantime, and writing it back would revert those values
-            $metadata = $this->reloadMetadata($uuid);
-            if (null === $metadata) {
-                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
-            }
+    // ---------------------------------------------------------------------------------------------------------
+    // Paths of the files
+    // ---------------------------------------------------------------------------------------------------------
 
-            if (null === $ttl) {
-                $timestampExpiresAt = null;
-            } else {
-                $timestampExpiresAt = microtime(true) + $ttl;
-                $timestampExpiresAt = (float)$timestampExpiresAt;
-            }
-
-            $metadata->setTimestampExpiresAt($timestampExpiresAt);
-            $this->saveMetadata($metadata);
-            $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
-        } finally {
-            $lockAdapter?->releaseLock($uuid);
-        }
+    /**
+     * Retrieves the directory of the default file locks.
+     *
+     * @return string The full path to the lock directory.
+     */
+    public function getLockDir(): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'locks';
     }
 
     /**
-     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
-     * If an error occurs during the process, it is logged, and null is returned.
+     * Retrieves the directory path where shard files are stored.
      *
-     * @param null|string $uuid The unique identifier for the metadata to be loaded.
-     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
+     * @return string The full path to the shard directory.
      */
-    public function loadMetadata(?string $uuid): ?Metadata
+    public function getShardDir(): string
     {
-        if (null === $uuid) {
-            return null;
-        }
-
-        try {
-            $cached = $this->getMetadataCache()?->get($uuid);
-            if ($cached instanceof Metadata) {
-                return $cached;
-            }
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-
-        try {
-            $filePathMetadata = $this->getFilePathMetadata($uuid);
-
-            // no metadata stored under this UUID: nothing to load, which is not a failure worth reporting
-            if (false === $this->getIOAdapter()->isFile($filePathMetadata)) {
-                return null;
-            }
-
-            $metadata = $this->loadFromJsonFile($filePathMetadata);
-            if (null === $metadata) {
-                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
-            }
-
-            $metadata = Metadata::createFromArray($metadata);
-            $this->getMetadataCache()?->set($uuid, $metadata);
-            return $metadata;
-        } catch (Throwable $e) {
-            $this->getEventDispatcher()?->dispatch(Events::METADATA_LOADING_FAILURE, static fn() => new Context($uuid));
-            $this->getLogger()?->log($e);
-        }
-        return null;
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'shards';
     }
 
     /**
-     * Reads and decodes data from a specified file, handling errors and enabling safe mode upon failure.
+     * Builds the path of the sharded directory for a UUID: one directory level per leading character of the UUID,
+     * as many levels as the configured shard depth (depth 0 => <storage>/shards). The directory is not created:
+     * the writer creates it when the first file is written, so looking up unknown UUIDs leaves no empty
+     * directories behind.
      *
-     * @param string $filename The path to the file to read and decode data from.
-     * @param callable|null $validator
-     * @return array|null Returns the decoded data as an associative array.
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException If the file content cannot be decoded.
+     * @param string $uuid
+     * @return string The path of the directory, with a trailing directory separator.
      */
-    protected function loadFromJsonFile(string $filename, ?callable $validator = null): ?array
+    public function buildShardedDirectory(string $uuid): string
     {
-        $data = $this->readFile($filename);
-        if (null === $data) {
-            return null;
-        }
+        $depth = min($this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH, 32);
 
-        if (is_callable($validator)) {
-            $validator($data);
-        }
-
-        return $this->decodeJson($data, $filename);
+        return $this->getShardDir() . DIRECTORY_SEPARATOR . chunk_split(substr(Helper::removeHyphens($uuid), 0, $depth), 1, DIRECTORY_SEPARATOR);
     }
 
     /**
-     * Reads the raw content of a file; a read failure is logged and dispatched, not thrown.
+     * Generates the file path for a given UUID.
      *
-     * @param string $filename The path to the file to read.
-     * @return string|null The content of the file, or null if it cannot be read.
+     * @param string $uuid The unique identifier used to generate the file path.
+     * @return string The full file path constructed using the UUID.
+     * @throws IOException
      */
-    protected function readFile(string $filename): ?string
+    public function getFilePathData(string $uuid): string
     {
-        try {
-            return $this->getReader()->read($filename);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($filename));
-            return null;
-        }
-    }
-
-    /**
-     * Decodes JSON read from a file, enabling safe mode upon failure.
-     *
-     * @param string $data The JSON to decode.
-     * @param string $filename The path to the file the JSON was read from, for error reporting.
-     * @return array The decoded data as an associative array.
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException If the data cannot be decoded.
-     */
-    protected function decodeJson(string $data, string $filename): array
-    {
-        try {
-            $decoded = json_decode($data, true, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH, JSON_THROW_ON_ERROR);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $decoded = null;
-        }
-
-        if (false === is_array($decoded)) {
-            $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, static fn() => new IOContext($filename));
-            $this->getStateHandler()?->enableSafeMode();
-            throw new SerializationFailureException('Unable to decode data from file: ' . $filename);
-        }
-
-        return $decoded;
+        return $this->buildShardedDirectory($uuid) . $uuid . static::FILE_SUFFIX_OBJECT;
     }
 
     /**
@@ -371,29 +468,56 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Builds the path of the sharded directory for a UUID: one directory level per leading character of the UUID,
-     * as many levels as the configured shard depth (depth 0 => <storage>/shards). The directory is not created:
-     * the writer creates it when the first file is written, so looking up unknown UUIDs leaves no empty
-     * directories behind.
+     * Generates the file path for a stub associated with a specific class and UUID.
      *
-     * @param string $uuid
-     * @return string The path of the directory, with a trailing directory separator.
+     * @param string $className The name of the class for which the stub is being generated.
+     * @param string $uuid The unique identifier used to differentiate the stub file.
+     * @return string The full file path for the stub.
      */
-    public function buildShardedDirectory(string $uuid): string
+    public function getFilePathStub(string $className, string $uuid): string
     {
-        $depth = min($this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH, 32);
-
-        return $this->getShardDir() . DIRECTORY_SEPARATOR . chunk_split(substr(Helper::removeHyphens($uuid), 0, $depth), 1, DIRECTORY_SEPARATOR);
+        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
     }
 
     /**
-     * Retrieves the directory path where shard files are stored.
+     * Retrieves the directory path where the class stub for the given class name is stored.
      *
-     * @return string The full path to the shard directory.
+     * @param string $className The name of the class for which the stub directory path is being generated.
+     * @return string The full path to the class stub directory.
      */
-    public function getShardDir(): string
+    public function getClassStubDirectory(string $className): string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'shards';
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
+    }
+
+    /**
+     * Retrieves the path to the stub directory.
+     *
+     * @return string The full path to the stub directory.
+     */
+    public function getStubDirectory(): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
+    }
+
+    /**
+     * Retrieves the file path for the classnames JSON file.
+     *
+     * @return string The file path of the classnames JSON file.
+     */
+    protected function getFilePathClassnames(): string
+    {
+        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
+    }
+
+    /**
+     * Retrieves the file path for storing corrupted artifacts.
+     *
+     * @return string The file path where corrupted artifacts are stored.
+     */
+    protected function getFilePathCorruptedArtifacts(): string
+    {
+        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'corrupted';
     }
 
     /**
@@ -407,118 +531,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         Directory::createIfNotExists($this->getIOAdapter(), $directory);
     }
 
-    /**
-     * Saves the provided metadata to a file by serializing it to JSON and writing it atomically.
-     *
-     * @param Metadata $metadata The metadata to be serialized and saved.
-     * @return void
-     * @throws MetadataSavingFailureException
-     */
-    protected function saveMetadata(Metadata $metadata): void
-    {
-        try {
-            $this->getWriter()->atomicWrite($this->getFilePathMetadata($metadata->getUUID()), $this->serializeMetadata($metadata));
-            $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
-        } catch (Throwable $e) {
-            $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));
-            $this->getLogger()?->log($e);
-            throw new MetadataSavingFailureException(message: 'Unable to save metadata for uuid: ' . $metadata->getUUID(), previous: $e);
-        }
-
-        $this->cacheMetadata($metadata);
-    }
-
-    /**
-     * Serializes metadata to JSON, as stored in the metadata file.
-     *
-     * @param Metadata $metadata The metadata to serialize.
-     * @return string The JSON representation.
-     * @throws JsonException
-     */
-    protected function serializeMetadata(Metadata $metadata): string
-    {
-        return json_encode($metadata, JSON_THROW_ON_ERROR, $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
-    }
-
-    /**
-     * Puts metadata into the metadata cache; a failing cache is logged, not thrown.
-     *
-     * @param Metadata $metadata The metadata to cache.
-     * @return void
-     */
-    protected function cacheMetadata(Metadata $metadata): void
-    {
-        try {
-            $this->getMetadataCache()?->set($metadata->getUUID(), $metadata);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-    }
-
-    /**
-     * Completes a write of an object interrupted by a crash, so its data and metadata files match again.
-     *
-     * @param string $uuid The unique identifier of the object.
-     * @return bool True if the files changed, false otherwise or if the recovery failed.
-     */
-    protected function recoverInterruptedWrite(string $uuid): bool
-    {
-        try {
-            $recovered = $this->getWriter()->recover($this->getObjectFiles($uuid));
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            return false;
-        }
-
-        if ($recovered) {
-            $this->getLogger()?->log(new Exception(sprintf('Recovered object %s from an interrupted write', $uuid)));
-        }
-
-        return $recovered;
-    }
-
-    /**
-     * Clears the internal object cache by resetting it to an empty array.
-     *
-     * @return void
-     */
-    public function clearCache(): void
-    {
-        $this->getCache()?->clear();
-        $this->identityMap = new WeakMap();
-        $this->processingStack = new WeakMap();
-        $this->lazyloadReferenceSupportCache = new WeakMap();
-        $this->revisions = new WeakMap();
-        $this->registeredClassNamesCache = null;
-        $this->getMetadataCache()?->clear();
-        $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
-    }
-
-    /**
-     * Retrieves the expiration date and time for the provided UUID.
-     *
-     * @param string $uuid The unique identifier for which to retrieve the expiration timestamp.
-     * @return DateTimeInterface|null The expiration date and time as a DateTimeInterface object, or null if no expiration is set.
-     * @throws PHPDefaultException
-     */
-    public function getExpiration(string $uuid): ?DateTimeInterface
-    {
-        $expiresAt = $this->loadMetadata($uuid)?->getTimestampExpiresAt();
-        if (null === $expiresAt) {
-            return null;
-        }
-        return new DateTimeImmutable('@' . $expiresAt);
-    }
-
-    /**
-     * Releases all active locks held by the lock adapter before object destruction.
-     *
-     * @return void
-     */
-    public function __destruct()
-    {
-        $this->getLockAdapter()?->releaseActiveLocks();
-    }
+    // ---------------------------------------------------------------------------------------------------------
+    // Storing: store() → storeObject() → serializeGraph() → writeObjectFiles()
+    // ---------------------------------------------------------------------------------------------------------
 
     /**
      * Stores a given object in the storage system, assigning a UUID if necessary.
@@ -583,7 +598,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             // 2) update mapping (important for references and later store calls)
             $this->identityMap[$object] = $uuid;
 
-            // 3) no early return: ALWAYS call serializeAndStore so that updates are detected via checksum
+            // 3) no early return: ALWAYS call storeObject so that updates are detected via checksum
             $lockAdapter?->acquireExclusiveLock($uuid);
 
             /* if classname change we should remove the previous stub */
@@ -594,7 +609,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $this->deleteStub($previousClassname, $uuid);
             }
 
-            $this->serializeAndStore($object, $uuid, $ttl);
+            $this->storeObject($object, $uuid, $ttl);
 
             if ($lockAdapter?->isLockedByThisProcess($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
@@ -623,145 +638,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Get a classname for a certain object
+     * Stores one object of a graph: serializes it (serializeGraph(), which stores the objects it references first,
+     * calling this method for each), and writes its files under its lock (writeObjectFiles()) if its data changed,
+     * or only its metadata (writeMetadata()); registers its stub and caches it. Called by store() for the root.
      *
-     * @param string $uuid
-     * @return string|null
-     */
-    public function getClassName(string $uuid): ?string
-    {
-        return $this->loadMetadata($uuid)?->getClassName();
-    }
-
-    /**
-     * Deletes a stub file for the specified class name and UUID if it exists.
-     *
-     * @param string $className The name of the class associated with the stub.
-     * @param string $uuid The unique identifier associated with the stub.
-     * @return void
-     * @throws StubDeletionFailureException If the stub file could not be deleted.
-     */
-    protected function deleteStub(string $className, string $uuid): void
-    {
-        $filePathStub = $this->getFilePathStub($className, $uuid);
-        $adapter = $this->getIOAdapter();
-
-        if ($adapter->isFile($filePathStub) && !$adapter->unlink($filePathStub)) {
-            throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
-        }
-        $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, static fn() => new StubContext($uuid, $className));
-    }
-
-    /**
-     * Generates the file path for a stub associated with a specific class and UUID.
-     *
-     * @param string $className The name of the class for which the stub is being generated.
-     * @param string $uuid The unique identifier used to differentiate the stub file.
-     * @return string The full file path for the stub.
-     */
-    public function getFilePathStub(string $className, string $uuid): string
-    {
-        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
-    }
-
-    /**
-     * Retrieves the directory path where the class stub for the given class name is stored.
-     *
-     * @param string $className The name of the class for which the stub directory path is being generated.
-     * @return string The full path to the class stub directory.
-     */
-    public function getClassStubDirectory(string $className): string
-    {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
-    }
-
-    /**
-     * Retrieves the path to the stub directory.
-     *
-     * @return string The full path to the stub directory.
-     */
-    public function getStubDirectory(): string
-    {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
-    }
-
-    /**
-     * Returns the writer; unless one was set, a default writer is created once, using the IO adapter of the storage.
-     *
-     * @return WriterInterface
-     */
-    public function getWriter(): WriterInterface
-    {
-        if (null === $this->writer) {
-            $this->defaultWriter = new Writer();
-            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
-            $this->writer = $this->defaultWriter;
-        }
-
-        return $this->writer;
-    }
-
-    /**
-     * Returns the reader; unless one was set, a default reader is created once, using the IO adapter of the storage.
-     *
-     * @return ReaderInterface
-     */
-    public function getReader(): ReaderInterface
-    {
-        if (null === $this->reader) {
-            $this->defaultReader = new Reader();
-            $this->defaultReader->setIOAdapter($this->getIOAdapter());
-            $this->reader = $this->defaultReader;
-        }
-
-        return $this->reader;
-    }
-
-    /**
-     * Sets the IO adapter of the storage, which the default writer and reader use as well. A writer or reader set
-     * explicitly keeps its own adapter.
-     *
-     * @param AdapterInterface|null $ioAdapter
-     * @return void
-     */
-    public function setIOAdapter(?AdapterInterface $ioAdapter): void
-    {
-        $this->ioAdapter = $ioAdapter;
-
-        if (null !== $this->defaultWriter && $this->writer === $this->defaultWriter) {
-            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
-        }
-
-        if (null !== $this->defaultReader && $this->reader === $this->defaultReader) {
-            $this->defaultReader->setIOAdapter($this->getIOAdapter());
-        }
-    }
-
-    /**
-     * Retrieves the directory of the storage.
-     *
-     * @return string The storage directory path as a string.
-     */
-    public function getStorageDir(): string
-    {
-        return $this->storageDir;
-    }
-
-    /**
-     * Retrieves the directory of the default file locks.
-     *
-     * @return string The full path to the lock directory.
-     */
-    public function getLockDir(): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'locks';
-    }
-
-    /**
-     * @param object $object
-     * @param string $uuid
-     * @param float|int|null $ttl
-     * @param GraphBuilderContext|null $contextParent
+     * @param object $object The object to store.
+     * @param string $uuid Its UUID.
+     * @param float|int|null $ttl Its lifetime in seconds, null to keep it.
+     * @param GraphBuilderContext|null $contextParent The context of the referencing object, null for the root.
      * @throws DanglingReferenceException
      * @throws GenerationFailureException
      * @throws IOException
@@ -777,7 +661,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws Throwable
      * @throws UnsupportedTypeException
      */
-    protected function serializeAndStore(object $object, string $uuid, null|float|int $ttl = null, ?GraphBuilderContext $contextParent = null): void
+    protected function storeObject(object $object, string $uuid, null|float|int $ttl = null, ?GraphBuilderContext $contextParent = null): void
     {
         $eventDispatcher = $this->getEventDispatcher();
 
@@ -811,7 +695,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $context = new GraphBuilderContext($object, $metadata, $contextParent ? $contextParent->getLevel() : 1);
 
-            $graph = $this->createGraphAndStoreReferencedChildren($context);
+            $graph = $this->serializeGraph($context);
             $strategy = $this->getStrategy();
             $serializedGraph = $strategy?->serialize($graph, $strategy?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
 
@@ -876,7 +760,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $previousObject = null;
                     if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
                         try {
-                            $previousObject = $this->loadFromStorage($uuid, addToCache: false);
+                            $previousObject = $this->loadFromFiles($uuid, addToCache: false);
                         } catch (Throwable $e) {
                             $this->getLogger()?->log($e);
                         }
@@ -886,14 +770,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $previousRevision = $currentMetadata?->getRevision();
                     $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject, $revision, $previousRevision);
 
-                    // data and metadata are written as a group, so a crash can't leave data without matching metadata
-                    [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
-
                     try {
-                        $this->getWriter()->atomicWriteAll([
-                            $filePathData => $serializedGraph,
-                            $filePathMetadata => $this->serializeMetadata($metadata),
-                        ]);
+                        $this->writeObjectFiles($uuid, $serializedGraph, $metadata);
                         $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                     } catch (Throwable $e) {
                         $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
@@ -909,7 +787,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
                     $this->cacheMetadata($metadata);
                 } elseif ($writeMetadata) {
-                    $this->saveMetadata($metadata);
+                    $this->writeMetadata($metadata);
                 }
 
                 if ($writeGraph || $writeMetadata) {
@@ -951,7 +829,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws Throwable
      * @throws UnsupportedTypeException
      */
-    protected function createGraphAndStoreReferencedChildren(GraphBuilderContext $context): array
+    protected function serializeGraph(GraphBuilderContext $context): array
     {
         $result = [];
         $target = $context->getTarget();
@@ -1100,7 +978,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     }
 
                     if ($writeChild) {
-                        $this->serializeAndStore(
+                        $this->storeObject(
                             $value,
                             $referencedUuid,
                             ($strategy?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
@@ -1147,67 +1025,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         return $value;
     }
 
-    /**
-     * Checks if a file exists for a specific UUID.
-     *
-     * @param string $uuid The UUID to check if the associated file exists.
-     * @return bool True if the file exists, false otherwise.
-     * @throws ObjectExistenceEvaluationFailureException
-     */
-    public function exists(string $uuid): bool
-    {
-        try {
-            return $this->getIOAdapter()->isFile($this->getFilePathData($uuid));
-        } catch (Throwable $e) {
-            throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
-        }
-    }
-
-    /**
-     * Generates the file path for a given UUID.
-     *
-     * @param string $uuid The unique identifier used to generate the file path.
-     * @return string The full file path constructed using the UUID.
-     * @throws IOException
-     */
-    public function getFilePathData(string $uuid): string
-    {
-        return $this->buildShardedDirectory($uuid) . $uuid . static::FILE_SUFFIX_OBJECT;
-    }
-
-    /**
-     * Retrieves the lifetime of the metadata associated with the specified UUID.
-     *
-     * @param string $uuid The unique identifier used to load the metadata.
-     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
-     */
-    /**
-     * Retrieves the revision of a stored object: incremented with every write of its data.
-     *
-     * @param string $uuid The unique identifier of the object.
-     * @return int|null The revision (0 for objects stored before revisions existed), or null if nothing is stored.
-     */
-    public function getRevision(string $uuid): ?int
-    {
-        return $this->loadMetadata($uuid)?->getRevision();
-    }
-
-    public function getLifetime(string $uuid): ?float
-    {
-        return $this->loadMetadata($uuid)?->getLifetime();
-    }
-
-    /**
-     * Generates a checksum for the given data using the specified hashing algorithm.
-     *
-     * @param string $data The input data for which the checksum is to be generated.
-     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
-     * @return string The generated checksum as a hashed string.
-     */
-    protected static function generateChecksum(string $data, string $algorithm): string
-    {
-        return hash($algorithm, $data);
-    }
+    // ---------------------------------------------------------------------------------------------------------
+    // Loading: load() → loadFromFiles() → readObjectFiles() → hydrateObject()
+    // ---------------------------------------------------------------------------------------------------------
 
     /**
      * Loads an object from persistent storage using its unique identifier.
@@ -1257,7 +1077,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $lockAdapter?->acquireSharedLock($uuid);
             }
 
-            $object = $this->loadFromStorage($uuid);
+            $object = $this->loadFromFiles($uuid);
 
             if (!$exclusive && !$lockedBefore) {
                 $lockAdapter?->releaseLock($uuid);
@@ -1276,24 +1096,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Checks if the object associated with the given UUID is expired.
-     *
-     * @param string $uuid The unique identifier of the object.
-     * @return bool Returns true if the object is expired, false otherwise.
-     */
-    public function expired(string $uuid): bool
-    {
-        $lifetime = $this->getLifetime($uuid);
-        $expired = (null !== $lifetime && $lifetime <= 0);
-
-        if ($expired) {
-            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, static fn() => new Context($uuid));
-        }
-
-        return $expired;
-    }
-
-    /**
      * Loads an object based on a UUID from its files.
      *
      * @param string $uuid The unique ID of the object to be loaded.
@@ -1307,57 +1109,26 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws SerializationFailureException
      * @throws TypeConversionFailureException|Throwable
      */
-    protected function loadFromStorage(string $uuid, bool $addToCache = true): ?object
+    protected function loadFromFiles(string $uuid, bool $addToCache = true): ?object
     {
-        // load metadata once and derive the class name and lifetime from it; a new object whose first write
-        // was interrupted by a crash has no metadata file yet, recovering completes (or discards) that write
-        $metadata = $this->loadMetadata($uuid);
-        if (null === $metadata && $this->recoverInterruptedWrite($uuid)) {
-            $metadata = $this->reloadMetadata($uuid);
-        }
-
-        $filename = $this->getFilePathData($uuid);
-
-        if (null === $metadata) {
-            // nothing stored under this UUID (never stored or deleted): not an error
-            if (false === $this->getIOAdapter()->isFile($filename)) {
-                return null;
-            }
-
-            // data without metadata: corrupted
-            $this->getStateHandler()?->enableSafeMode();
-            throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
-        }
-
-        $raw = $this->readFile($filename);
-        if (null === $raw) {
+        $stored = $this->readObjectFiles($uuid);
+        if (null === $stored) {
             return null;
         }
+        [$raw, $metadata, $filename] = $stored;
 
-        // the metadata to build the object from is the one the data was written with; data not matching its
-        // metadata may be left by an interrupted write, which is completed before the files are read again
-        $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $metadata);
-        if (null === $matchingMetadata && $this->recoverInterruptedWrite($uuid)) {
-            $raw = $this->readFile($filename);
-            if (null === $raw) {
-                return null;
-            }
-            $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $this->reloadMetadata($uuid) ?? $metadata);
-        }
+        $data = $this->getJsonFileReader()->decode($raw, $filename);
 
-        if (null === $matchingMetadata) {
-            $expected = $this->loadMetadata($uuid) ?? $metadata;
-            $this->getStateHandler()?->enableSafeMode();
-            throw new ChecksumMismatchException(sprintf(
-                'Checksum mismatch for uuid %s. Current: %s Expected: %s',
-                $uuid,
-                static::generateChecksum($raw, $expected->getChecksumAlgorithm()),
-                $expected->getChecksum()
-            ));
-        }
+        return $this->hydrateObject($uuid, $data, $metadata, $addToCache);
+    }
 
-        $metadata = $matchingMetadata;
-        $data = $this->decodeJson($raw, $filename);
+    /**
+     * Builds the object from its decoded data and its metadata, and puts it into the cache.
+     *
+     * @throws Throwable
+     */
+    protected function hydrateObject(string $uuid, array $data, Metadata $metadata, bool $addToCache): object
+    {
 
         // build object using the single metadata instance
         $object = $this->createInstance($metadata->getClassName());
@@ -1371,7 +1142,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 unset($this->restoring[$uuid]);
             }
         } else {
-            $this->processLoadedData($object, $data, $metadata);
+            $this->hydrateProperties($object, $data, $metadata);
         }
 
         Helper::assign($object, $uuid);
@@ -1382,62 +1153,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         return $object;
-    }
-
-    /**
-     * Finds the metadata the raw data of an object was written with, by its checksum.
-     *
-     * The given metadata may come from the cache and be outdated, since another process may have updated
-     * the object in the meantime. So on a mismatch the metadata is reloaded from disk once, and the same
-     * data is verified again.
-     *
-     * @param string $uuid The unique identifier of the object.
-     * @param string $data The raw data as read from the data file.
-     * @param Metadata $metadata The metadata of the object, possibly from the cache.
-     * @return Metadata|null The metadata matching the data (the given one or the one reloaded from disk),
-     *                       or null if the data matches neither.
-     */
-    protected function findMatchingMetadata(string $uuid, string $data, Metadata $metadata): ?Metadata
-    {
-        if (false === $this->getStrategy()?->checksumValidationEnabled() || static::checksumMatches($data, $metadata)) {
-            return $metadata;
-        }
-
-        $freshMetadata = $this->reloadMetadata($uuid);
-        if (null !== $freshMetadata && static::checksumMatches($data, $freshMetadata)) {
-            return $freshMetadata;
-        }
-
-        return null;
-    }
-
-    /**
-     * Checks whether the checksum of the data equals the one recorded in the metadata.
-     *
-     * @param string $data The raw data.
-     * @param Metadata $metadata The metadata holding the expected checksum and its algorithm.
-     * @return bool True if the checksums are equal, false otherwise.
-     */
-    protected static function checksumMatches(string $data, Metadata $metadata): bool
-    {
-        return $metadata->getChecksum() === static::generateChecksum($data, $metadata->getChecksumAlgorithm());
-    }
-
-    /**
-     * Loads the metadata from disk, bypassing and refreshing the metadata cache.
-     *
-     * @param string $uuid The unique identifier of the object.
-     * @return Metadata|null The metadata on disk, or null if it cannot be loaded.
-     */
-    protected function reloadMetadata(string $uuid): ?Metadata
-    {
-        try {
-            $this->getMetadataCache()?->delete($uuid);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-        }
-
-        return $this->loadMetadata($uuid);
     }
 
     /**
@@ -1469,8 +1184,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Converts the provided data array into an object of the specified class
-     * by mapping the data to the class's properties.
+     * Hydrates the properties of an object from its loaded data (references become lazy load references, see
+     * hydrateArray()), for objects without __unserialize().
      *
      * @param object $object
      * @param array $data An associative array containing property names and their corresponding values.
@@ -1481,7 +1196,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws ReflectionException
      * @throws PropertyHydrationFailureException
      */
-    protected function processLoadedData(object $object, array $data, Metadata $metadata): object
+    protected function hydrateProperties(object $object, array $data, Metadata $metadata): object
     {
         $strategy = $this->getStrategy();
         $className = $metadata->getClassName();
@@ -1511,7 +1226,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $finalValue = $reference;
                 }
             } else if (is_array($value)) {
-                $finalValue = $this->processLoadedArray($metadata, $object, $value, [$propertyName]);
+                $finalValue = $this->hydrateArray($metadata, $object, $value, [$propertyName]);
             }
 
             try {
@@ -1525,6 +1240,67 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         return $object;
+    }
+
+    /**
+     * Hydrates an array of loaded data: references to other objects become lazy load references, nested arrays are
+     * hydrated recursively, based on the metadata provided.
+     *
+     * @param Metadata $metadata The metadata object used to identify and process reserved references.
+     * @param object $object The object to be used in creating LazyLoadReference instances.
+     * @param array $array The input array to be processed.
+     * @param array $path An array representing the traversal path within the structure for recursion.
+     *
+     * @return array The processed array, with applicable elements converted into lazy load references
+     *               or recursively processed subarrays.
+     * @throws InvalidUUIDException
+     */
+    protected function hydrateArray(Metadata $metadata, object $object, array $array, array $path): array
+    {
+        $processed = [];
+        foreach ($array as $key => $value) {
+            $childPath = $path;
+            $childPath[] = $key;
+
+            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, $childPath);
+            } else if (is_array($value)) {
+                $processed[$key] = $this->hydrateArray($metadata, $object, $value, $childPath);
+            } else {
+                $processed[$key] = $value;
+            }
+        }
+        return $processed;
+    }
+
+    /**
+     * Replaces the references in the data passed to __unserialize() by the referenced objects, so it gets
+     * what __serialize() returned. Unlike properties, the data has no types to decide whether a
+     * LazyLoadReference fits, so the referenced objects are loaded right away.
+     *
+     * @param array $data The stored data, nested arrays included.
+     * @param Metadata $metadata The metadata holding the reserved reference name.
+     * @return array The data with the referenced objects, or null for objects that no longer exist.
+     * @throws ObjectLoadingFailureException If a referenced object cannot be loaded.
+     */
+    protected function resolveReferences(array $data, Metadata $metadata): array
+    {
+        $reserved = $metadata->getReservedReferenceName();
+
+        foreach ($data as $key => $value) {
+            if (false === is_array($value)) {
+                continue;
+            }
+
+            // invalid UUIDs are kept as they are, like hydrateProperties() does
+            if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
+                $data[$key] = $this->restoring[$value[$reserved]] ?? $this->load($value[$reserved]);
+            } else {
+                $data[$key] = $this->resolveReferences($value, $metadata);
+            }
+        }
+
+        return $data;
     }
 
     /**
@@ -1575,130 +1351,454 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         return $result;
     }
 
+    // ---------------------------------------------------------------------------------------------------------
+    // Files as stored: reading and writing data and metadata, checksums, recovery
+    // ---------------------------------------------------------------------------------------------------------
+
     /**
-     * Replaces the references in the data passed to __unserialize() by the referenced objects, so it gets
-     * what __serialize() returned. Unlike properties, the data has no types to decide whether a
-     * LazyLoadReference fits, so the referenced objects are loaded right away.
+     * Reads the stored data of an object together with the metadata it was written with, as loading and readRaw()
+     * need it: an interrupted write is completed first, and the checksum is verified (unless disabled in the
+     * strategy). The caller holds the lock of the object.
      *
-     * @param array $data The stored data, nested arrays included.
-     * @param Metadata $metadata The metadata holding the reserved reference name.
-     * @return array The data with the referenced objects, or null for objects that no longer exist.
-     * @throws ObjectLoadingFailureException If a referenced object cannot be loaded.
+     * @param string $uuid The unique identifier of the object.
+     * @param bool $safeModeOnCorruption Whether corrupted files enable safe mode, as when loading; false to report
+     *        them only, e.g. while copying many objects, so one damaged object doesn't stop the others.
+     * @return array{0: string, 1: Metadata, 2: string}|null The raw data, its metadata and the data file; null if
+     *         nothing is stored under the UUID.
+     * @throws InvalidFileFormatException If there is data without metadata.
+     * @throws ChecksumMismatchException If the data doesn't match its checksum.
      */
-    protected function resolveReferences(array $data, Metadata $metadata): array
+    protected function readObjectFiles(string $uuid, bool $safeModeOnCorruption = true): ?array
     {
-        $reserved = $metadata->getReservedReferenceName();
-
-        foreach ($data as $key => $value) {
-            if (false === is_array($value)) {
-                continue;
-            }
-
-            // invalid UUIDs are kept as they are, like processLoadedData() does
-            if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
-                $data[$key] = $this->restoring[$value[$reserved]] ?? $this->load($value[$reserved]);
-            } else {
-                $data[$key] = $this->resolveReferences($value, $metadata);
-            }
+        // load metadata once and derive the class name and lifetime from it; a new object whose first write
+        // was interrupted by a crash has no metadata file yet, recovering completes (or discards) that write
+        $metadata = $this->loadMetadata($uuid);
+        if (null === $metadata && $this->recoverInterruptedWrite($uuid)) {
+            $metadata = $this->reloadMetadata($uuid);
         }
 
-        return $data;
+        $filename = $this->getFilePathData($uuid);
+
+        if (null === $metadata) {
+            // nothing stored under this UUID (never stored or deleted): not an error
+            if (false === $this->getIOAdapter()->isFile($filename)) {
+                return null;
+            }
+
+            // data without metadata: corrupted
+            if ($safeModeOnCorruption) {
+                $this->getStateHandler()?->enableSafeMode();
+            }
+            throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
+        }
+
+        $raw = $this->getJsonFileReader()->read($filename);
+        if (null === $raw) {
+            return null;
+        }
+
+        // the metadata to build the object from is the one the data was written with; data not matching its
+        // metadata may be left by an interrupted write, which is completed before the files are read again
+        $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $metadata);
+        if (null === $matchingMetadata && $this->recoverInterruptedWrite($uuid)) {
+            $raw = $this->getJsonFileReader()->read($filename);
+            if (null === $raw) {
+                return null;
+            }
+            $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $this->reloadMetadata($uuid) ?? $metadata);
+        }
+
+        if (null === $matchingMetadata) {
+            $expected = $this->loadMetadata($uuid) ?? $metadata;
+            if ($safeModeOnCorruption) {
+                $this->getStateHandler()?->enableSafeMode();
+            }
+            throw new ChecksumMismatchException(sprintf(
+                'Checksum mismatch for uuid %s. Current: %s Expected: %s (%s, metadata version %d)',
+                $uuid,
+                static::generateChecksum($raw, $expected->getChecksumAlgorithm()),
+                $expected->getChecksum(),
+                $expected->getChecksumAlgorithm(),
+                $expected->getVersion()
+            ));
+        }
+
+        return [$raw, $matchingMetadata, $filename];
     }
 
     /**
-     * Processes a loaded array by iterating through its elements and converting specific
-     * nested structures into lazy load references or recursively processing subarrays,
-     * based on the metadata provided.
+     * Writes the data and the metadata of an object as a group, so a crash can't leave data without matching
+     * metadata (see recoverInterruptedWrite()). The caller holds the exclusive lock of the object.
      *
-     * @param Metadata $metadata The metadata object used to identify and process reserved references.
-     * @param object $object The object to be used in creating LazyLoadReference instances.
-     * @param array $array The input array to be processed.
-     * @param array $path An array representing the traversal path within the structure for recursion.
-     *
-     * @return array The processed array, with applicable elements converted into lazy load references
-     *               or recursively processed subarrays.
-     * @throws InvalidUUIDException
+     * @throws Throwable
      */
-    protected function processLoadedArray(Metadata $metadata, object $object, array $array, array $path): array
+    protected function writeObjectFiles(string $uuid, string $data, Metadata $metadata): void
     {
-        $processed = [];
-        foreach ($array as $key => $value) {
-            $childPath = $path;
-            $childPath[] = $key;
-
-            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, $childPath);
-            } else if (is_array($value)) {
-                $processed[$key] = $this->processLoadedArray($metadata, $object, $value, $childPath);
-            } else {
-                $processed[$key] = $value;
-            }
-        }
-        return $processed;
+        [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
+        $this->getWriter()->atomicWriteAll([
+            $filePathData => $data,
+            $filePathMetadata => $this->getJsonFileWriter()->encode($metadata),
+        ]);
     }
 
     /**
-     * Adds an object to the cache with the specified TTL (Time-To-Live) or removes it
-     * from the cache if the TTL is less than or equal to zero.
+     * Completes a write of an object interrupted by a crash, so its data and metadata files match again.
      *
-     *  Cache policy:
-     *  $ttl === null (cache without expiration)
-     *  $ttl > 0 (cache with TTL)
-     *  $ttl <= 0 (remove from cache - expired)
-     *
-     * @param string $uuid The unique identifier for the cached object.
-     * @param object $object The object to be cached.
-     * @param int|float|null $ttl The time-to-live for the cache entry in seconds.
-     *                            If null, the object is cached indefinitely. If less
-     *                            than or equal to 0, the object is removed from the cache.
-     *
-     * @return void
+     * @param string $uuid The unique identifier of the object.
+     * @return bool True if the files changed, false otherwise or if the recovery failed.
      */
-    protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
+    protected function recoverInterruptedWrite(string $uuid): bool
     {
         try {
-            $cache = $this->getCache();
+            $recovered = $this->getWriter()->recover($this->getObjectFiles($uuid));
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return false;
+        }
 
-            if (null === $cache) {
-                return;
-            }
+        if ($recovered) {
+            $this->getLogger()?->log(new Exception(sprintf('Recovered object %s from an interrupted write', $uuid)));
+        }
 
-            if (null !== $ttl && $ttl <= 0) {
-                $this->removeFromCache($uuid);
-            } else {
-                if (null !== $ttl) {
-                    $ttl = (int)$ttl;
-                }
-                $cache->set($uuid, $object, $ttl);
-                $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, static fn() => new Context($uuid));
+        return $recovered;
+    }
+
+    /**
+     * Finds the metadata the raw data of an object was written with, by its checksum.
+     *
+     * The given metadata may come from the cache and be outdated, since another process may have updated
+     * the object in the meantime. So on a mismatch the metadata is reloaded from disk once, and the same
+     * data is verified again.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @param string $data The raw data as read from the data file.
+     * @param Metadata $metadata The metadata of the object, possibly from the cache.
+     * @return Metadata|null The metadata matching the data (the given one or the one reloaded from disk),
+     *                       or null if the data matches neither.
+     */
+    protected function findMatchingMetadata(string $uuid, string $data, Metadata $metadata): ?Metadata
+    {
+        if (false === $this->getStrategy()?->checksumValidationEnabled() || static::checksumMatches($data, $metadata)) {
+            return $metadata;
+        }
+
+        $freshMetadata = $this->reloadMetadata($uuid);
+        if (null !== $freshMetadata && static::checksumMatches($data, $freshMetadata)) {
+            return $freshMetadata;
+        }
+
+        return null;
+    }
+
+    /**
+     * Checks whether the checksum of the data equals the one recorded in the metadata.
+     *
+     * @param string $data The raw data.
+     * @param Metadata $metadata The metadata holding the expected checksum and its algorithm.
+     * @return bool True if the checksums are equal, false otherwise.
+     */
+    protected static function checksumMatches(string $data, Metadata $metadata): bool
+    {
+        return $metadata->getChecksum() === static::generateChecksum($data, $metadata->getChecksumAlgorithm());
+    }
+
+    /**
+     * Generates a checksum for the given data using the specified hashing algorithm.
+     *
+     * @param string $data The input data for which the checksum is to be generated.
+     * @param string $algorithm The hashing algorithm to use (e.g., 'sha256', 'md5', 'crc32b').
+     * @return string The generated checksum as a hashed string.
+     */
+    protected static function generateChecksum(string $data, string $algorithm): string
+    {
+        return hash($algorithm, $data);
+    }
+
+    /**
+     * Reads the files of the storage and decodes their JSON, with its reader, logger, events and maximum depth.
+     * Created per use, so a reader or strategy set later is used.
+     *
+     * @param bool $safeModeOnCorruption Whether invalid JSON enables safe mode (a damaged file of the storage);
+     *        false to report it only.
+     */
+    protected function getJsonFileReader(bool $safeModeOnCorruption = true): JsonFileReader
+    {
+        return new JsonFileReader(
+            $this->getReader(),
+            $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH,
+            $this->getLogger(),
+            $this->getEventDispatcher(),
+            $safeModeOnCorruption ? fn() => $this->getStateHandler()?->enableSafeMode() : null,
+        );
+    }
+
+    /**
+     * Encodes JSON and writes the files of the storage atomically, with its writer and maximum depth. Created per
+     * use, so a writer or strategy set later is used.
+     */
+    protected function getJsonFileWriter(): JsonFileWriter
+    {
+        return new JsonFileWriter($this->getWriter(), $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Metadata
+    // ---------------------------------------------------------------------------------------------------------
+
+    /**
+     * Loads metadata associated with a given UUID by reading from a JSON file and validating it.
+     * If an error occurs during the process, it is logged, and null is returned.
+     *
+     * @param null|string $uuid The unique identifier for the metadata to be loaded.
+     * @return Metadata|null The loaded and validated metadata object, or null if loading fails.
+     */
+    public function loadMetadata(?string $uuid): ?Metadata
+    {
+        if (null === $uuid) {
+            return null;
+        }
+
+        try {
+            $cached = $this->getMetadataCache()?->get($uuid);
+            if ($cached instanceof Metadata) {
+                return $cached;
             }
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::CACHE_WRITE_FAILED, static fn() => new Context($uuid));
+        }
+
+        try {
+            $filePathMetadata = $this->getFilePathMetadata($uuid);
+
+            // no metadata stored under this UUID: nothing to load, which is not a failure worth reporting
+            if (false === $this->getIOAdapter()->isFile($filePathMetadata)) {
+                return null;
+            }
+
+            $metadata = $this->getJsonFileReader()->readJson($filePathMetadata);
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
+
+            $metadata = Metadata::createFromArray($metadata);
+            // the file names the object: metadata of older versions doesn't name its UUID, and copies of metadata
+            // (e.g. duplicates made by older versions of the viewer) name the original, whose metadata would be
+            // overwritten when the metadata of the copy is written
+            $named = $metadata->getUUID();
+            if (null === $named || '' === $named || strtolower($named) !== strtolower($uuid)) {
+                if (null !== $named && '' !== $named) {
+                    $this->getLogger()?->log(new Exception(sprintf('The metadata of %s named %s; corrected, written with the next change', $uuid, $named)));
+                }
+                $metadata->setUUID($uuid);
+            }
+            $this->getMetadataCache()?->set($uuid, $metadata);
+            return $metadata;
+        } catch (Throwable $e) {
+            $this->getEventDispatcher()?->dispatch(Events::METADATA_LOADING_FAILURE, static fn() => new Context($uuid));
+            $this->getLogger()?->log($e);
+        }
+        return null;
+    }
+
+    /**
+     * Loads the metadata from disk, bypassing and refreshing the metadata cache.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return Metadata|null The metadata on disk, or null if it cannot be loaded.
+     */
+    protected function reloadMetadata(string $uuid): ?Metadata
+    {
+        try {
+            $this->getMetadataCache()?->delete($uuid);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+        }
+
+        return $this->loadMetadata($uuid);
+    }
+
+    /**
+     * Saves the provided metadata to a file by serializing it to JSON and writing it atomically.
+     *
+     * @param Metadata $metadata The metadata to be serialized and saved.
+     * @return void
+     * @throws MetadataSavingFailureException
+     */
+    protected function writeMetadata(Metadata $metadata): void
+    {
+        try {
+            $this->getJsonFileWriter()->write($this->getFilePathMetadata($metadata->getUUID()), $metadata);
+            $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
+        } catch (Throwable $e) {
+            $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));
+            $this->getLogger()?->log($e);
+            throw new MetadataSavingFailureException(message: 'Unable to save metadata for uuid: ' . $metadata->getUUID(), previous: $e);
+        }
+
+        $this->cacheMetadata($metadata);
+    }
+
+    /**
+     * Puts metadata into the metadata cache; a failing cache is logged, not thrown.
+     *
+     * @param Metadata $metadata The metadata to cache.
+     * @return void
+     */
+    protected function cacheMetadata(Metadata $metadata): void
+    {
+        try {
+            $this->getMetadataCache()?->set($metadata->getUUID(), $metadata);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
         }
     }
 
     /**
-     * @throws InvalidArgumentException
+     * Retrieves the lifetime of the metadata associated with the specified UUID.
+     *
+     * @param string $uuid The unique identifier used to load the metadata.
+     * @return float|null The lifetime of the metadata in seconds, or null if no metadata is found.
      */
-    public function removeFromCache(string $uuid): void
+    /**
+     * Retrieves the revision of a stored object: incremented with every write of its data.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return int|null The revision (0 for objects stored before revisions existed), or null if nothing is stored.
+     */
+    public function getRevision(string $uuid): ?int
     {
-        $this->getCache()?->delete($uuid);
-        $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, static fn() => new Context($uuid));
+        return $this->loadMetadata($uuid)?->getRevision();
     }
+
+    /**
+     * Get a classname for a certain object
+     *
+     * @param string $uuid
+     * @return string|null
+     */
+    public function getClassName(string $uuid): ?string
+    {
+        return $this->loadMetadata($uuid)?->getClassName();
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Lifetime
+    // ---------------------------------------------------------------------------------------------------------
+
+    public function getLifetime(string $uuid): ?float
+    {
+        return $this->loadMetadata($uuid)?->getLifetime();
+    }
+
+    /**
+     * Retrieves the expiration date and time for the provided UUID.
+     *
+     * @param string $uuid The unique identifier for which to retrieve the expiration timestamp.
+     * @return DateTimeInterface|null The expiration date and time as a DateTimeInterface object, or null if no expiration is set.
+     * @throws PHPDefaultException
+     */
+    public function getExpiration(string $uuid): ?DateTimeInterface
+    {
+        $expiresAt = $this->loadMetadata($uuid)?->getTimestampExpiresAt();
+        if (null === $expiresAt) {
+            return null;
+        }
+        return new DateTimeImmutable('@' . $expiresAt);
+    }
+
+    /**
+     * Sets the lifetime (time-to-live) for the given UUID, updating its expiration timestamp
+     * in the metadata and dispatching an event to notify listeners of the change.
+     *
+     * @param string $uuid The unique identifier whose lifetime is to be set.
+     * @param int|float|null $ttl The time-to-live (in seconds) to set for the UUID.
+     *
+     * @return void
+     * @throws MetadataNotFoundException
+     * @throws MetadataSavingFailureException
+     */
+    public function setLifetime(string $uuid, null|int|float $ttl): void
+    {
+        $lockAdapter = $this->getLockAdapter();
+        $lockAdapter?->acquireExclusiveLock($uuid);
+
+        try {
+            // read from disk under the lock: cached metadata may be outdated (checksum, revision) if another
+            // process stored the object in the meantime, and writing it back would revert those values
+            $metadata = $this->reloadMetadata($uuid);
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
+
+            if (null === $ttl) {
+                $timestampExpiresAt = null;
+            } else {
+                $timestampExpiresAt = microtime(true) + $ttl;
+                $timestampExpiresAt = (float)$timestampExpiresAt;
+            }
+
+            $metadata->setTimestampExpiresAt($timestampExpiresAt);
+            $this->writeMetadata($metadata);
+            $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
+        } finally {
+            $lockAdapter?->releaseLock($uuid);
+        }
+    }
+
+    /**
+     * Sets the expiration date and time for the specified UUID. If no expiration is provided,
+     * the lifetime will be unset or considered indefinite.
+     *
+     * @param string $uuid The unique identifier for which the expiration is being set.
+     * @param DateTimeInterface|null $expiresAt The date and time at which the UUID should expire, or null for no expiration.
+     * @return void
+     * @throws MetadataNotFoundException
+     * @throws MetadataSavingFailureException
+     */
+    public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
+    {
+        $this->setLifetime($uuid, $expiresAt ? $expiresAt->getTimestamp() - microtime(true) : null);
+    }
+
+    /**
+     * Checks if the object associated with the given UUID is expired.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool Returns true if the object is expired, false otherwise.
+     */
+    public function expired(string $uuid): bool
+    {
+        $lifetime = $this->getLifetime($uuid);
+        $expired = (null !== $lifetime && $lifetime <= 0);
+
+        if ($expired) {
+            $this->getEventDispatcher()?->dispatch(Events::OBJECT_EXPIRED, static fn() => new Context($uuid));
+        }
+
+        return $expired;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Deleting: delete() → deleteObject()
+    // ---------------------------------------------------------------------------------------------------------
 
     /**
      * Deletes an object based on its UUID.
      *
      * @param string $uuid The unique identifier of the object to be deleted.
+     * @param bool $applyChildDeletionPolicy False to delete only the object itself, whatever the child deletion
+     *        policy says, e.g. after moving it to another storage.
      * @return void
      * @throws ObjectDeletionFailureException Thrown when the object could not be deleted.
      */
-    public function delete(string $uuid): void
+    public function delete(string $uuid, bool $applyChildDeletionPolicy = true): void
     {
         // referenced objects are deleted after the object itself, each under its own lock, so at most one lock is
         // held at once; a crash in between leaves unreferenced objects behind, never references to deleted ones
         $pending = $this->deleteObject($uuid);
+        if (!$applyChildDeletionPolicy) {
+            return;
+        }
         $visited = [$uuid => true];
         $failures = [];
 
@@ -1813,19 +1913,15 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         $metadata = $this->loadMetadata($uuid);
-        $raw = $this->readFile($filePath);
+        $reader = $this->getJsonFileReader();
+        $raw = $reader->read($filePath);
         if (null === $metadata || null === $raw) {
             return [];
         }
 
-        try {
-            $data = json_decode($raw, true, $strategy?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH, JSON_THROW_ON_ERROR);
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            return [];
-        }
-
-        if (false === is_array($data)) {
+        // the object is deleted anyway: invalid data means no references to follow, not a damaged storage
+        $data = $reader->tryDecode($raw);
+        if (null === $data) {
             return [];
         }
 
@@ -1884,216 +1980,23 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
     }
 
+    // ---------------------------------------------------------------------------------------------------------
+    // Existence and listing
+    // ---------------------------------------------------------------------------------------------------------
+
     /**
-     * @param string $className
-     * @param string $uuid
-     * @throws StubSavingFailureException
+     * Checks if a file exists for a specific UUID.
+     *
+     * @param string $uuid The UUID to check if the associated file exists.
+     * @return bool True if the file exists, false otherwise.
+     * @throws ObjectExistenceEvaluationFailureException
      */
-    public function createStub(string $className, string $uuid): void
+    public function exists(string $uuid): bool
     {
         try {
-            $adapter = $this->getIOAdapter();
-
-            // registered also for an existing stub: the registry may have been lost (e.g. while rebuilding stubs)
-            $this->registerClassname($className);
-
-            $pathname = $this->getFilePathStub($className, $uuid);
-            if ($adapter->isFile($pathname)) {
-                return;
-            }
-
-            $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-            $adapter->touch($pathname);
-            $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, static fn() => new StubContext($uuid, $className));
+            return $this->getIOAdapter()->isFile($this->getFilePathData($uuid));
         } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::STUB_WRITE_FAILED, static fn() => new StubContext($uuid, $className));
-            throw new StubSavingFailureException(message: sprintf('Stub creation failed for uuid: %s and class: %s', $uuid, $className), previous: $e);
-        }
-    }
-
-    /**
-     * @throws SerializationFailureException
-     * @throws SafeModeActivationFailedException
-     * @throws ClassnameRegistrationFailureException
-     */
-    protected function registerClassname(string $className): void
-    {
-        $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
-        if (isset($registeredClassnames[$className])) {
-            return;
-        }
-
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
-        try {
-            // the registry is written as a whole: without the lock, processes registering at the same time
-            // overwrite each other's class names
-            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
-                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
-                $lockedHere = true;
-            }
-
-            // other processes may have registered class names since the registry was read
-            $this->registeredClassNamesCache = null;
-            $this->getRegisteredClassnames();
-            $this->registeredClassNamesCache[$className] = $className;
-
-            $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->getWriter()->atomicWrite(
-                $this->getFilePathClassnames(),
-                json_encode($this->registeredClassNamesCache, JSON_THROW_ON_ERROR)
-            );
-        } catch (Throwable $e) {
-            throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
-        } finally {
-            if ($lockedHere) {
-                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
-            }
-        }
-    }
-
-    /**
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     */
-    public function getRegisteredClassnames(): ?array
-    {
-        if ($this->registeredClassNamesCache !== null) {
-            return $this->registeredClassNamesCache;
-        }
-
-        $filenameClassnames = $this->getFilePathClassnames();
-        if ($this->getIOAdapter()?->isFile($filenameClassnames)) {
-            $this->registeredClassNamesCache = $this->loadFromJsonFile($filenameClassnames) ?? [];
-        } else {
-            $this->registeredClassNamesCache = [];
-        }
-
-        return $this->registeredClassNamesCache;
-    }
-
-    /**
-     * Retrieves the file path for the classnames JSON file.
-     *
-     * @return string The file path of the classnames JSON file.
-     */
-    protected function getFilePathClassnames(): string
-    {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
-    }
-
-    /**
-     * Get a list of classnames for a subset of objects
-     *
-     * @param array|null $subSet
-     * @return array
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     */
-    public function getClassNames(?array $subSet = null): array
-    {
-        if (null === $subSet) {
-            $registeredClassnames = $this->getRegisteredClassnames();
-            if ($registeredClassnames !== null) {
-                return $registeredClassnames;
-            }
-        }
-
-        $classNames = [];
-        foreach ($this->getSelection($subSet) as $uuid) {
-            $className = $this->getClassName($uuid);
-            if ($className) {
-                $classNames[$className] = $className;
-            }
-        }
-        return array_values($classNames);
-    }
-
-    /**
-     * @throws MemoryConsumptionDetectionFailureException
-     */
-    public function getMemoryConsumption(string $uuid): int
-    {
-        $adapter = $this->getIOAdapter();
-
-        try {
-            if (false === $fileSizeData = $adapter->fileSize($path = $this->getFilePathData($uuid))) {
-                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
-            }
-
-            if (false === $fileSizeMetadata = $adapter->fileSize($path = $this->getFilePathMetadata($uuid))) {
-                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
-            }
-
-            if (false === $fileSizeStub = $adapter->fileSize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
-                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
-            }
-
-            return $fileSizeData + $fileSizeMetadata + $fileSizeStub;
-        } catch (Throwable $e) {
-            throw new MemoryConsumptionDetectionFailureException(message: 'Unable to determine memory consumption for uuid: ' . $uuid, previous: $e);
-        }
-    }
-
-    /**
-     * Rebuilds the class index (the stubs) in place: creates the missing stubs, removes those of objects that
-     * don't exist or are of another class, and rebuilds the registry of class names. The index stays usable
-     * meanwhile. Continues a rebuild started step by step, see StubRebuilder.
-     *
-     * @param callable(array): void|null $onProgress Called with the progress after every step.
-     * @return array The final progress, see StubRebuilder::getProgress().
-     */
-    public function rebuildStubs(?callable $onProgress = null): array
-    {
-        $rebuilder = new StubRebuilder();
-        $rebuilder->setStorage($this);
-
-        return $rebuilder->rebuildStubs($onProgress);
-    }
-
-    /**
-     * Rebuilds the registry of class names from the stubs: a class is registered if it has a stub of an object of
-     * this class. Classes without objects are removed from it.
-     *
-     * @return array<string, string> The registered class names.
-     * @throws ClassnameRegistrationFailureException
-     */
-    public function rebuildClassnameRegistry(): array
-    {
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
-
-        try {
-            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
-                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
-                $lockedHere = true;
-            }
-
-            // the stub directories are named after the hash of the class name: the class is read from an object
-            $classNames = [];
-            foreach (glob($this->getStubDirectory() . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR) ?: [] as $classStubDirectory) {
-                foreach ($this->createStubIterator($classStubDirectory) as $uuid) {
-                    $className = $this->getClassName($uuid);
-                    if (null !== $className && md5($className) === basename($classStubDirectory)) {
-                        $classNames[$className] = $className;
-                        break;
-                    }
-                }
-            }
-            ksort($classNames);
-
-            $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->getWriter()->atomicWrite($this->getFilePathClassnames(), json_encode($classNames, JSON_THROW_ON_ERROR));
-            $this->registeredClassNamesCache = $classNames;
-
-            return $classNames;
-        } catch (Throwable $e) {
-            throw new ClassnameRegistrationFailureException(message: 'Unable to rebuild the registry of class names', previous: $e);
-        } finally {
-            if ($lockedHere) {
-                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
-            }
+            throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
         }
     }
 
@@ -2155,92 +2058,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 return $this->current();
             }
         };
-    }
-
-    /**
-     * Constructs the object storage handler by initializing directory, file settings,
-     * caching, and maximum nesting level configurations.
-     *
-     * @param string $storageDir The directory path where objects will be stored.
-     * @param LoggerInterface|null $logger
-     * @param LockAdapterInterface|null $lockAdapter
-     * @param StateHandler|null $stateHandler
-     * @param DispatcherInterface|null $eventDispatcher
-     * @param CacheInterface|null $cache
-     * @param CacheInterface|null $metadataCache
-     * @param AdapterInterface|null $adapter
-     * @param StrategyInterface|null $strategy
-     * @throws IOException If the storage directory cannot be created.
-     */
-    public function __construct(
-        private string                  $storageDir,
-        protected ?LoggerInterface      $logger = null,
-        protected ?LockAdapterInterface $lockAdapter = null,
-        protected ?StateHandler         $stateHandler = null,
-        ?DispatcherInterface            $eventDispatcher = null,
-        ?CacheInterface                 $cache = null,
-        ?CacheInterface                 $metadataCache = null,
-        ?AdapterInterface               $adapter = null,
-        ?StrategyInterface              $strategy = null
-    )
-    {
-        $this->identityMap = new WeakMap();
-        $this->processingStack = new WeakMap();
-        $this->lazyloadReferenceSupportCache = new WeakMap();
-        $this->revisions = new WeakMap();
-
-        $this->setStorageDir($storageDir);
-        $this->setClassRenameMap(new ClassRenameMap());
-
-        if (null === $adapter) {
-            $adapter = new RealAdapter();
-        }
-        $this->setIOAdapter($adapter);
-
-        if (null === $strategy) {
-            $strategy = new Standard();
-        }
-        $this->setStrategy($strategy);
-
-        if (null === $cache) {
-            $cache = new InMemoryCache();
-        }
-        $this->setCache($cache);
-
-        if (null === $metadataCache) {
-            $metadataCache = new InMemoryCache();
-        }
-        $this->setMetadataCache($metadataCache);
-
-        if (null === $eventDispatcher) {
-            $eventDispatcher = new Dispatcher();
-        }
-        $this->setEventDispatcher($eventDispatcher);
-
-        if (null === $stateHandler) {
-            $stateHandler = new StateHandler($this->getStorageDir());
-            $stateHandler->setEventDispatcher($eventDispatcher);
-        }
-        $this->setStateHandler($stateHandler);
-
-        if (null === $lockAdapter) {
-            $lockAdapter = SymfonyLockAdapter::createFileLockAdapter($this->getLockDir());
-            $lockAdapter->setStateHandler($stateHandler);
-            $lockAdapter->setLogger($this->logger);
-            $lockAdapter->setEventDispatcher($eventDispatcher);
-        }
-        $this->setLockAdapter($lockAdapter);
-    }
-
-    /**
-     * @param string $storageDir
-     * @return void
-     * @throws IOException
-     */
-    public function setStorageDir(string $storageDir): void
-    {
-        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
-        $this->createDirectoryIfNotExist($this->storageDir);
     }
 
     /**
@@ -2330,6 +2147,229 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
+     * @throws MemoryConsumptionDetectionFailureException
+     */
+    public function getMemoryConsumption(string $uuid): int
+    {
+        $adapter = $this->getIOAdapter();
+
+        try {
+            if (false === $fileSizeData = $adapter->fileSize($path = $this->getFilePathData($uuid))) {
+                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
+            }
+
+            if (false === $fileSizeMetadata = $adapter->fileSize($path = $this->getFilePathMetadata($uuid))) {
+                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
+            }
+
+            if (false === $fileSizeStub = $adapter->fileSize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
+                throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
+            }
+
+            return $fileSizeData + $fileSizeMetadata + $fileSizeStub;
+        } catch (Throwable $e) {
+            throw new MemoryConsumptionDetectionFailureException(message: 'Unable to determine memory consumption for uuid: ' . $uuid, previous: $e);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Stubs and the registry of class names
+    // ---------------------------------------------------------------------------------------------------------
+
+    /**
+     * @param string $className
+     * @param string $uuid
+     * @throws StubSavingFailureException
+     */
+    public function createStub(string $className, string $uuid): void
+    {
+        try {
+            $adapter = $this->getIOAdapter();
+
+            // registered also for an existing stub: the registry may have been lost (e.g. while rebuilding stubs)
+            $this->registerClassname($className);
+
+            $pathname = $this->getFilePathStub($className, $uuid);
+            if ($adapter->isFile($pathname)) {
+                return;
+            }
+
+            $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
+            $adapter->touch($pathname);
+            $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, static fn() => new StubContext($uuid, $className));
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::STUB_WRITE_FAILED, static fn() => new StubContext($uuid, $className));
+            throw new StubSavingFailureException(message: sprintf('Stub creation failed for uuid: %s and class: %s', $uuid, $className), previous: $e);
+        }
+    }
+
+    /**
+     * Deletes a stub file for the specified class name and UUID if it exists.
+     *
+     * @param string $className The name of the class associated with the stub.
+     * @param string $uuid The unique identifier associated with the stub.
+     * @return void
+     * @throws StubDeletionFailureException If the stub file could not be deleted.
+     */
+    protected function deleteStub(string $className, string $uuid): void
+    {
+        $filePathStub = $this->getFilePathStub($className, $uuid);
+        $adapter = $this->getIOAdapter();
+
+        if ($adapter->isFile($filePathStub) && !$adapter->unlink($filePathStub)) {
+            throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
+        }
+        $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, static fn() => new StubContext($uuid, $className));
+    }
+
+    /**
+     * @throws SerializationFailureException
+     * @throws SafeModeActivationFailedException
+     * @throws ClassnameRegistrationFailureException
+     */
+    protected function registerClassname(string $className): void
+    {
+        $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
+        if (isset($registeredClassnames[$className])) {
+            return;
+        }
+
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+        try {
+            // the registry is written as a whole: without the lock, processes registering at the same time
+            // overwrite each other's class names
+            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
+                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
+                $lockedHere = true;
+            }
+
+            // other processes may have registered class names since the registry was read
+            $this->registeredClassNamesCache = null;
+            $this->getRegisteredClassnames();
+            $this->registeredClassNamesCache[$className] = $className;
+
+            $this->createDirectoryIfNotExist($this->getStubDirectory());
+            $this->getJsonFileWriter()->write($this->getFilePathClassnames(), $this->registeredClassNamesCache);
+        } catch (Throwable $e) {
+            throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
+        } finally {
+            if ($lockedHere) {
+                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
+            }
+        }
+    }
+
+    /**
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException
+     */
+    public function getRegisteredClassnames(): ?array
+    {
+        if ($this->registeredClassNamesCache !== null) {
+            return $this->registeredClassNamesCache;
+        }
+
+        $filenameClassnames = $this->getFilePathClassnames();
+        if ($this->getIOAdapter()?->isFile($filenameClassnames)) {
+            $this->registeredClassNamesCache = $this->getJsonFileReader()->readJson($filenameClassnames) ?? [];
+        } else {
+            $this->registeredClassNamesCache = [];
+        }
+
+        return $this->registeredClassNamesCache;
+    }
+
+    /**
+     * Get a list of classnames for a subset of objects
+     *
+     * @param array|null $subSet
+     * @return array
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException
+     */
+    public function getClassNames(?array $subSet = null): array
+    {
+        if (null === $subSet) {
+            $registeredClassnames = $this->getRegisteredClassnames();
+            if ($registeredClassnames !== null) {
+                return $registeredClassnames;
+            }
+        }
+
+        $classNames = [];
+        foreach ($this->getSelection($subSet) as $uuid) {
+            $className = $this->getClassName($uuid);
+            if ($className) {
+                $classNames[$className] = $className;
+            }
+        }
+        return array_values($classNames);
+    }
+
+    /**
+     * Rebuilds the class index (the stubs) in place: creates the missing stubs, removes those of objects that
+     * don't exist or are of another class, and rebuilds the registry of class names. The index stays usable
+     * meanwhile. Continues a rebuild started step by step, see StubRebuilder.
+     *
+     * @param callable(array): void|null $onProgress Called with the progress after every step.
+     * @return array The final progress, see StubRebuilder::getProgress().
+     */
+    public function rebuildStubs(?callable $onProgress = null): array
+    {
+        $rebuilder = new StubRebuilder();
+        $rebuilder->setStorage($this);
+
+        return $rebuilder->rebuildStubs($onProgress);
+    }
+
+    /**
+     * Rebuilds the registry of class names from the stubs: a class is registered if it has a stub of an object of
+     * this class. Classes without objects are removed from it.
+     *
+     * @return array<string, string> The registered class names.
+     * @throws ClassnameRegistrationFailureException
+     */
+    public function rebuildClassnameRegistry(): array
+    {
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+
+        try {
+            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
+                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
+                $lockedHere = true;
+            }
+
+            // the stub directories are named after the hash of the class name: the class is read from an object
+            $classNames = [];
+            foreach (glob($this->getStubDirectory() . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR) ?: [] as $classStubDirectory) {
+                foreach ($this->createStubIterator($classStubDirectory) as $uuid) {
+                    $className = $this->getClassName($uuid);
+                    if (null !== $className && md5($className) === basename($classStubDirectory)) {
+                        $classNames[$className] = $className;
+                        break;
+                    }
+                }
+            }
+            ksort($classNames);
+
+            $this->createDirectoryIfNotExist($this->getStubDirectory());
+            $this->getJsonFileWriter()->write($this->getFilePathClassnames(), $classNames);
+            $this->registeredClassNamesCache = $classNames;
+
+            return $classNames;
+        } catch (Throwable $e) {
+            throw new ClassnameRegistrationFailureException(message: 'Unable to rebuild the registry of class names', previous: $e);
+        } finally {
+            if ($lockedHere) {
+                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
+            }
+        }
+    }
+
+    /**
      * Marks the file associated with the given UUID as corrupted by moving it
      * to the directory for corrupted artifacts.
      *
@@ -2355,13 +2395,74 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
     }
 
+    // ---------------------------------------------------------------------------------------------------------
+    // Cache
+    // ---------------------------------------------------------------------------------------------------------
+
     /**
-     * Retrieves the file path for storing corrupted artifacts.
+     * Adds an object to the cache with the specified TTL (Time-To-Live) or removes it
+     * from the cache if the TTL is less than or equal to zero.
      *
-     * @return string The file path where corrupted artifacts are stored.
+     *  Cache policy:
+     *  $ttl === null (cache without expiration)
+     *  $ttl > 0 (cache with TTL)
+     *  $ttl <= 0 (remove from cache - expired)
+     *
+     * @param string $uuid The unique identifier for the cached object.
+     * @param object $object The object to be cached.
+     * @param int|float|null $ttl The time-to-live for the cache entry in seconds.
+     *                            If null, the object is cached indefinitely. If less
+     *                            than or equal to 0, the object is removed from the cache.
+     *
+     * @return void
      */
-    protected function getFilePathCorruptedArtifacts(): string
+    protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
     {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'corrupted';
+        try {
+            $cache = $this->getCache();
+
+            if (null === $cache) {
+                return;
+            }
+
+            if (null !== $ttl && $ttl <= 0) {
+                $this->removeFromCache($uuid);
+            } else {
+                if (null !== $ttl) {
+                    $ttl = (int)$ttl;
+                }
+                $cache->set($uuid, $object, $ttl);
+                $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, static fn() => new Context($uuid));
+            }
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::CACHE_WRITE_FAILED, static fn() => new Context($uuid));
+        }
+    }
+
+    /**
+     * @throws InvalidArgumentException
+     */
+    public function removeFromCache(string $uuid): void
+    {
+        $this->getCache()?->delete($uuid);
+        $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, static fn() => new Context($uuid));
+    }
+
+    /**
+     * Clears the internal object cache by resetting it to an empty array.
+     *
+     * @return void
+     */
+    public function clearCache(): void
+    {
+        $this->getCache()?->clear();
+        $this->identityMap = new WeakMap();
+        $this->processingStack = new WeakMap();
+        $this->lazyloadReferenceSupportCache = new WeakMap();
+        $this->revisions = new WeakMap();
+        $this->registeredClassNamesCache = null;
+        $this->getMetadataCache()?->clear();
+        $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
     }
 }

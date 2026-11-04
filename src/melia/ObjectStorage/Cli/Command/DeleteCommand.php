@@ -31,7 +31,7 @@ final class DeleteCommand extends BaseCommand
 
         return $this->withStorage($input, function ($storage) use ($uuid, $force) {
             try {
-                $storage->delete($uuid, $force);
+                $storage->delete($uuid);
                 return $this->success('Deleted ' . $uuid);
             } catch (Throwable $e) {
                 if ($force) {

@@ -107,7 +107,12 @@ final class Manager implements ManagerInterface
     {
         if (null === $this->internal) {
             try {
-                $meta = new ObjectStorage($this->getDirectory() . DIRECTORY_SEPARATOR . self::INTERNAL_DIRECTORY, logger: $this->storage->getLogger());
+                // the same locks as the storage, so processes on all hosts coordinate
+                $meta = new ObjectStorage(
+                    $this->getDirectory() . DIRECTORY_SEPARATOR . self::INTERNAL_DIRECTORY,
+                    logger: $this->storage->getLogger(),
+                    configuration: $this->storage->getConfiguration()?->forInternalStorage()
+                );
             } catch (Throwable $e) {
                 throw new SearchException(message: 'Unable to open the storage of the search indexes.', previous: $e);
             }

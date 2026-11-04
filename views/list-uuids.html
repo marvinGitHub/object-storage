@@ -10,13 +10,18 @@
 {% endembed %}
 
 {% if hasEntries %}
-<div class="card">
-    <div class="card-header d-flex align-items-center small fw-normal text-muted">
+<form class="card" method="get" id="selection-form">
+    <input type="hidden" name="action" value="transfer">
+    <input type="hidden" name="storage" value="{{ storage }}">
+    <div class="card-header d-flex align-items-center gap-2 small fw-normal text-muted">
+        <input class="form-check-input mt-0" type="checkbox" id="select-all" title="Select the objects of this page">
         <span class="me-auto">{{ offset|number_format(0, '.', ' ') }} – {{ end|number_format(0, '.', ' ') }} of {{ total|number_format(0, '.', ' ') }}</span>
+        <button class="btn btn-secondary btn-sm" type="submit" id="transfer-selected" disabled><i class="bi bi-box-arrow-right"></i> Copy / Move selected <span class="badge text-bg-light" id="selected-count">0</span></button>
     </div>
     <div class="list-group list-group-flush">
         {% for uuid in uuids %}
         <div class="list-group-item d-flex align-items-center gap-2 flex-wrap">
+            <input class="form-check-input mt-0 select-uuid" type="checkbox" name="uuids[]" value="{{ uuid }}" aria-label="Select {{ uuid }}">
             <a class="uuid me-auto text-decoration-none" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuid|url_encode }}">{{ uuid }}</a>
             <button type="button" class="btn btn-success btn-sm" title="Copy UUID" aria-label="Copy UUID"
                     onclick="copyToClipboard('{{ uuid }}')"><i class="bi bi-clipboard"></i></button>
@@ -28,7 +33,27 @@
         </div>
         {% endfor %}
     </div>
-</div>
+</form>
+
+<script>
+    // the selection of objects to copy or move
+    (() => {
+        const boxes = [...document.querySelectorAll('.select-uuid')];
+        const all = document.getElementById('select-all');
+        const update = () => {
+            const selected = boxes.filter(box => box.checked).length;
+            document.getElementById('selected-count').textContent = selected;
+            document.getElementById('transfer-selected').disabled = selected === 0;
+            all.checked = selected === boxes.length;
+            all.indeterminate = selected > 0 && selected < boxes.length;
+        };
+        boxes.forEach(box => box.addEventListener('change', update));
+        all.addEventListener('change', () => {
+            boxes.forEach(box => box.checked = all.checked);
+            update();
+        });
+    })();
+</script>
 
 {% if pages > 1 %}
 {% set link = '?action=list-uuids&storage=' ~ storage|url_encode ~ '&classname=' ~ classname|url_encode ~ '&page=' %}

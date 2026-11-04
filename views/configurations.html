@@ -1,0 +1,127 @@
+{% extends 'index.html' %}
+
+{% block body %}
+{% set crumbs = storage
+    ? [{label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true}, {label: 'Configurations'}]
+    : [{label: 'Configurations'}] %}
+{% embed 'page-header.html' with {crumbs: crumbs} %}
+    {% block title %}Configurations{% endblock %}
+    {% block badges %}{% if configurations is not empty %}<span class="badge text-bg-secondary">{{ configurations|length }}</span>{% endif %}{% endblock %}
+    {% block actions %}
+    <a class="btn btn-primary btn-sm" href="?action=configuration-edit{% if storage %}&storage={{ storage|url_encode }}{% endif %}" role="button"><i class="bi bi-plus-lg"></i> New configuration</a>
+    {% endblock %}
+    {% block intro %}
+    <p class="page-intro">
+        Named settings of storages: where the locks are kept, how objects are cached, the strategy and fsync.
+        A storage is assigned a configuration and opened with it, in the viewer and with
+        <code>$registry->open($directory)</code>. Kept in <code>{{ directory }}</code>.
+    </p>
+    {% endblock %}
+{% endembed %}
+
+{% if message %}<div class="alert alert-success"><i class="bi bi-check-circle"></i> {{ message }}</div>{% endif %}
+{% if error %}<div class="alert alert-danger"><i class="bi bi-exclamation-octagon"></i> {{ error }}</div>{% endif %}
+<div id="action-message" class="alert hidden"></div>
+
+{% if storage %}
+<div class="card mb-3">
+    <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+        <span>Storage <code>{{ storage }}</code> uses</span>
+        {% if assigned %}
+        <span class="badge text-bg-primary">{{ assigned }}</span>
+        <button class="btn btn-outline-secondary btn-sm" onclick="assign('')" type="button" title="Open the storage with the defaults"><i class="bi bi-x-lg"></i> Remove assignment</button>
+        {% else %}
+        <span class="text-muted">the defaults (file locks, cache in memory)</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if configurations is empty %}
+<div class="alert alert-info"><i class="bi bi-info-circle"></i> No configurations yet. Without one, a storage uses file locks and caches in memory.</div>
+{% else %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead>
+            <tr><th>Name</th><th>Locks</th><th>Cache</th><th>Strategy</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for configuration in configurations %}
+            <tr class="{% if configuration.name == assigned %}table-primary{% endif %}">
+                <td>
+                    <strong>{{ configuration.name }}</strong>
+                    {% if configuration.name == assigned %}<span class="badge text-bg-primary">assigned</span>{% endif %}
+                    {% if configuration.description %}<div class="small text-muted">{{ configuration.description }}</div>{% endif %}
+                </td>
+                <td class="small"><i class="bi bi-lock"></i> {{ configuration.lock }}</td>
+                <td class="small"><i class="bi bi-lightning"></i> {{ configuration.cache }}</td>
+                <td class="small text-muted">{{ configuration.strategy }}</td>
+                <td class="text-end text-nowrap">
+                    {% if storage and configuration.name != assigned %}
+                    <button class="btn btn-primary btn-sm" onclick="assign('{{ configuration.name|e('js') }}')" type="button" title="Use this configuration for {{ storage }}"><i class="bi bi-link-45deg"></i> Assign</button>
+                    {% endif %}
+                    <button class="btn btn-outline-success btn-sm" onclick="check('{{ configuration.name|e('js') }}', this)" type="button" title="Take a lock and use the cache"><i class="bi bi-plug"></i> Check</button>
+                    <a class="btn btn-outline-primary btn-sm" href="?action=configuration-edit&name={{ configuration.name|url_encode }}{% if storage %}&storage={{ storage|url_encode }}{% endif %}"><i class="bi bi-pencil"></i> Edit</a>
+                    <button class="btn btn-danger btn-sm" onclick="drop('{{ configuration.name|e('js') }}')" type="button"><i class="bi bi-trash"></i> Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<script>
+    const storage = {{ (storage ?? '')|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }};
+
+    function show(text, ok) {
+        const box = document.getElementById('action-message');
+        box.className = `alert ${ok ? 'alert-success' : 'alert-danger'}`;
+        box.textContent = text;
+    }
+
+    async function post(action, name) {
+        const body = new FormData();
+        body.append('action', action);
+        body.append('name', name);
+        body.append('storage', storage);
+        const response = await fetch('?action=' + encodeURIComponent(action), {method: 'POST', body});
+        const data = await response.json();
+        if (!data.ok) {
+            show(data.error, false);
+            return null;
+        }
+        return data.result;
+    }
+
+    const reload = message => {
+        location.href = `?action=configurations${storage ? '&storage=' + encodeURIComponent(storage) : ''}&message=${encodeURIComponent(message)}`;
+    };
+
+    async function check(name, button) {
+        button.disabled = true;
+        const result = await post('configuration-check', name);
+        button.disabled = false;
+        if (result) {
+            show(`${name}: ${Object.entries(result).map(([what, outcome]) => `${what} ${outcome}`).join(' · ')}`, true);
+        }
+    }
+
+    async function assign(name) {
+        if (await post('configuration-assign', name)) {
+            reload(name ? `${storage} uses the configuration ${name} now.` : `${storage} uses the defaults now.`);
+        }
+    }
+
+    async function drop(name) {
+        if (!confirm(`Delete the configuration "${name}"? Storages it is assigned to can't be opened until they are assigned another one.`)) {
+            return;
+        }
+        if (await post('configuration-delete', name)) {
+            reload(`Configuration ${name} deleted.`);
+        }
+    }
+</script>
+{% endblock body %}

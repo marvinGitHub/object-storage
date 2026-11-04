@@ -14,6 +14,8 @@ A lightweight CLI to manage objects stored on disk with metadata, TTL, and safet
 Global options:
 - --dir Storage directory (default: ./.object-storage)
 - --json Output machine-readable JSON where applicable
+- --configuration Name of the [configuration](configuration.md#named-configurations) to open the storage with (default: the one assigned to the storage)
+- --configurations Directory of the configurations (default: `$OBJECT_STORAGE_CONFIGURATIONS`, else `configurations` next to the CLI config file, e.g. `~/.config/object-storage/configurations`)
 
 Commands:
 - list
@@ -28,6 +30,29 @@ Commands:
 - maintenance:rebuild-shards
 - config:set-shard-depth
 - maintenance:purge-expired
+- configuration:list, configuration:assign, configuration:check, configuration:import, configuration:export, configuration:delete
+- copy, move — objects into another storage, see [Copying and moving](transfer.md#cli)
+
+## Configurations
+
+Every command opens the storage with the configuration assigned to it (lock backend, caches, strategy), or with the one named by `--configuration`. A storage assigned a configuration that isn't found in the directory of the configurations fails instead of falling back to file locks, since all processes of a storage must use the same locks: point the CLI to the configurations of the application (e.g. those of the viewer, `appData/configurations`) with `--configurations` or `$OBJECT_STORAGE_CONFIGURATIONS`.
+
+```bash
+export OBJECT_STORAGE_CONFIGURATIONS=/etc/my-app/object-storage
+
+# create one from JSON (a file, or - for STDIN); missing settings get their defaults
+echo '{"name": "shared", "lock": {"type": "redis", "dsn": "redis://redis:6379", "ttl": 60}, "cache": {"type": "apcu"}}' \
+  | ./object-storage/bin/object-storage configuration:import -
+
+./object-storage/bin/object-storage configuration:check shared                   # takes a lock and uses the cache
+./object-storage/bin/object-storage configuration:assign shared --dir var/storage # the storage uses it from now on
+./object-storage/bin/object-storage configuration:list --dir var/storage          # all, * marks the assigned one
+./object-storage/bin/object-storage configuration:export shared > shared.json     # JSON to edit or copy elsewhere
+./object-storage/bin/object-storage configuration:import shared.json --replace    # replace it
+./object-storage/bin/object-storage configuration:assign --none --dir var/storage # back to the defaults
+./object-storage/bin/object-storage configuration:delete shared
+./object-storage/bin/object-storage stats --dir var/storage --configuration other # once with another one
+```
 
 ## Commands
 1. list

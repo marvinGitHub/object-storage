@@ -5,7 +5,15 @@ declare(strict_types=1);
 namespace melia\ObjectStorage\Cli;
 
 use melia\ObjectStorage\Cli\Command\CheckCommand;
+use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationAssignCommand;
+use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationCheckCommand;
+use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationDeleteCommand;
+use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationExportCommand;
+use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationImportCommand;
+use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationListCommand;
 use melia\ObjectStorage\Cli\Command\ConfigureShardDepthCommand;
+use melia\ObjectStorage\Cli\Command\Transfer\CopyCommand;
+use melia\ObjectStorage\Cli\Command\Transfer\MoveCommand;
 use melia\ObjectStorage\Cli\Command\DeleteCommand;
 use melia\ObjectStorage\Cli\Command\GetCommand;
 use melia\ObjectStorage\Cli\Command\LifetimeCommand;
@@ -37,7 +45,15 @@ final class Application extends SymfonyApplication
             new RebuildShardsCommand(),
             new RebuildStubsCommand(),
             new ConfigureShardDepthCommand(),
-            new PurgeExpiredCommand()
+            new PurgeExpiredCommand(),
+            new ConfigurationListCommand(),
+            new ConfigurationAssignCommand(),
+            new ConfigurationCheckCommand(),
+            new ConfigurationExportCommand(),
+            new ConfigurationImportCommand(),
+            new ConfigurationDeleteCommand(),
+            new CopyCommand(),
+            new MoveCommand(),
         ]);
 
         // Global styles can be further customized in individual commands via Styles

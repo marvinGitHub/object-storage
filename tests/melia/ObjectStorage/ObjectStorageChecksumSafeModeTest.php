@@ -117,7 +117,7 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
     {
         $uuid = '33333333-3333-3333-3333-333333333333';
 
-        // Write metadata without checksum validation path (getRegisteredClassnames path uses loadFromJsonFile without checksum)
+        // Write metadata without checksum validation path (getRegisteredClassnames path uses readJsonFile without checksum)
         $classnamesFile = $this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs' . DIRECTORY_SEPARATOR . 'classnames.json';
         if (!is_dir(dirname($classnamesFile))) {
             mkdir(dirname($classnamesFile), 0777, true);
@@ -129,7 +129,7 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
         $this->expectException(SerializationFailureException::class);
 
         try {
-            // This call uses loadFromJsonFile() without passing checksum and will enable safe mode on JSON decode failure
+            // This call uses readJsonFile() without passing checksum and will enable safe mode on JSON decode failure
             $this->storage->getRegisteredClassnames();
         } finally {
             $this->assertTrue($this->getStateHandler($this->storage)->safeModeEnabled(), 'Safe mode should be enabled after JSON decoding failure.');

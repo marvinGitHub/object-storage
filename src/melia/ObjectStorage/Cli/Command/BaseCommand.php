@@ -7,6 +7,10 @@ namespace melia\ObjectStorage\Cli\Command;
 use melia\ObjectStorage\Cli\Config\CliConfig;
 use melia\ObjectStorage\Cli\DI\Container;
 use melia\ObjectStorage\Cli\Style\Styles;
+use melia\ObjectStorage\Configuration\Configuration;
+use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
+use melia\ObjectStorage\Configuration\Exception\ConfigurationNotFoundException;
+use melia\ObjectStorage\Configuration\Registry;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Strategy\Standard;
@@ -21,11 +25,68 @@ abstract class BaseCommand extends Command
 {
     protected SymfonyStyle $io;
 
+    /** The environment variable naming the directory of the configurations. */
+    public const string ENV_CONFIGURATIONS = 'OBJECT_STORAGE_CONFIGURATIONS';
+
     protected function configure(): void
     {
         $this
             ->addOption('dir', null, InputOption::VALUE_REQUIRED, 'Storage directory', './.object-storage')
-            ->addOption('json', null, InputOption::VALUE_NONE, 'Output machine-readable JSON where applicable');
+            ->addOption('json', null, InputOption::VALUE_NONE, 'Output machine-readable JSON where applicable')
+            ->addOption('configuration', null, InputOption::VALUE_REQUIRED, 'Name of the configuration to open the storage with (default: the one assigned to the storage)')
+            ->addOption('configurations', null, InputOption::VALUE_REQUIRED, sprintf('Directory of the configurations (default: $%s, else next to the CLI config file)', self::ENV_CONFIGURATIONS));
+    }
+
+    /**
+     * The directory of the named configurations: --configurations, the environment variable, or the directory
+     * of the central CLI config file.
+     */
+    protected function configurationsDirectory(InputInterface $input): string
+    {
+        $option = $input->hasOption('configurations') ? $input->getOption('configurations') : null;
+        if (is_string($option) && '' !== $option) {
+            return $option;
+        }
+
+        $env = getenv(self::ENV_CONFIGURATIONS);
+        if (is_string($env) && '' !== $env) {
+            return $env;
+        }
+
+        return dirname((new CliConfig())->getConfigPath()) . DIRECTORY_SEPARATOR . 'configurations';
+    }
+
+    protected function registry(InputInterface $input): Registry
+    {
+        return new Registry($this->configurationsDirectory($input), Container::makeLogger());
+    }
+
+    /**
+     * The configuration to open the storage with: the one named by --configuration, else the one assigned to the
+     * storage, else none. A storage assigned a configuration that isn't found fails instead of falling back to
+     * file locks, since all processes of a storage must use the same locks.
+     *
+     * @throws ConfigurationException
+     */
+    protected function configurationFor(InputInterface $input, string $dir): ?Configuration
+    {
+        $name = $input->hasOption('configuration') ? $input->getOption('configuration') : null;
+        $name = is_string($name) && '' !== $name ? $name : Registry::getAssignedName($dir);
+        if (null === $name) {
+            return null;
+        }
+
+        $registry = $this->registry($input);
+        try {
+            return $registry->get($name);
+        } catch (ConfigurationNotFoundException $e) {
+            throw new ConfigurationNotFoundException(sprintf(
+                'The configuration "%s" is not in %s; pass the directory of the configurations with --configurations or $%s.',
+                $name,
+                $registry->getDirectory(),
+                self::ENV_CONFIGURATIONS
+            ), previous: $e);
+        }
     }
 
     protected function initIO(InputInterface $input, OutputInterface $output): void
@@ -40,7 +101,7 @@ abstract class BaseCommand extends Command
     protected function withStorage(InputInterface $input, callable $fn)
     {
         $dir = (string)$input->getOption('dir');
-        $storage = Container::makeStorage($dir);
+        $storage = Container::makeStorage($dir, $this->configurationFor($input, $dir));
 
         // Apply CLI-only per-dir configuration (central config file, not inside the storage dir)
         $config = new CliConfig();
