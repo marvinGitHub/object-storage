@@ -29,6 +29,7 @@ final class DocumentBuilder
         $document = [
             'uuid' => $uuid,
             'revision' => $metadata->getRevision(),
+            'expiresAt' => $metadata->getTimestampExpiresAt(),
         ];
 
         foreach ($this->definition->fields as $field) {

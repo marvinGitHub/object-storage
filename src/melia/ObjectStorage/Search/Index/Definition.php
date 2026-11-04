@@ -11,8 +11,11 @@ use melia\ObjectStorage\Search\Field;
  */
 final readonly class Definition
 {
-    /** attributes every document has: the UUID of the object (primary key) and its revision */
-    public const array RESERVED_ATTRIBUTES = ['uuid', 'revision'];
+    /**
+     * attributes every document has: the UUID of the object (primary key), its revision, and when it expires
+     * (seconds since the epoch, null if never), to remove expired objects from the index
+     */
+    public const array RESERVED_ATTRIBUTES = ['uuid', 'revision', 'expiresAt'];
 
     public const string NAME_PATTERN = '/^[a-z0-9][a-z0-9_-]{0,63}$/';
 

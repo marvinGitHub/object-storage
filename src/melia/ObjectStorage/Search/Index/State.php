@@ -17,6 +17,7 @@ final class State
      * @param string[] $errors The last errors, e.g. documents Loupe rejected.
      * @param string|null $lastBuildAt When the last build was completed (ATOM).
      * @param string|null $lastSyncAt When changes were applied last (ATOM).
+     * @param int $lastExpiredRemoved The number of expired objects removed by the last sync.
      */
     public function __construct(
         public string  $name,
@@ -25,6 +26,7 @@ final class State
         public array   $errors = [],
         public ?string $lastBuildAt = null,
         public ?string $lastSyncAt = null,
+        public int     $lastExpiredRemoved = 0,
     )
     {
     }

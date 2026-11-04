@@ -144,6 +144,22 @@ class LoupeEngineTest extends TestCase
         $this->assertInstanceOf(LoupeSearchResult::class, $result->raw, 'the result of Loupe is available');
     }
 
+    public function testSyncRemovesObjectsExpiredSinceIndexing(): void
+    {
+        $permanent = $this->storage->store(new Product('Apple'));
+        $expiring = $this->storage->store(new Product('Apricot'));
+        $this->storage->setLifetime($expiring, 0.4);
+
+        $index = $this->createIndex();
+        $index->build();
+        $this->assertSame(2, $index->countDocuments());
+        usleep(600_000);
+
+        // Loupe finds the expired documents by a filter on "expiresAt"
+        $this->assertSame(1, $index->purgeExpired());
+        $this->assertSame([$permanent], $this->find($index));
+    }
+
     public function testPaging(): void
     {
         for ($i = 1; $i <= 5; $i++) {

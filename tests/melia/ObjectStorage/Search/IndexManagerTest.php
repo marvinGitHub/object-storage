@@ -321,6 +321,58 @@ class IndexManagerTest extends TestCase
         $this->assertSame(0, $index->countPendingChanges());
     }
 
+    public function testAttachedIndexFollowsLifetimeChanges(): void
+    {
+        $index = $this->search->create($this->createDefinition());
+        $index->build();
+        $this->search->attach();
+
+        $uuid = $this->storage->store(new Product('Apple'));
+        $this->assertSame([$uuid], $this->find($index, 'apple'));
+
+        // expired: no longer found
+        $this->storage->setLifetime($uuid, -1);
+        $this->assertSame([], $this->find($index, 'apple'));
+
+        // lives again
+        $this->storage->setLifetime($uuid, null);
+        $this->assertSame([$uuid], $this->find($index, 'apple'));
+
+        $this->storage->setExpiration($uuid, new \DateTimeImmutable('-1 hour'));
+        $this->assertSame([], $this->find($index, 'apple'));
+        $this->assertSame(0, $index->countPendingChanges());
+    }
+
+    public function testSyncRemovesObjectsExpiredSinceIndexing(): void
+    {
+        $permanent = $this->storage->store(new Product('Apple'));
+        $expiring = $this->storage->store(new Product('Apricot'));
+        $extended = $this->storage->store(new Product('Avocado'));
+        $this->storage->setLifetime($expiring, 0.4);
+        $this->storage->setLifetime($extended, 0.4);
+
+        $index = $this->search->create($this->createDefinition());
+        $index->build();
+        $this->assertSame(3, $index->countDocuments());
+        $this->assertNotNull($index->search(new Request('apricot'))->hits[0]->document['expiresAt']);
+
+        // the lifetime of one is extended without the index knowing (not attached)
+        $this->storage->setLifetime($extended, null);
+        usleep(600_000);
+
+        // auto sync after a store doesn't look for expired objects, to stay fast
+        $this->search->attach();
+        $banana = $this->storage->store(new Product('Banana'));
+        $this->assertSame(4, $index->countDocuments());
+
+        $this->assertSame(1, $index->sync(), 'one expired object removed, no pending changes');
+        $this->assertSame(1, $index->getState()->lastExpiredRemoved);
+        $this->assertEqualsCanonicalizing([$permanent, $extended, $banana], $this->find($index));
+        $this->assertNull($index->search(new Request('avocado'))->hits[0]->document['expiresAt'], 'updated instead of removed');
+
+        $this->assertSame(0, $index->purgeExpired(), 'nothing left to remove');
+    }
+
     public function testObjectsOfOtherClassesAreNotIndexed(): void
     {
         $index = $this->search->create($this->createDefinition());
@@ -469,6 +521,7 @@ class IndexManagerTest extends TestCase
             'no fields' => [static fn() => new Definition('products', Product::class, [])],
             'duplicate field' => [static fn() => new Definition('products', Product::class, [new Field('name', 'name'), new Field('name', 'title')])],
             'reserved field' => [static fn() => new Field('uuid', 'uuid')],
+            'reserved field expiresAt' => [static fn() => new Field('expiresAt', 'expiresAt')],
             'invalid field name' => [static fn() => new Field('first-name', 'name')],
             'invalid path' => [static fn() => new Field('name', 'a..b')],
             'sortable list' => [static fn() => new Field('tags', 'tags', FieldType::STRING_ARRAY, sortable: true)],
@@ -516,6 +569,7 @@ class IndexManagerTest extends TestCase
         $this->assertSame([
             'uuid' => 'uuid-1',
             'revision' => 3,
+            'expiresAt' => null,
             'city' => 'Berlin',
             'titles' => ['A', 'B'],
             'quantities' => [1, 2],

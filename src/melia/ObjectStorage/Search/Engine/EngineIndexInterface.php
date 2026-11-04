@@ -38,6 +38,16 @@ interface EngineIndexInterface
     public function count(): int;
 
     /**
+     * Finds documents of expired objects: those whose attribute "expiresAt" is set and at or before a point in time.
+     *
+     * @param float $before Seconds since the epoch, usually now.
+     * @param int $limit The maximum number of UUIDs.
+     * @return string[] UUIDs of the documents.
+     * @throws SearchException
+     */
+    public function expired(float $before, int $limit): array;
+
+    /**
      * Searches the documents.
      *
      * @param Request|object $request A Request, or a query object of the engine itself.

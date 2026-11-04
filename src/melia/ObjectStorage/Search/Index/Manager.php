@@ -308,6 +308,16 @@ final class Manager implements ManagerInterface
             $this->autoSync();
         };
 
+        // a lifetime set to the past removes the object from the indexes, a longer one adds it again
+        $this->listeners[Events::LIFETIME_CHANGED] = function (?Context $context): void {
+            $uuid = $context?->getUUID();
+            $className = null === $uuid ? null : $this->storage->getClassName($uuid);
+            if (null !== $className) {
+                $this->record($uuid, $this->getIndexesForClass($className));
+                $this->autoSync();
+            }
+        };
+
         foreach ($this->listeners as $event => $listener) {
             $dispatcher->addListener($event, $listener);
         }
@@ -400,7 +410,7 @@ final class Manager implements ManagerInterface
         foreach (array_keys($pending) as $name) {
             try {
                 // don't wait for a build or another sync: the changes stay recorded for the next sync
-                ($this->indexes[$name] ?? null)?->sync(wait: false);
+                ($this->indexes[$name] ?? null)?->sync(wait: false, purgeExpired: false);
             } catch (Throwable $e) {
                 $this->storage->getLogger()?->log($e);
             }

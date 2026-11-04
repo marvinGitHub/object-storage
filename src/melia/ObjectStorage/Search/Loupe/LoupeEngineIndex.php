@@ -85,6 +85,20 @@ final class LoupeEngineIndex implements EngineIndexInterface
         return $this->getLoupe()->countDocuments();
     }
 
+    public function expired(float $before, int $limit): array
+    {
+        $parameters = SearchParameters::create()
+            ->withFilter(sprintf('expiresAt <= %F', $before))
+            ->withAttributesToRetrieve(['uuid'])
+            ->withLimit(max(1, $limit));
+
+        try {
+            return array_map(static fn(array $hit): string => (string)$hit['uuid'], $this->getLoupe()->search($parameters)->getHits());
+        } catch (Throwable $e) {
+            throw new SearchException(message: 'Unable to find expired documents: ' . $e->getMessage(), previous: $e);
+        }
+    }
+
     /**
      * @param Request|SearchParameters $request
      */

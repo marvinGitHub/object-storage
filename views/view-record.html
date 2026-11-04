@@ -17,9 +17,52 @@
 {% include 'button-back.html' %}
 {% include 'record-links.html' with {storage: storage, uuid: uuid} %}
 <input class="btn btn-warning btn-sm" onclick="edit()" type="button" value="Edit"/>
+<button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#lifetime-panel"><i class="bi bi-hourglass-split"></i> Lifetime</button>
 <a class="btn btn-info btn-sm" href="?action=duplicate-record&storage={{storage}}&uuid={{uuid}}" role="button">Duplicate</a>
 <a class="btn btn-dark btn-sm" href="?action=export-record&storage={{storage}}&uuid={{uuid}}" role="button">Export</a>
 <a class="btn btn-danger btn-sm" href="?action=delete-record&storage={{storage}}&uuid={{uuid}}" role="button" onclick="return confirm('Are you sure you want to delete this UUID?');">Delete</a>
+</div>
+
+{% if message %}<div class="alert alert-success py-2">{{ message }}</div>{% endif %}
+{% if error %}<div class="alert alert-danger py-2">{{ error }}</div>{% endif %}
+
+<div class="collapse mb-2" id="lifetime-panel">
+    <form class="card card-body py-2" method="post" action="?action=set-lifetime" id="lifetime-form">
+        <input type="hidden" name="action" value="set-lifetime">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <input type="hidden" name="uuid" value="{{ uuid }}">
+        <input type="hidden" name="expiresAt" id="lifetime-expires-utc">
+
+        <div class="d-flex flex-wrap align-items-center gap-3">
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="radio" name="mode" value="unlimited" id="lifetime-unlimited" {% if expiresAt is null %}checked{% endif %}>
+                <label class="form-check-label" for="lifetime-unlimited">Never expires</label>
+            </div>
+
+            <div class="form-check mb-0 d-flex align-items-center gap-1">
+                <input class="form-check-input" type="radio" name="mode" value="ttl" id="lifetime-ttl">
+                <label class="form-check-label" for="lifetime-ttl">Expires in</label>
+                <input class="form-control form-control-sm" type="number" name="amount" min="0" step="any" value="1" style="width: 6rem"
+                       onfocus="document.getElementById('lifetime-ttl').checked = true">
+                <select class="form-select form-select-sm w-auto" name="unit" onfocus="document.getElementById('lifetime-ttl').checked = true">
+                    <option value="seconds">seconds</option>
+                    <option value="minutes">minutes</option>
+                    <option value="hours" selected>hours</option>
+                    <option value="days">days</option>
+                </select>
+            </div>
+
+            <div class="form-check mb-0 d-flex align-items-center gap-1">
+                <input class="form-check-input" type="radio" name="mode" value="expires" id="lifetime-expires" {% if expiresAt is not null %}checked{% endif %}>
+                <label class="form-check-label" for="lifetime-expires">Expires at</label>
+                <input class="form-control form-control-sm w-auto" type="datetime-local" step="1" id="lifetime-expires-local"
+                       onfocus="document.getElementById('lifetime-expires').checked = true">
+            </div>
+
+            <button class="btn btn-primary btn-sm" type="submit">Set lifetime</button>
+        </div>
+        <div class="form-text">Times are in the time zone of your browser. An expired record can't be loaded anymore, but stays stored until it is purged (<code>maintenance:purge-expired</code>) or its lifetime is changed again.</div>
+    </form>
 </div>
 
 <div class="card">
@@ -30,7 +73,7 @@ Classname: {{ classname }}<br>
 Checksum: {{ checksum }}<br>
 Algorithm: {{ algorithm }}<br>
 UUID: {{ uuid }}<br>
-TTL: {{ lifetime }}<br>
+Expires: <span id="expires-text">{{ expiresAt is null ? 'never' : expiresAt }}</span><br>
 Size: {{ size }} Bytes<br>
 Shard: {{ shard }}
 </pre>
@@ -157,6 +200,72 @@ Shard: {{ shard }}
                 element.innerHTML = ReferenceLinkGenerator.generate(element.innerHTML);
             }
         }
+
+        showExpiration();
+    });
+
+    // the expiration in the time zone of the browser, and the time left
+    const expiresAt = {{ expiresAt is null ? 'null' : (expiresAt * 1000)|round }};
+
+    function formatRemaining(ms) {
+        const seconds = Math.round(Math.abs(ms) / 1000);
+        const parts = [
+            [Math.floor(seconds / 86400), 'd'],
+            [Math.floor(seconds % 86400 / 3600), 'h'],
+            [Math.floor(seconds % 3600 / 60), 'min'],
+            [seconds % 60, 's'],
+        ].filter(([value]) => value > 0).slice(0, 2).map(([value, unit]) => `${value} ${unit}`);
+        return parts.length ? parts.join(' ') : '0 s';
+    }
+
+    function toLocalInput(date) {
+        const pad = n => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    function showExpiration() {
+        const text = document.getElementById('expires-text');
+        const input = document.getElementById('lifetime-expires-local');
+
+        if (null === expiresAt) {
+            if (text) {
+                text.textContent = 'never';
+            }
+            if (input) {
+                input.value = toLocalInput(new Date(Date.now() + 86400000)); // a suggestion: tomorrow
+            }
+            return;
+        }
+
+        const date = new Date(expiresAt);
+        const left = expiresAt - Date.now();
+        if (text) {
+            text.textContent = `${date.toLocaleString()} (${left > 0 ? 'in ' + formatRemaining(left) : 'expired ' + formatRemaining(left) + ' ago'})`;
+            text.classList.toggle('text-danger', left <= 0);
+        }
+        if (input) {
+            input.value = toLocalInput(date);
+        }
+    }
+
+    // the chosen time is sent in UTC, so the time zone of the server doesn't matter
+    document.getElementById('lifetime-form')?.addEventListener('submit', event => {
+        const mode = new FormData(event.target).get('mode');
+        if ('expires' !== mode) {
+            return;
+        }
+        const local = document.getElementById('lifetime-expires-local').value;
+        if (!local) {
+            event.preventDefault();
+            alert('Choose a point in time.');
+            return;
+        }
+        const date = new Date(local);
+        if (date.getTime() <= Date.now() && !confirm('This point in time has passed: the record expires right away and can\'t be loaded anymore. Continue?')) {
+            event.preventDefault();
+            return;
+        }
+        document.getElementById('lifetime-expires-utc').value = date.toISOString();
     });
 </script>
 {% endif %}

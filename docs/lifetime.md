@@ -20,6 +20,8 @@ $storage->setLifetime($uuid, null);                                 // never exp
 
 Changing the lifetime only rewrites the metadata, not the object.
 
+In the [viewer](maintenance.md#the-web-viewer), **Lifetime** on the page of a record sets it the same ways: never expiring, expiring in a number of seconds, minutes, hours or days, or at a point in time (in the time zone of the browser). The page shows when the record expires and the time left. Attached [search indexes](search.md#keeping-indexes-up-to-date) follow lifetime changes: a record whose lifetime is set to the past is removed from them, and added again when its lifetime is extended.
+
 ## Reading the lifetime
 
 ```php

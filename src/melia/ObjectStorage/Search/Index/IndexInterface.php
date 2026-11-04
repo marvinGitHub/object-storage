@@ -141,13 +141,23 @@ interface IndexInterface
     public function recordChange(string ...$uuids): void;
 
     /**
-     * Applies the recorded changes.
+     * Applies the recorded changes, and removes the objects that have expired since they were indexed.
      *
      * @param bool $wait Whether to wait if another process is working on the index; otherwise nothing is done.
-     * @return int The number of applied changes.
+     * @return int The number of applied changes and removed expired objects.
      * @throws SearchException
      */
     public function sync(bool $wait = true): int;
+
+    /**
+     * Removes the objects that have expired since they were indexed; sync() does this as well. Objects whose
+     * lifetime was extended meanwhile are updated instead.
+     *
+     * @param bool $wait Whether to wait if another process is working on the index; otherwise nothing is done.
+     * @return int The number of removed objects.
+     * @throws SearchException
+     */
+    public function purgeExpired(bool $wait = true): int;
 
     public function countPendingChanges(): int;
 

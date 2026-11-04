@@ -92,8 +92,8 @@
                 <a class="btn btn-outline-secondary btn-sm"
                    href="?action=index-build&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}{% if index.status != 'building' %}&start=1{% endif %}">
                     <i class="bi bi-arrow-repeat"></i> {% if index.status == 'building' %}Progress{% else %}Rebuild{% endif %}</a>
-                <button class="btn btn-outline-secondary btn-sm" onclick="syncIndex('{{ index.name|e('js') }}')"
-                        {% if index.pending == 0 or index.documents is null %}disabled{% endif %}><i class="bi bi-arrow-down-up"></i> Sync</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="syncIndex('{{ index.name|e('js') }}')" title="Apply the pending changes and remove expired objects"
+                        {% if index.documents is null %}disabled{% endif %}><i class="bi bi-arrow-down-up"></i> Sync</button>
                 <button class="btn btn-outline-danger btn-sm" onclick="dropIndex('{{ index.name|e('js') }}')"><i class="bi bi-trash"></i> Drop</button>
             </td>
         </tr>
@@ -128,7 +128,8 @@
     async function syncIndex(name) {
         const result = await postIndexAction('index-sync', name);
         if (result) {
-            location.href = `?action=indexes&storage=${encodeURIComponent(storage)}&message=${encodeURIComponent(`${result.applied} changes applied to ${name}.`)}`;
+            const message = `${name}: ${result.applied} pending changes applied, ${result.expired} expired objects removed.`;
+            location.href = `?action=indexes&storage=${encodeURIComponent(storage)}&message=${encodeURIComponent(message)}`;
         }
     }
 

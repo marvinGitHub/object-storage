@@ -370,8 +370,58 @@ try {
                 'algorithm' => $metadata?->getChecksumAlgorithm() ?? '',
                 'isLocked' => $isLocked,
                 'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited',
+                // seconds since the epoch, shown in the time zone of the browser; null without expiration
+                'expiresAt' => $metadata?->getTimestampExpiresAt(),
                 'shard' => $storage->buildShardedDirectory($uuid),
+                'message' => $_GET['message'] ?? null,
+                'error' => $_GET['error'] ?? null,
             ]);
+            break;
+        case 'set-lifetime':
+            $storageDir = $_POST['storage'] ?? null;
+            $uuid = (string)($_POST['uuid'] ?? '');
+            $result = [];
+
+            try {
+                $requirePost();
+                $storage = $buildStorage($storageDir);
+                if (!$storage->exists($uuid)) {
+                    throw new RuntimeException('Record not found.');
+                }
+
+                // the attached search indexes follow the change (LIFETIME_CHANGED)
+                switch ($_POST['mode'] ?? '') {
+                    case 'unlimited':
+                        $storage->setLifetime($uuid, null);
+                        $result['message'] = 'The record never expires now.';
+                        break;
+                    case 'ttl':
+                        $units = ['seconds' => 1, 'minutes' => 60, 'hours' => 3600, 'days' => 86400];
+                        $amount = (float)($_POST['amount'] ?? 0);
+                        $unit = $units[$_POST['unit'] ?? ''] ?? throw new RuntimeException('Invalid unit.');
+                        if ($amount <= 0) {
+                            throw new RuntimeException('The lifetime must be greater than 0.');
+                        }
+                        $storage->setLifetime($uuid, $amount * $unit);
+                        $result['message'] = sprintf('The record expires in %s %s.', $_POST['amount'], $_POST['unit']);
+                        break;
+                    case 'expires':
+                        // sent by the browser in UTC, see view-record.html
+                        $expiresAt = new DateTimeImmutable((string)($_POST['expiresAt'] ?? ''));
+                        $storage->setExpiration($uuid, $expiresAt);
+                        $result['message'] = $expiresAt->getTimestamp() <= time()
+                            ? 'The record has expired: loading it returns null now.'
+                            : 'The expiration has been set.';
+                        break;
+                    default:
+                        throw new RuntimeException('Choose how long the record lives.');
+                }
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $result['error'] = 'The lifetime couldn\'t be set: ' . $e->getMessage();
+            }
+
+            header('Location: ?' . http_build_query(['action' => 'view-record', 'storage' => $storageDir, 'uuid' => $uuid] + $result));
             break;
         case 'save-record':
             $storageDir = $_POST['storage'] ?? null;
@@ -662,7 +712,7 @@ try {
                         $index->cancelBuild();
                         return $index->getProgress();
                     })(),
-                    'index-sync' => ['applied' => $index->sync()],
+                    'index-sync' => ['applied' => $index->sync(purgeExpired: false), 'expired' => $index->purgeExpired()],
                     'index-drop' => (static function () use ($search, $index): array {
                         $search->drop($index->getName());
                         return ['dropped' => true];

@@ -73,7 +73,7 @@ A field takes a value from the **stored data** of an object, not from the object
 | `filterable` | the field can be used in filters and facets |
 | `sortable` | results can be sorted by the field; not for lists |
 
-Every document also has the attributes `uuid` (filterable) and `revision` (the [revision](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) of the object), so these names can't be used for fields.
+Every document also has the attributes `uuid` (filterable), `revision` (the [revision](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) of the object) and `expiresAt` (when the object expires, in seconds since the epoch, `null` if never; filterable), so these names can't be used for fields.
 
 What the path leads to:
 
@@ -138,7 +138,7 @@ After `update()`, the index is `outdated`: searches use the previous definition 
 $search->attach();
 ```
 
-Once attached, every object of an indexed class that is stored or deleted through this storage is recorded as a **pending change** of its indexes and, with auto sync (the default), applied right after `store()` or `delete()` returns. This covers referenced objects written along, objects deleted along by the [child deletion policy](configuration.md#child-deletion-whether-referenced-objects-are-deleted-along) and class changes. Attach the manager in every process that writes, e.g. where you create the storage.
+Once attached, every object of an indexed class that is stored or deleted through this storage is recorded as a **pending change** of its indexes and, with auto sync (the default), applied right after `store()` or `delete()` returns. This covers referenced objects written along, objects deleted along by the [child deletion policy](configuration.md#child-deletion-whether-referenced-objects-are-deleted-along), class changes and lifetime changes (an object whose lifetime is set to the past is removed; objects expiring later are skipped by `searchObjects()` and removed by the next explicit sync, see below). Attach the manager in every process that writes, e.g. where you create the storage.
 
 ```php
 $search->attach(autoSync: false);
@@ -148,6 +148,14 @@ $search->sync();
 ```
 
 Without auto sync, `store()` only records the UUID of the object, and `sync()` applies all recorded changes at once. An object changed several times before the sync is recorded, and indexed, once. With auto sync, a change that can't be applied right away, e.g. while another process is building the index, stays recorded for the next sync. `countPendingChanges()` tells how many there are, `hasPendingChange($uuid)` whether an object is waiting.
+
+Objects also leave an index when they **expire**. An explicit `sync()` (of the manager or of an index, and **Sync** in the viewer) removes the objects that have expired since they were indexed: the engine finds the documents whose `expiresAt` has passed, and their current state is applied, so an object whose lifetime was extended meanwhile is updated instead of removed. `purgeExpired()` does this alone, e.g. in a cron job; `getState()->lastExpiredRemoved` tells how many the last sync removed. Auto sync after each `store()` doesn't look for expired objects, to stay fast; until the next sync, `searchObjects()` skips them, as they can't be loaded.
+
+```php
+// cron.php, e.g. every few minutes
+$search->sync();                          // pending changes and expired objects of all indexes
+$search->get('products')->purgeExpired(); // only the expired objects of one index
+```
 
 Applying a change reads the current state of the object, so the order of the changes doesn't matter, and applying one twice does no harm. An index error never makes `store()` or `delete()` fail; it is logged by the storage's logger.
 
@@ -309,6 +317,7 @@ final class MyEngineIndex implements EngineIndexInterface
     public function upsert(array $documents): array { /* add or replace; return UUID => error for rejected ones */ }
     public function delete(array $uuids): void { /* … */ }
     public function count(): int { /* … */ }
+    public function expired(float $before, int $limit): array { /* UUIDs of documents with expiresAt <= $before */ }
     public function search(object $request): Result { /* translate a Request, or accept own query objects */ }
     public function close(): void {}
 }
@@ -317,14 +326,14 @@ $search = new Manager($storage, [new LoupeEngine(), new MyEngine()]);
 $search->create(new Definition('articles', Article::class, $fields, engine: 'my'));
 ```
 
-Documents arrive with the attributes `uuid`, `revision` and one per field, with values already converted to the types of the fields. The data of an index lives in `<storage dir>/indexes/<engine>/<name>/`; an engine storing its data elsewhere derives a unique name from the directory it gets. The viewer shows the syntax help of an engine from the template `views/search-help-<engine>.html`, if there is one.
+Documents arrive with the attributes `uuid`, `revision`, `expiresAt` and one per field, with values already converted to the types of the fields. The data of an index lives in `<storage dir>/indexes/<engine>/<name>/`; an engine storing its data elsewhere derives a unique name from the directory it gets. The viewer shows the syntax help of an engine from the template `views/search-help-<engine>.html`, if there is one.
 
 ## The viewer
 
 The [viewer](maintenance.md#the-web-viewer) manages the indexes of a storage under **Search indexes**:
 
 - **New index** / **Edit**: choose the class and the engine; **Suggest fields** fills in the fields from a stored object of the class, with types and options guessed from the values. Saving builds the index.
-- **Rebuild** builds the index again, **Sync** applies the pending changes, **Drop** removes it.
+- **Rebuild** builds the index again, **Sync** applies the pending changes and removes expired objects, **Drop** removes it.
 - The build page shows the progress (indexed objects, failed ones, elapsed and remaining time) while it indexes the objects step by step; it can be left and continued.
 - **Search** runs a query with filter, sort and facets, showing the matches highlighted, the ranking score and links to the objects.
 

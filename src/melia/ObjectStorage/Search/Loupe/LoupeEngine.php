@@ -80,8 +80,9 @@ final class LoupeEngine implements EngineInterface
         $configuration = Configuration::create()
             ->withPrimaryKey('uuid')
             ->withSearchableAttributes($definition->fieldNames(static fn(Field $field): bool => $field->searchable))
-            // the UUID can always be filtered, e.g. to restrict a search to known objects
-            ->withFilterableAttributes(['uuid', ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable)])
+            // the UUID can always be filtered, e.g. to restrict a search to known objects; the expiration to find
+            // expired objects
+            ->withFilterableAttributes(['uuid', 'expiresAt', ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable)])
             ->withSortableAttributes($definition->fieldNames(static fn(Field $field): bool => $field->sortable));
 
         if ([] !== $definition->languages) {

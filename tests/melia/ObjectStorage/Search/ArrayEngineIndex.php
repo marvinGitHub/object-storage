@@ -62,6 +62,17 @@ final class ArrayEngineIndex implements EngineIndexInterface
         return count($this->read());
     }
 
+    public function expired(float $before, int $limit): array
+    {
+        $uuids = [];
+        foreach ($this->read() as $uuid => $document) {
+            if (null !== ($document['expiresAt'] ?? null) && $document['expiresAt'] <= $before) {
+                $uuids[] = (string)$uuid;
+            }
+        }
+        return array_slice($uuids, 0, max(1, $limit));
+    }
+
     public function search(object $request): Result
     {
         if (!$request instanceof Request) {
