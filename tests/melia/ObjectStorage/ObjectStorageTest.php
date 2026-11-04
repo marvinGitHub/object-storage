@@ -855,6 +855,40 @@ class ObjectStorageTest extends TestCase
         }
     }
 
+    public function testMaxDepthLimitsTheDepthNotTheNumberOfValues(): void
+    {
+        $strategy = new Standard();
+        $strategy->setMaxDepth(5);
+        $storage = new ObjectStorage($this->reserveRandomDirectory(), strategy: $strategy);
+
+        // many arrays and objects side by side: shallow, so within the limit
+        $wide = new stdClass();
+        $wide->rows = array_fill(0, 600, ['a' => ['b' => 1]]);
+        $wide->children = [];
+        for ($i = 0; $i < 20; $i++) {
+            $child = new stdClass();
+            $child->values = [[1], [2], [3]];
+            $wide->children[] = $child;
+        }
+
+        $uuid = $storage->store($wide);
+        $storage->clearCache();
+        $loaded = $storage->load($uuid);
+        $this->assertCount(600, $loaded->rows);
+        $this->assertSame([[1], [2], [3]], $loaded->children[19]->values);
+
+        // deeper than the limit
+        $deep = new stdClass();
+        $deep->a = [[[[[['b' => 'c']]]]]];
+
+        try {
+            $storage->store($deep);
+            $this->fail('MaxDepthExceededException expected');
+        } catch (Exception $e) {
+            $this->assertInstanceOf(MaxDepthExceededException::class, $e->getPrevious());
+        }
+    }
+
     public function testLazyReferenceSkippedForIncompatibleType()
     {
         // Class with a strictly typed property that cannot hold a LazyLoadReference

@@ -39,6 +39,15 @@ class GraphBuilderContext
         $this->level++;
     }
 
+    /**
+     * Returns to the level of the parent, after a nested value has been processed: the level is the depth of the
+     * value being processed, not the number of values processed so far.
+     */
+    public function decreaseLevel(): void
+    {
+        $this->level--;
+    }
+
     public function getMetadata(): Metadata
     {
         return $this->metadata;

@@ -1,0 +1,11 @@
+{# Syntax help of the Loupe engine, see https://github.com/loupe-php/loupe/blob/main/docs/searching.md #}
+<strong>Query</strong>: full-text search over the searchable fields, tolerating typos.
+<code>"exact phrase"</code> searches a phrase, <code>-word</code> excludes a word.
+Words of three or more letters also match as prefixes.
+<br><strong>Filter</strong> (Loupe): <code>=</code> <code>!=</code> <code>&gt;</code> <code>&gt;=</code> <code>&lt;</code> <code>&lt;=</code>,
+<code>price BETWEEN 10 AND 20</code>, <code>tags IN ('a', 'b')</code>, <code>tags NOT IN ('a')</code>,
+<code>IS NULL</code>, <code>IS NOT NULL</code>, <code>IS EMPTY</code>, <code>IS NOT EMPTY</code>, booleans as <code>true</code>/<code>false</code>, combined with <code>AND</code>, <code>OR</code>,
+<code>NOT</code> and parentheses. Strings in single quotes, <code>'</code> doubled. Only filterable fields.
+<br><strong>Sort</strong>: comma-separated <code>field:asc</code> / <code>field:desc</code> of sortable fields,
+<code>_relevance:desc</code> for the ranking.
+<br><strong>Facets</strong>: comma-separated filterable fields, counts their values among the hits.

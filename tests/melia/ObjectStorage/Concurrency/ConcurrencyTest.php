@@ -85,6 +85,24 @@ class ConcurrencyTest extends TestCase
         $this->assertSame([], $missing, 'class names lost by concurrent registrations');
     }
 
+    public function testSearchIndexNameIsUniqueAcrossProcesses(): void
+    {
+        $errors = $this->runWorkers('create-index', ['products']);
+
+        $this->assertSame([], $errors);
+
+        $created = glob($this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'created-*');
+        $this->assertCount(1, $created, 'exactly one process creates the index');
+
+        $search = new \melia\ObjectStorage\Search\Index\Manager($this->storage, [new \Tests\melia\ObjectStorage\Search\ArrayEngine()]);
+        $this->assertSame(['products'], array_keys($search->list()));
+
+        // the stored definition is the one of the process that created it
+        $winner = substr(basename($created[0]), strlen('created-'));
+        $this->assertSame('created_by_' . $winner, $search->get('products')->getDefinition()->fields[0]->name);
+        $this->assertSame(\melia\ObjectStorage\Search\Index\IndexInterface::STATUS_NEW, $search->get('products')->getStatus());
+    }
+
     /**
      * Starts the workers, lets them begin at the same time and waits for all of them.
      *

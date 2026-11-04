@@ -109,6 +109,23 @@ switch ($scenario) {
         }
         break;
 
+    // creates a search index of the same name as all other workers: only one may succeed
+    case 'create-index':
+        [$name] = $args;
+        try {
+            $definition = new \melia\ObjectStorage\Search\Index\Definition($name, 'Product', [
+                new \melia\ObjectStorage\Search\Field('created_by_' . $worker, 'name'),
+            ]);
+            // the engine doesn't matter: names are made unique by the index manager
+            (new \melia\ObjectStorage\Search\Index\Manager($storage, [new \Tests\melia\ObjectStorage\Search\ArrayEngine()]))->create($definition);
+            touch($dir . DIRECTORY_SEPARATOR . 'created-' . $worker);
+        } catch (\melia\ObjectStorage\Search\Exception\IndexAlreadyExistsException) {
+            // expected for all but one worker
+        } catch (Throwable $e) {
+            $report($e);
+        }
+        break;
+
     default:
         echo "ERROR unknown scenario $scenario\n";
         exit(1);

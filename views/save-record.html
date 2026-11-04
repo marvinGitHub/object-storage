@@ -1,13 +1,31 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form>
-    <a class="btn btn-secondary btn-sm" href="?action=view-record&storage={{storage}}&uuid={{uuid}}" role="button">Back</a>
-</form>
+<div class="d-flex align-items-center gap-2 flex-wrap my-2">
+    {% include 'record-links.html' with {storage: storage, uuid: uuid} %}
+</div>
 {% if success %}
 <div class="alert alert-success" role="alert">
     Record saved.
 </div>
+
+{% if updatedIndexes is not empty %}
+<div class="alert alert-info py-2" role="alert">
+    Search indexes updated:
+    {% for name in updatedIndexes %}<a class="badge text-bg-light border text-decoration-none" href="?action=index-search&storage={{ storage|url_encode }}&name={{ name|url_encode }}&run=1&filter={{ ("uuid = '" ~ uuid ~ "'")|url_encode }}">{{ name }}</a> {% endfor %}
+</div>
+{% endif %}
+{% if skippedIndexes is not empty %}
+<div class="alert alert-warning py-2" role="alert">
+    Not updated, so they still find the previous state of the record until they are rebuilt:
+    {% for name in skippedIndexes %}<span class="badge text-bg-light border">{{ name }}</span> {% endfor %}
+</div>
+{% endif %}
+{% if indexError %}
+<div class="alert alert-danger py-2" role="alert">
+    The search indexes couldn't be updated: {{ indexError }}
+</div>
+{% endif %}
 
 {% else %}
 <div class="alert alert-danger" role="alert">

@@ -62,9 +62,9 @@ class Directory
     }
 
     /**
-     * Performs cleanup by removing the specified directory and its contents if it exists.
+     * Removes the directory with all its contents, deepest first. Works without a shell, also on Windows.
      *
-     * @return bool
+     * @return bool True if the directory was removed, false if there is none or something couldn't be removed.
      */
     public function tearDown(): bool
     {
@@ -76,15 +76,34 @@ class Directory
             return false;
         }
 
-        $exitCode = null;
-        exec(command: sprintf('rm -rf %s', escapeshellarg($this->path)), result_code: $exitCode);
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->path, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
 
-        if ($exitCode === 0) {
-            Registry::getInstance()->markAsNotVerified($this->path);
-            return true;
+        foreach ($iterator as $item) {
+            // links are removed, not followed
+            $item->isDir() && !$item->isLink() ? @rmdir($item->getPathname()) : @unlink($item->getPathname());
         }
 
-        return false;
+        @rmdir($this->path);
+        clearstatcache(true, $this->path);
+
+        // also if something remained: removed subdirectories must not count as existing anymore
+        Registry::getInstance()->markTreeAsNotVerified($this->path);
+
+        return !is_dir($this->path);
+    }
+
+    /**
+     * Removes a directory with all its contents, see tearDown().
+     *
+     * @param string $path The directory to remove.
+     * @return bool True if the directory was removed, false if there is none or something couldn't be removed.
+     */
+    public static function remove(string $path): bool
+    {
+        return (new self($path))->tearDown();
     }
 
     /**

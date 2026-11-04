@@ -1,0 +1,133 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="container-fluid my-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0">Search <code>{{ name }}</code></h5>
+        {% if engine %}<span class="badge text-bg-light border" title="engine">{{ engine }}</span>{% endif %}
+        {% if status == 'outdated' %}<span class="badge bg-warning text-dark" title="The definition changed; rebuild the index to use it">outdated: searching the previous build</span>{% endif %}
+        {% if status == 'building' %}<span class="badge bg-info" title="Searches use the previous build until the build is complete">being rebuilt</span>{% endif %}
+    </div>
+
+    <form method="get" class="mb-3">
+        <input type="hidden" name="action" value="index-search">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <input type="hidden" name="name" value="{{ name }}">
+        <input type="hidden" name="run" value="1">
+
+        <div class="row g-2">
+            <div class="col-lg-4">
+                <label class="form-label small mb-0" for="q">Query</label>
+                <input class="form-control" id="q" name="q" value="{{ form.query }}" placeholder="full text, e.g. red apple" autofocus>
+            </div>
+            <div class="col-lg-4">
+                <label class="form-label small mb-0" for="filter">Filter</label>
+                <input class="form-control font-monospace" id="filter" name="filter" value="{{ form.filter }}" placeholder="{{ engine == 'loupe' ? "price < 10 AND tags IN ('sweet')" : 'in the language of the engine' }}">
+            </div>
+            <div class="col-lg-2">
+                <label class="form-label small mb-0" for="sort">Sort</label>
+                <input class="form-control font-monospace" id="sort" name="sort" value="{{ form.sort }}" placeholder="price:asc">
+            </div>
+            <div class="col-lg-2">
+                <label class="form-label small mb-0" for="facets">Facets</label>
+                <input class="form-control font-monospace" id="facets" name="facets" value="{{ form.facets }}" placeholder="tags, category">
+            </div>
+        </div>
+        <div class="d-flex gap-2 align-items-end mt-2">
+            <div>
+                <label class="form-label small mb-0" for="hitsPerPage">Hits per page</label>
+                <input class="form-control form-control-sm" id="hitsPerPage" name="hitsPerPage" type="number" min="1" max="1000" value="{{ form.hitsPerPage }}" style="width: 7rem">
+            </div>
+            <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-search"></i> Search</button>
+            <button class="btn btn-link btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#help">Syntax</button>
+        </div>
+    </form>
+
+    <div class="collapse mb-3" id="help">
+        <div class="card card-body small">
+            <div class="row">
+                <div class="col-md-6">
+                    {% include ['search-help-' ~ engine ~ '.html', 'search-help-generic.html'] %}
+                </div>
+                <div class="col-md-6">
+                    <strong>Fields</strong>
+                    <table class="table table-sm mb-0">
+                        <tr><td><code>uuid</code></td><td>string</td><td><i class="bi bi-funnel" title="filterable"></i></td></tr>
+                        <tr><td><code>revision</code></td><td>number</td><td></td></tr>
+                        {% for field in fields %}
+                        <tr>
+                            <td><code>{{ field.name }}</code> <small class="text-muted">{{ field.path }}</small></td>
+                            <td>{{ field.type }}</td>
+                            <td>
+                                {% if field.searchable %}<i class="bi bi-search" title="searchable"></i>{% endif %}
+                                {% if field.filterable %}<i class="bi bi-funnel" title="filterable"></i>{% endif %}
+                                {% if field.sortable %}<i class="bi bi-sort-down" title="sortable"></i>{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if error %}<div class="alert alert-danger font-monospace small">{{ error }}</div>{% endif %}
+
+    {% if result %}
+    <p class="text-muted small mb-2">
+        {{ result.totalHits }} hits, {{ result.processingTimeMs }} ms{% if result.totalPages > 1 %}, page {{ result.page }} of {{ result.totalPages }}{% endif %}
+    </p>
+
+    {% if result.facets is not empty %}
+    <div class="d-flex gap-3 flex-wrap mb-2">
+        {% for facet, values in result.facets %}
+        <div class="small">
+            <strong>{{ facet }}</strong>:
+            {% for value, count in values %}
+            <span class="badge text-bg-light border">{{ value }} <span class="text-muted">{{ count }}</span></span>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if result.hits is empty %}
+    <p>No hits.</p>
+    {% else %}
+    <div class="list-group mb-3">
+        {% for hit in result.hits %}
+        <div class="list-group-item">
+            <div class="d-flex justify-content-between">
+                <a href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ hit.uuid|url_encode }}" class="font-monospace">{{ hit.uuid }}</a>
+                {% if hit.score is not null %}<small class="text-muted">score {{ hit.score|number_format(3) }}</small>{% endif %}
+            </div>
+            <dl class="row small mb-0">
+                {% for value in hit.values %}
+                <dt class="col-sm-2 text-truncate">{{ value.name }}</dt>
+                <dd class="col-sm-10 mb-0 text-break">
+                    {% if value.highlighted is not null %}{{ value.highlighted|raw }}{% else %}{{ value.value }}{% endif %}
+                </dd>
+                {% endfor %}
+            </dl>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if result.totalPages > 1 %}
+    <nav aria-label="Pagination">
+        <ul class="pagination pagination-sm">
+            {% for i in result.pageLinks %}
+            {% if i is null %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% else %}
+            <li class="page-item {% if i == result.page %}active{% endif %}"><a class="page-link" href="?{{ queryString }}&page={{ i }}">{{ i }}</a></li>
+            {% endif %}
+            {% endfor %}
+        </ul>
+    </nav>
+    {% endif %}
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock body %}

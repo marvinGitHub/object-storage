@@ -84,11 +84,13 @@
     "perftools/php-profiler": "^1.4",
     "monolog/monolog": "^2.10",
     "phpunit/phpunit": "^10",
-    "sebastian/object-graph": "^3.0"
+    "sebastian/object-graph": "^3.0",
+    "loupe/loupe": "^1.1"
   },
   "suggest": {
     "ext-memcached": "For caching operations",
     "ext-redis": "For caching operations",
-    "ext-apcu": "For caching operations"
+    "ext-apcu": "For caching operations",
+    "loupe/loupe": "For the Loupe search engine (melia\\ObjectStorage\\Search\\Loupe\\LoupeEngine); needs ext-intl and ext-pdo_sqlite"
   }
 }

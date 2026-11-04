@@ -29,7 +29,7 @@
 <ul class="list-group">
     <li class="list-group-item list-group-item-secondary d-flex justify-content-between align-items-start">
         <div class="ms-2 me-auto">
-            <a href="?storage=storage&action=list-classnames"> <span class="badge bg-dark">{{storage}}</span></a>
+            <a href="?action=list-classnames&storage={{ storage|url_encode }}"> <span class="badge bg-dark">{{storage}}</span></a>
             <span class="badge bg-secondary">{{classname}}</span>
         </div>
         <span class="badge bg-primary rounded-pill">{{offset}} - {{end}} of {{total}}</span>

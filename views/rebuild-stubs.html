@@ -1,16 +1,67 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form>
-    <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{storage}}" role="button">Back</a>
-</form>
-{% if success %}
-<div class="alert alert-success" role="alert">
-    Done.
+<div class="container-fluid my-3" style="max-width: 900px">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0">Rebuild stubs <span class="badge bg-dark">{{ storage }}</span></h5>
+    </div>
+
+    <p class="text-muted">
+        Rebuilds the class index (the stubs), which lists the objects of every class: first a stub is created for
+        every object that misses one, then stubs of objects that don't exist or are of another class are removed,
+        and the list of classes is rebuilt. The index stays usable meanwhile. Objects without a class are moved aside
+        as corrupted. If the page is closed, the rebuild can be continued here or with
+        <code>maintenance:rebuild-stubs</code>.
+    </p>
+
+    {% if running %}
+    <div class="alert alert-warning py-2">A rebuild is running: {{ running.processed }} of {{ running.total }} done. It is continued now.</div>
+    {% else %}
+    <button id="start" class="btn btn-primary btn-sm mb-3" type="button"><i class="bi bi-arrow-repeat"></i> Rebuild</button>
+    {% endif %}
+
+    <div id="progress-section" class="{% if not running %}hidden{% endif %}">
+        {% include 'step-progress.html' with {unit: 'Objects and stubs'} %}
+        <div class="small text-muted mb-3" id="details"></div>
+    </div>
+
+    <a id="back" class="btn btn-outline-secondary btn-sm hidden" href="?action=list-classnames&storage={{ storage|url_encode }}">Back to the classes</a>
+
+    <script>
+        const phases = {objects: 'creating missing stubs', stubs: 'removing wrong stubs'};
+
+        const runner = new StepRunner({
+            params: {storage: '{{ storage|e('js') }}'},
+            startAction: 'rebuild-stubs-start',
+            stepAction: 'rebuild-stubs-step',
+            onProgress(progress) {
+                if (!progress.done && phases[progress.phase]) {
+                    runner.setPhase(`Working: ${phases[progress.phase]}…`);
+                }
+                document.getElementById('details').textContent =
+                    `${progress.created} stubs created, ${progress.removed} removed, ${progress.corrupted} corrupted objects moved aside`;
+            },
+            onDone(progress) {
+                runner.finish(`Done: ${progress.created} created, ${progress.removed} removed, ${progress.corrupted} corrupted.`, true);
+                document.getElementById('back').classList.remove('hidden');
+            },
+        });
+
+        async function rebuild(start) {
+            document.getElementById('progress-section').classList.remove('hidden');
+            document.getElementById('start')?.classList.add('hidden');
+            const progress = await runner.run(start);
+            if (progress === null) {
+                document.getElementById('back').classList.remove('hidden');
+            }
+        }
+
+        {% if running %}
+        rebuild(false);
+        {% else %}
+        document.getElementById('start').addEventListener('click', () => rebuild(true));
+        {% endif %}
+    </script>
 </div>
-{% else %}
-<div class="alert alert-danger" role="alert">
-    An error occurred while rebuilding stubs.
-</div>
-{% endif %}
 {% endblock body %}

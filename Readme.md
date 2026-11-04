@@ -101,6 +101,7 @@ Continue with [Getting started](docs/getting-started.md) for the details of stor
 | [Getting started](docs/getting-started.md) | Creating a storage, storing, loading, updating and deleting objects, UUIDs |
 | [Concepts](docs/concepts.md) | Object graphs, lazy loading, caching and what is stored on disk |
 | [Querying](docs/querying.md) | Listing, counting and filtering objects |
+| [Search indexes](docs/search.md) | Full-text search, filters and facets with exchangeable engines (Loupe included), managed in the viewer |
 | [Lifetime](docs/lifetime.md) | Expiring objects, e.g. for caches |
 | [Concurrency](docs/concurrency.md) | Locks, read-modify-write, lock backends, multiple processes |
 | [Durability and safe mode](docs/durability.md) | Crash-safe writes, checksums, recovery and safe mode |
@@ -117,6 +118,7 @@ Complete scenarios, each runnable as is:
 - [Caching API responses](docs/examples/api-response-cache.md) — lifetime, a fast setup without fsync, Redis locks
 - [Inventory with concurrent updates](docs/examples/inventory-concurrent-updates.md) — exclusive loads, read-modify-write
 - [An audit log from events](docs/examples/audit-log-with-events.md) — events with the previous and the new state
+- [Product search](docs/examples/product-search.md) — a search index with full text, filters, sorting and facets
 - [Renaming classes](docs/examples/renaming-classes.md) — keeping stored data loadable after a refactoring
 
 ## Changelog and license

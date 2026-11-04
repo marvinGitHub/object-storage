@@ -1,0 +1,157 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="container-fluid my-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0">{% if isNew %}New search index{% else %}Edit search index <code>{{ name }}</code>{% endif %}</h5>
+    </div>
+
+    {% if not searchAvailable %}
+    <div class="alert alert-warning">Search indexes need the package <code>loupe/loupe</code> and the PHP extensions <code>intl</code> and <code>pdo_sqlite</code>.</div>
+    {% else %}
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    {% if not isNew %}
+    <div class="alert alert-info py-2">
+        Saving rebuilds the index. Searches keep using the previous definition until the build is complete.
+    </div>
+    {% endif %}
+
+    <form method="post" action="?action=index-save" id="index-form">
+        <input type="hidden" name="action" value="index-save">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <input type="hidden" name="isNew" value="{{ isNew ? '1' : '0' }}">
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-2">
+                <label class="form-label" for="name">Name</label>
+                <input class="form-control" id="name" name="name" value="{{ name }}" required pattern="[a-z0-9][a-z0-9_\-]{0,63}"
+                       {% if not isNew %}readonly{% endif %} placeholder="products">
+                <div class="form-text">Unique; lowercase letters, digits, <code>_</code> and <code>-</code>.</div>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" for="engine">Engine</label>
+                {% if isNew %}
+                <select class="form-select" id="engine" name="engine">
+                    {% for e in engines %}
+                    <option value="{{ e }}" {% if e == engine %}selected{% endif %}>{{ e }}</option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                <input class="form-control" id="engine" value="{{ engine }}" readonly>
+                {% endif %}
+                <div class="form-text">Can't be changed later.</div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="classname">Class</label>
+                <div class="input-group">
+                    <select class="form-select" id="classname" name="classname" required>
+                        <option value="">choose…</option>
+                        {% for c in classnames %}
+                        <option value="{{ c }}" {% if c == classname %}selected{% endif %}>{{ c }}</option>
+                        {% endfor %}
+                        {% if classname and classname not in classnames %}
+                        <option value="{{ classname }}" selected>{{ classname }}</option>
+                        {% endif %}
+                    </select>
+                    <button class="btn btn-outline-secondary" type="button" onclick="suggestFields()" title="Replace the fields by the values of a stored object of the class">
+                        <i class="bi bi-magic"></i> Suggest fields
+                    </button>
+                </div>
+                <div class="form-text">Objects of exactly this class are indexed.</div>
+            </div>
+            <div class="col-md-4 col-lg-4">
+                <label class="form-label" for="languages">Languages</label>
+                <input class="form-control" id="languages" name="languages" value="{{ languages }}" placeholder="de, en">
+                <div class="form-text">ISO 639-1 codes for stemming; empty to detect them.</div>
+            </div>
+        </div>
+
+        <h6>Fields</h6>
+        <p class="form-text mt-0">
+            The <strong>path</strong> leads to a value in the stored data, e.g. <code>address.city</code>; for lists of
+            structures, <code>lines.title</code> collects the titles of all lines. Referenced objects are indexed as
+            their UUID. Values are converted to the <strong>type</strong>; values that can't be converted are indexed as
+            <code>null</code>. <code>uuid</code> and <code>revision</code> are always part of a document.
+        </p>
+        <table class="table table-sm align-middle" id="fields">
+            <thead>
+            <tr>
+                <th>Name</th>
+                <th>Path</th>
+                <th>Type</th>
+                <th class="text-center">Searchable</th>
+                <th class="text-center">Filterable</th>
+                <th class="text-center">Sortable</th>
+                <th></th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <button class="btn btn-outline-secondary btn-sm mb-3" type="button" onclick="addField({})"><i class="bi bi-plus-lg"></i> Add field</button>
+
+        <div>
+            <button class="btn btn-primary" type="submit"><i class="bi bi-hammer"></i> Save and build</button>
+        </div>
+    </form>
+
+    <template id="field-row">
+        <tr>
+            <td><input class="form-control form-control-sm" data-key="name" required pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}"></td>
+            <td><input class="form-control form-control-sm" data-key="path" required></td>
+            <td>
+                <select class="form-select form-select-sm" data-key="type">
+                    {% for type in types %}<option value="{{ type }}">{{ type }}</option>{% endfor %}
+                </select>
+            </td>
+            <td class="text-center"><input class="form-check-input" type="checkbox" data-key="searchable"></td>
+            <td class="text-center"><input class="form-check-input" type="checkbox" data-key="filterable"></td>
+            <td class="text-center"><input class="form-check-input" type="checkbox" data-key="sortable"></td>
+            <td class="text-end"><button class="btn btn-outline-danger btn-sm" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x-lg"></i></button></td>
+        </tr>
+    </template>
+
+    <script>
+        let fieldCounter = 0;
+
+        function addField(field) {
+            const row = document.getElementById('field-row').content.firstElementChild.cloneNode(true);
+            const i = fieldCounter++;
+
+            row.querySelectorAll('[data-key]').forEach(input => {
+                const key = input.dataset.key;
+                input.name = `fields[${i}][${key}]`;
+                if (input.type === 'checkbox') {
+                    input.checked = field[key] ?? (key === 'searchable');
+                } else {
+                    input.value = field[key] ?? (key === 'type' ? 'string' : '');
+                }
+            });
+
+            document.querySelector('#fields tbody').appendChild(row);
+        }
+
+        function suggestFields() {
+            const classname = document.getElementById('classname').value;
+            if (!classname) {
+                alert('Choose a class first.');
+                return;
+            }
+            const params = new URLSearchParams({
+                action: 'index-edit',
+                storage: '{{ storage|e('js') }}',
+                classname,
+                suggest: '1',
+                newName: document.getElementById('name').value,
+            });
+            {% if not isNew %}params.set('name', '{{ name|e('js') }}');{% endif %}
+            location.href = '?' + params.toString();
+        }
+
+        const fields = {{ fields|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }};
+        (fields.length ? fields : [{}]).forEach(addField);
+    </script>
+    {% endif %}
+</div>
+{% endblock body %}

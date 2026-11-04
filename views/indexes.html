@@ -1,0 +1,144 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="container-fluid my-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0 me-auto">Search indexes <span class="badge bg-dark">{{ storage }}</span></h5>
+        {% if searchAvailable %}
+        <a class="btn btn-primary btn-sm" href="?action=index-edit&storage={{ storage|url_encode }}" role="button">
+            <i class="bi bi-plus-lg"></i> New index
+        </a>
+        {% endif %}
+    </div>
+
+    {% if not searchAvailable %}
+    <div class="alert alert-warning">
+        Search indexes need the package <code>loupe/loupe</code> and the PHP extensions <code>intl</code> and
+        <code>pdo_sqlite</code>: <code>composer require loupe/loupe</code>
+    </div>
+    {% endif %}
+
+    {% if message %}<div class="alert alert-success">{{ message }}</div>{% endif %}
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    <div id="action-error" class="alert alert-danger hidden"></div>
+
+    {% if searchAvailable and indexes is empty %}
+    <p class="text-muted">
+        No search indexes yet. An index makes the objects of one class searchable by full text and filterable
+        by their fields. Indexes are stored in <code>{{ storage }}/indexes/</code>.
+    </p>
+    {% endif %}
+
+    {% if indexes is not empty %}
+    <div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead>
+        <tr>
+            <th>Name</th>
+            <th>Class</th>
+            <th>Engine</th>
+            <th>Status</th>
+            <th class="text-end">Documents</th>
+            <th class="text-end">Pending changes</th>
+            <th>Fields</th>
+            <th>Last build</th>
+            <th></th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for index in indexes %}
+        {% if index.broken is defined %}
+        <tr>
+            <td>{{ index.name }}</td>
+            <td colspan="7" class="text-danger">{{ index.broken }}</td>
+            <td class="text-end">
+                <button class="btn btn-outline-danger btn-sm" onclick="dropIndex('{{ index.name|e('js') }}')"><i class="bi bi-trash"></i> Drop</button>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td><strong>{{ index.name }}</strong></td>
+            <td><code>{{ index.className }}</code></td>
+            <td>{{ index.engine }}</td>
+            <td>
+                {% set badge = {'ready': 'success', 'building': 'info', 'outdated': 'warning', 'new': 'secondary'}[index.status] %}
+                <span class="badge bg-{{ badge }}">{{ index.status }}</span>
+                {% if index.status == 'building' %}
+                <small class="text-muted">{{ index.progress.percent }} %</small>
+                {% endif %}
+                {% if index.errors is not empty %}
+                <span class="badge bg-danger" title="{{ index.errors|join('\n') }}">{{ index.errors|length }} errors</span>
+                {% endif %}
+            </td>
+            <td class="text-end">{{ index.documents ?? '–' }}</td>
+            <td class="text-end">{{ index.pending }}</td>
+            <td>
+                {% for field in index.fields %}
+                <span class="badge text-bg-light border" title="path: {{ field.path }}">
+                    {{ field.name }} <small class="text-muted">{{ field.type }}</small>
+                    {% if field.searchable %}<i class="bi bi-search" title="searchable"></i>{% endif %}
+                    {% if field.filterable %}<i class="bi bi-funnel" title="filterable"></i>{% endif %}
+                    {% if field.sortable %}<i class="bi bi-sort-down" title="sortable"></i>{% endif %}
+                </span>
+                {% endfor %}
+            </td>
+            <td class="text-nowrap"><small>{{ index.lastBuildAt ? index.lastBuildAt|date('Y-m-d H:i') : 'never' }}</small></td>
+            <td class="text-end text-nowrap">
+                <a class="btn btn-outline-primary btn-sm {% if index.documents is null %}disabled{% endif %}"
+                   href="?action=index-search&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}"><i class="bi bi-search"></i> Search</a>
+                <a class="btn btn-outline-secondary btn-sm"
+                   href="?action=index-edit&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}"><i class="bi bi-pencil"></i> Edit</a>
+                <a class="btn btn-outline-secondary btn-sm"
+                   href="?action=index-build&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}{% if index.status != 'building' %}&start=1{% endif %}">
+                    <i class="bi bi-arrow-repeat"></i> {% if index.status == 'building' %}Progress{% else %}Rebuild{% endif %}</a>
+                <button class="btn btn-outline-secondary btn-sm" onclick="syncIndex('{{ index.name|e('js') }}')"
+                        {% if index.pending == 0 or index.documents is null %}disabled{% endif %}><i class="bi bi-arrow-down-up"></i> Sync</button>
+                <button class="btn btn-outline-danger btn-sm" onclick="dropIndex('{{ index.name|e('js') }}')"><i class="bi bi-trash"></i> Drop</button>
+            </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    const storage = '{{ storage|e('js') }}';
+
+    async function postIndexAction(action, name) {
+        const body = new FormData();
+        body.append('action', action);
+        body.append('storage', storage);
+        body.append('name', name);
+
+        const response = await fetch('?action=' + encodeURIComponent(action), {method: 'POST', body});
+        const data = await response.json();
+        if (!data.ok) {
+            const error = document.getElementById('action-error');
+            error.textContent = data.error;
+            error.classList.remove('hidden');
+            return null;
+        }
+        return data.result;
+    }
+
+    async function syncIndex(name) {
+        const result = await postIndexAction('index-sync', name);
+        if (result) {
+            location.href = `?action=indexes&storage=${encodeURIComponent(storage)}&message=${encodeURIComponent(`${result.applied} changes applied to ${name}.`)}`;
+        }
+    }
+
+    async function dropIndex(name) {
+        if (!confirm(`Drop the search index "${name}" with all its data? The stored objects are not affected.`)) {
+            return;
+        }
+        if (await postIndexAction('index-drop', name)) {
+            location.href = `?action=indexes&storage=${encodeURIComponent(storage)}&message=${encodeURIComponent(`Index ${name} dropped.`)}`;
+        }
+    }
+</script>
+{% endblock body %}

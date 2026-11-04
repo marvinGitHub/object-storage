@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\UUID;
 
+use InvalidArgumentException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use ReflectionException;
@@ -66,6 +67,37 @@ class Helper
             throw new InvalidUUIDException(sprintf('Invalid UUID: %s', $uuid));
         }
         $object->setUUID($uuid);
+    }
+
+    /**
+     * Creates a UUID that is always the same for the same input, in the format of version 4, so it passes the
+     * Validator: e.g. to store an object under a UUID derived from its name and find it by the name again.
+     *
+     * The UUID is made from the first 32 hex digits of the hash of the input, with the version and variant set.
+     * It isn't random like a real version 4 UUID: use an input that is unique in its context, e.g. prefixed by
+     * what it identifies ("search-index:products").
+     *
+     * @param string $input The input the UUID is derived from.
+     * @param string $algorithm A hash algorithm of hash_algos() with at least 128 bits, e.g. "md5", "sha1", "sha256".
+     * @return string The UUID, lowercase.
+     * @throws InvalidArgumentException If the algorithm is unknown or its hashes are shorter than 128 bits.
+     */
+    public static function createFixedUuidV4(string $input, string $algorithm = 'md5'): string
+    {
+        if (!in_array($algorithm, hash_algos(), true)) {
+            throw new InvalidArgumentException(sprintf('Unknown hash algorithm "%s".', $algorithm));
+        }
+
+        $hash = hash($algorithm, $input);
+        if (strlen($hash) < 32) {
+            throw new InvalidArgumentException(sprintf('The hash algorithm "%s" yields less than 128 bits.', $algorithm));
+        }
+
+        $hash = substr($hash, 0, 32);
+        $hash[12] = '4';                                 // version 4
+        $hash[16] = '89ab'[hexdec($hash[16]) & 3];       // variant RFC 4122
+
+        return sprintf('%s-%s-%s-%s-%s', substr($hash, 0, 8), substr($hash, 8, 4), substr($hash, 12, 4), substr($hash, 16, 4), substr($hash, 20, 12));
     }
 
     /**

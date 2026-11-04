@@ -4,6 +4,7 @@ use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
+use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\Cache\Psr16Cache;
 use Twig\Environment;
@@ -12,6 +13,17 @@ use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Metadata\Metadata;
+use melia\ObjectStorage\Search\DocumentBuilder;
+use melia\ObjectStorage\Search\Engine\EngineInterface;
+use melia\ObjectStorage\Search\Field;
+use melia\ObjectStorage\Search\FieldType;
+use melia\ObjectStorage\Search\Index\Index;
+use melia\ObjectStorage\Search\Index\Definition;
+use melia\ObjectStorage\Search\Index\IndexInterface;
+use melia\ObjectStorage\Search\Index\Manager;
+use melia\ObjectStorage\Search\Loupe\LoupeEngine;
+use melia\ObjectStorage\Search\Request;
+use Loupe\Loupe\LoupeFactory;
 use function SebastianBergmann\ObjectGraph\object_graph_dump;
 
 require_once __DIR__ . '/vendor/autoload.php';
@@ -70,6 +82,117 @@ $buildStorage = static function (string $storageDir) use ($psr16, $createCacheKe
     $storage->getStrategy()->setShardDepth($depth);
 
     return $storage;
+};
+
+// the available search engines; Loupe needs loupe/loupe, ext-intl and ext-pdo_sqlite
+$searchEngines = [];
+if (class_exists(LoupeFactory::class) && extension_loaded('intl') && extension_loaded('pdo_sqlite')) {
+    $searchEngines[] = new LoupeEngine();
+}
+$searchAvailable = [] !== $searchEngines;
+
+/* the search indexes of a storage, attached so changes made in the viewer are applied to them */
+$searchFor = static function (ObjectStorage $storage) use ($searchEngines): ?Manager {
+    static $instances = [];
+
+    if ([] === $searchEngines) {
+        return null;
+    }
+
+    $id = spl_object_id($storage);
+    if (!isset($instances[$id])) {
+        $instances[$id] = new Manager($storage, $searchEngines);
+        $instances[$id]->attach();
+    }
+
+    return $instances[$id];
+};
+
+$engineNames = array_map(static fn(EngineInterface $engine): string => $engine->getName(), $searchEngines);
+
+$buildStorage = static function (?string $storageDir) use ($buildStorage, $searchFor): ObjectStorage {
+    $storage = $buildStorage((string)$storageDir);
+    $searchFor($storage);
+    return $storage;
+};
+
+$jsonResponse = static function (array $data, int $status = 200): void {
+    http_response_code($status);
+    header('Content-Type: application/json');
+    echo json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+};
+
+$requirePost = static function (): void {
+    if ('POST' !== ($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
+        throw new RuntimeException('This action requires a POST request.');
+    }
+};
+
+/* the index summary shown in the list */
+$describeIndex = static function (IndexInterface $index): array {
+    $definition = $index->getDefinition();
+    $state = $index->getState();
+
+    return [
+        'name' => $index->getName(),
+        'engine' => $index->getEngineName(),
+        'className' => $definition->className,
+        'status' => $index->getStatus(),
+        'documents' => $index->countDocuments(),
+        'pending' => $index->countPendingChanges(),
+        'fields' => array_map(static fn(Field $field): array => $field->toArray(), $definition->fields),
+        'languages' => $definition->languages,
+        'lastBuildAt' => $state->lastBuildAt,
+        'lastSyncAt' => $state->lastSyncAt,
+        'errors' => $state->errors,
+        'progress' => $index->getProgress($state),
+    ];
+};
+
+/* field suggestions from a stored object of the class: path => type */
+$suggestFields = static function (ObjectStorage $storage, string $className): array {
+    foreach ($storage->list($className) as $uuid) {
+        $metadata = $storage->loadMetadata($uuid);
+        $data = json_decode((string)@file_get_contents($storage->getFilePathData($uuid)), true);
+        if (null === $metadata || !is_array($data)) {
+            continue;
+        }
+
+        return array_map(
+            static fn(Field $field): array => $field->toArray(),
+            DocumentBuilder::suggestFields($data, $metadata->getReservedReferenceName())
+        );
+    }
+
+    return [];
+};
+
+/* the definition from the posted form */
+$definitionFromRequest = static function (array $input): Definition {
+    $fields = [];
+    foreach ($input['fields'] ?? [] as $field) {
+        if ('' === trim((string)($field['name'] ?? '')) && '' === trim((string)($field['path'] ?? ''))) {
+            continue; // empty row
+        }
+        $fields[] = Field::fromArray([
+            'name' => trim((string)($field['name'] ?? '')),
+            'path' => trim((string)($field['path'] ?? '')),
+            'type' => (string)($field['type'] ?? FieldType::STRING->value),
+            'searchable' => isset($field['searchable']),
+            'filterable' => isset($field['filterable']),
+            'sortable' => isset($field['sortable']),
+        ]);
+    }
+
+    $languages = array_values(array_filter(array_map('trim', explode(',', (string)($input['languages'] ?? '')))));
+
+    return new Definition(
+        name: trim((string)($input['name'] ?? '')),
+        className: trim((string)($input['classname'] ?? '')),
+        fields: $fields,
+        languages: $languages,
+        engine: '' === trim((string)($input['engine'] ?? '')) ? null : trim((string)$input['engine']),
+    );
 };
 
 try {
@@ -136,7 +259,7 @@ try {
 
             try {
                 $storage = $buildStorage($storageDir);
-                $storage->delete($uuid);
+                $storage->delete($uuid); // the attached search indexes follow the delete
                 $success = false === $storage->exists($uuid);
             } catch (Throwable $e) {
                 $success = false;
@@ -174,6 +297,13 @@ try {
                 $storage->createStub($storage->getClassName($uuid), $uuidNew);
                 $storage->getLockAdapter()->releaseLock($uuid);
                 $success = true;
+
+                // written without the storage: the search indexes are notified explicitly
+                try {
+                    $searchFor($storage)?->notifyChanged($uuidNew, $metadata->getClassName());
+                } catch (Throwable $e) {
+                    $logger->error($e);
+                }
             } catch (Throwable $e) {
                 $success = false;
                 $logger->error($e);
@@ -210,7 +340,25 @@ try {
                 }
             }
 
+            // the search indexes of the class of the record, to choose which to update when saving it
+            $recordIndexes = [];
+            if (null !== $classname && null !== ($search = $searchFor($storage))) {
+                try {
+                    foreach ($search->getIndexesForClass($classname) as $name => $index) {
+                        $recordIndexes[] = [
+                            'name' => $name,
+                            'engine' => $index->getEngineName(),
+                            'status' => $index->getStatus(),
+                            'pending' => $index->hasPendingChange($uuid),
+                        ];
+                    }
+                } catch (Throwable $e) {
+                    $logger->error($e);
+                }
+            }
+
             echo $twig->render('view-record.html', [
+                'indexes' => $recordIndexes,
                 'data' => json_decode($json ?? '{}', true, 512, JSON_THROW_ON_ERROR),
                 'json' => $json ?? '',
                 'size' => $size ?? 0,
@@ -272,6 +420,22 @@ try {
                         }
 
                         $success = true;
+
+                        // written without the storage: the chosen search indexes are notified explicitly; without
+                        // a choice in the form (e.g. no indexes when the page was loaded), all of the class
+                        try {
+                            $storage->getLockAdapter()->releaseLock($uuid);
+                            $lockAcquired = false;
+                            $search = $searchFor($storage);
+                            if (null !== $search) {
+                                $chosen = isset($_POST['indexSelection']) ? array_map('strval', (array)($_POST['indexes'] ?? [])) : null;
+                                $updatedIndexes = $search->notifyChanged($uuid, $metadata->getClassName(), $chosen);
+                                $skippedIndexes = array_values(array_diff(array_keys($search->getIndexesForClass($metadata->getClassName())), $updatedIndexes));
+                            }
+                        } catch (Throwable $e) {
+                            $logger->error($e);
+                            $indexError = $e->getMessage();
+                        }
                     } catch (Throwable $e) {
                         $success = false;
                         $logger->error($e);
@@ -287,6 +451,9 @@ try {
                 'storage' => $storageDir,
                 'success' => $success ?? false,
                 'uuid' => $uuid,
+                'updatedIndexes' => $updatedIndexes ?? [],
+                'skippedIndexes' => $skippedIndexes ?? [],
+                'indexError' => $indexError ?? null,
             ]);
             break;
         case 'export-record':
@@ -329,51 +496,321 @@ try {
 
             break;
         case 'rebuild-stubs':
+            // the page runs the rebuild step by step via the JSON actions below, showing the progress
             $storageDir = $_GET['storage'] ?? null;
-            $storage = $buildStorage($storageDir);
-            $success = true;
-            try {
-                $storage->rebuildStubs();
-            } catch (Throwable $e) {
-                $success = false;
-                $logger->error($e);
-            }
+            $stubRebuilder = new StubRebuilder();
+            $stubRebuilder->setStorage($buildStorage($storageDir));
 
             echo $twig->render('rebuild-stubs.html', [
                 'storage' => $storageDir,
-                'success' => $success,
+                'running' => $stubRebuilder->isRunning() ? $stubRebuilder->getProgress() : null,
             ]);
-
             break;
-        case 'rebuild-shards':
-            $success = null;
+        case 'rebuild-stubs-start':
+        case 'rebuild-stubs-step':
             try {
-                $storageDir = $_GET['storage'] ?? null;
-                $depth = $_GET['depth'] ?? null;
+                $requirePost();
+                $stubRebuilder = new StubRebuilder();
+                $stubRebuilder->setStorage($buildStorage($_POST['storage'] ?? null));
 
-                $storage = $buildStorage($storageDir);
+                $progress = 'rebuild-stubs-start' === $action
+                    ? $stubRebuilder->start()
+                    : $stubRebuilder->step(max(1, min(20000, (int)($_POST['batchSize'] ?? StubRebuilder::DEFAULT_BATCH_SIZE))));
 
-                if ($depth) {
-                    $storage->getStrategy()->setShardDepth((int)$depth);
+                $jsonResponse(['ok' => true, 'result' => $progress]);
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
+            break;
+        case 'indexes':
+            $storageDir = $_GET['storage'] ?? null;
+            $indexes = [];
+            $error = null;
 
-                    $shardRebuilder = new ShardRebuilder();
-                    $shardRebuilder->setStorage($storage);
-                    $shardRebuilder->rebuildShards();
+            if ($searchAvailable) {
+                try {
+                    foreach ($searchFor($buildStorage($storageDir))->list() as $index) {
+                        try {
+                            $indexes[] = $describeIndex($index);
+                        } catch (Throwable $e) {
+                            $logger->error($e);
+                            $indexes[] = ['name' => $index->getName(), 'broken' => $e->getMessage()];
+                        }
+                    }
+                } catch (Throwable $e) {
+                    $logger->error($e);
+                    $error = $e->getMessage();
+                }
+            }
 
-                    $psr16->set($key = $createCacheKeyShardDepth($storageDir), $depth, 3600);
+            echo $twig->render('indexes.html', [
+                'storage' => $storageDir,
+                'searchAvailable' => $searchAvailable,
+                'indexes' => $indexes,
+                'error' => $error,
+                'message' => $_GET['message'] ?? null,
+            ]);
+            break;
+        case 'index-edit':
+            // create (no name) or edit an index; with "suggest", the fields are suggested from a stored object
+            $storageDir = $_GET['storage'] ?? null;
+            $name = $_GET['name'] ?? null;
+            $storage = $buildStorage($storageDir);
+            $search = $searchFor($storage);
 
-                    $success = true;
+            $classnames = $storage->getClassNames();
+            sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
+
+            $definition = null;
+            if (null !== $name && null !== $search) {
+                $definition = $search->get($name)->getDefinition()->toArray();
+            }
+
+            $classname = $_GET['classname'] ?? $definition['className'] ?? '';
+            $fields = $definition['fields'] ?? [];
+            if (isset($_GET['suggest']) && '' !== $classname) {
+                $fields = $suggestFields($storage, $classname);
+            }
+
+            echo $twig->render('index-edit.html', [
+                'storage' => $storageDir,
+                'searchAvailable' => $searchAvailable,
+                'isNew' => null === $definition,
+                'name' => $definition['name'] ?? ($_GET['newName'] ?? ''),
+                'classname' => $classname,
+                'classnames' => $classnames,
+                'languages' => implode(', ', $definition['languages'] ?? []),
+                'fields' => $fields,
+                'types' => array_map(static fn(FieldType $type): string => $type->value, FieldType::cases()),
+                'engines' => $engineNames,
+                'engine' => $definition['engine'] ?? null,
+                'error' => null,
+            ]);
+            break;
+        case 'index-save':
+            $requirePost();
+            $storageDir = $_POST['storage'] ?? null;
+            $storage = $buildStorage($storageDir);
+            $search = $searchFor($storage) ?? throw new RuntimeException('Search is not available.');
+            $isNew = '1' === ($_POST['isNew'] ?? '1');
+
+            try {
+                $definition = $definitionFromRequest($_POST);
+                $isNew ? $search->create($definition) : $search->update($definition);
+
+                // build it right away, showing the progress
+                header('Location: ?action=index-build&start=1&storage=' . rawurlencode((string)$storageDir) . '&name=' . rawurlencode($definition->name));
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $classnames = $storage->getClassNames();
+                sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
+
+                echo $twig->render('index-edit.html', [
+                    'storage' => $storageDir,
+                    'searchAvailable' => $searchAvailable,
+                    'isNew' => $isNew,
+                    'name' => $_POST['name'] ?? '',
+                    'classname' => $_POST['classname'] ?? '',
+                    'classnames' => $classnames,
+                    'languages' => $_POST['languages'] ?? '',
+                    'fields' => array_values(array_map(static fn(array $field): array => [
+                        'name' => $field['name'] ?? '',
+                        'path' => $field['path'] ?? '',
+                        'type' => $field['type'] ?? FieldType::STRING->value,
+                        'searchable' => isset($field['searchable']),
+                        'filterable' => isset($field['filterable']),
+                        'sortable' => isset($field['sortable']),
+                    ], $_POST['fields'] ?? [])),
+                    'types' => array_map(static fn(FieldType $type): string => $type->value, FieldType::cases()),
+                    'engines' => $engineNames,
+                    'engine' => $_POST['engine'] ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+            break;
+        case 'index-build':
+            // the page runs the build step by step via the JSON actions below, showing the progress
+            $storageDir = $_GET['storage'] ?? null;
+            $name = $_GET['name'] ?? '';
+            $search = $searchFor($buildStorage($storageDir));
+
+            echo $twig->render('index-build.html', [
+                'storage' => $storageDir,
+                'searchAvailable' => $searchAvailable,
+                'index' => null === $search ? null : $describeIndex($search->get($name)),
+                'start' => isset($_GET['start']),
+            ]);
+            break;
+        case 'index-build-start':
+        case 'index-build-step':
+        case 'index-build-cancel':
+        case 'index-sync':
+        case 'index-drop':
+            // JSON actions, called by the pages
+            try {
+                $requirePost();
+                $storageDir = $_POST['storage'] ?? null;
+                $search = $searchFor($buildStorage($storageDir)) ?? throw new RuntimeException('Search is not available.');
+                $index = $search->get((string)($_POST['name'] ?? ''));
+
+                $result = match ($action) {
+                    // a running build is continued instead of started again, e.g. after reloading the page
+                    'index-build-start' => IndexInterface::STATUS_BUILDING === $index->getStatus() ? $index->getProgress() : $index->startBuild(),
+                    'index-build-step' => $index->buildStep(max(1, min(5000, (int)($_POST['batchSize'] ?? Index::DEFAULT_BATCH_SIZE)))),
+                    'index-build-cancel' => (static function () use ($index): array {
+                        $index->cancelBuild();
+                        return $index->getProgress();
+                    })(),
+                    'index-sync' => ['applied' => $index->sync()],
+                    'index-drop' => (static function () use ($search, $index): array {
+                        $search->drop($index->getName());
+                        return ['dropped' => true];
+                    })(),
+                };
+
+                $jsonResponse(['ok' => true, 'result' => $result]);
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
+            break;
+        case 'index-search':
+            $storageDir = $_GET['storage'] ?? null;
+            $name = $_GET['name'] ?? '';
+            $storage = $buildStorage($storageDir);
+            $search = $searchFor($storage);
+
+            $form = [
+                'query' => (string)($_GET['q'] ?? ''),
+                'filter' => (string)($_GET['filter'] ?? ''),
+                'sort' => (string)($_GET['sort'] ?? ''),
+                'facets' => (string)($_GET['facets'] ?? ''),
+                'page' => max(1, (int)($_GET['page'] ?? 1)),
+                'hitsPerPage' => max(1, min(1000, (int)($_GET['hitsPerPage'] ?? 20))),
+            ];
+
+            $result = null;
+            $error = null;
+            $index = null;
+            $definition = null;
+
+            try {
+                if (null === $search) {
+                    throw new RuntimeException('Search is not available.');
+                }
+                $index = $search->get($name);
+                $definition = $index->getActiveDefinition() ?? $index->getDefinition();
+
+                if (isset($_GET['run'])) {
+                    $split = static fn(string $list): array => array_values(array_filter(array_map('trim', explode(',', $list))));
+
+                    // engine-independent; only the filter is written in the language of the engine
+                    $searchResult = $index->search(new Request(
+                        query: $form['query'],
+                        filter: '' === trim($form['filter']) ? null : $form['filter'],
+                        sort: $split($form['sort']),
+                        facets: $split($form['facets']),
+                        page: $form['page'],
+                        hitsPerPage: $form['hitsPerPage'],
+                        highlight: true,
+                        highlightStartTag: '<mark>',
+                        highlightEndTag: '</mark>',
+                    ));
+
+                    $hits = [];
+                    foreach ($searchResult->hits as $hit) {
+                        $values = [];
+                        foreach ($hit->document as $attribute => $value) {
+                            $highlighted = $hit->highlighted[$attribute] ?? null;
+                            $values[] = [
+                                'name' => $attribute,
+                                'value' => is_scalar($value) || null === $value ? var_export($value, true) : json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                                // the text is escaped, only the marks of the matches are kept as markup
+                                'highlighted' => null === $highlighted ? null : str_replace(['&lt;mark&gt;', '&lt;/mark&gt;'], ['<mark>', '</mark>'], htmlspecialchars($highlighted)),
+                            ];
+                        }
+
+                        $hits[] = ['uuid' => $hit->uuid, 'score' => $hit->score, 'values' => $values];
+                    }
+
+                    // page links: the first and last three, two around the current page, gaps in between
+                    $pageLinks = [];
+                    for ($i = 1, $total = $searchResult->totalPages; $i <= $total; $i++) {
+                        if ($i <= 3 || $i > $total - 3 || abs($i - $searchResult->page) <= 2) {
+                            $pageLinks[] = $i;
+                        } elseif (null !== end($pageLinks)) {
+                            $pageLinks[] = null;
+                        }
+                    }
+
+                    $result = [
+                        'hits' => $hits,
+                        'pageLinks' => $pageLinks,
+                        'totalHits' => $searchResult->totalHits,
+                        'totalPages' => $searchResult->totalPages,
+                        'page' => $searchResult->page,
+                        'processingTimeMs' => $searchResult->processingTimeMs,
+                        'facets' => $searchResult->facets,
+                    ];
                 }
             } catch (Throwable $e) {
                 $logger->error($e);
-                $success = false;
+                $error = $e->getMessage();
             }
+
+            echo $twig->render('index-search.html', [
+                'storage' => $storageDir,
+                'name' => $name,
+                'form' => $form,
+                'result' => $result,
+                'error' => $error,
+                'status' => $index?->getStatus(),
+                'engine' => $index?->getEngineName(),
+                'fields' => null === $definition ? [] : array_map(static fn(Field $field): array => $field->toArray(), $definition->fields),
+                'queryString' => http_build_query(array_diff_key($_GET, ['page' => true])),
+            ]);
+            break;
+        case 'rebuild-shards':
+            // the page runs the rebuild step by step via the JSON actions below, showing the progress
+            $storageDir = $_GET['storage'] ?? null;
+            $storage = $buildStorage($storageDir);
+            $shardRebuilder = new ShardRebuilder();
+            $shardRebuilder->setStorage($storage);
 
             echo $twig->render('rebuild-shards.html', [
                 'storage' => $storageDir,
-                'success' => $success,
+                'currentDepth' => $storage->getStrategy()?->getShardDepth(),
+                'running' => $shardRebuilder->isRunning() ? $shardRebuilder->getProgress() : null,
             ]);
+            break;
+        case 'rebuild-shards-start':
+        case 'rebuild-shards-step':
+            try {
+                $requirePost();
+                $storageDir = $_POST['storage'] ?? null;
+                $storage = $buildStorage($storageDir);
+                $shardRebuilder = new ShardRebuilder();
+                $shardRebuilder->setStorage($storage);
 
+                if ('rebuild-shards-start' === $action) {
+                    $depth = (int)($_POST['depth'] ?? 0);
+                    $storage->getStrategy()->setShardDepth($depth); // validates the depth
+                    $progress = $shardRebuilder->start();
+                } else {
+                    $progress = $shardRebuilder->step(max(1, min(20000, (int)($_POST['batchSize'] ?? ShardRebuilder::DEFAULT_BATCH_SIZE))));
+                }
+
+                // the viewer detects the depth of a storage once and caches it: use the new one from now on
+                if ($progress['done'] && null !== $progress['depth']) {
+                    $psr16->set($createCacheKeyShardDepth((string)$storageDir), $progress['depth'], 3600);
+                }
+
+                $jsonResponse(['ok' => true, 'result' => $progress]);
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
             break;
     }
 } catch (Throwable $e) {

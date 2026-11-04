@@ -3,8 +3,9 @@
 {% block body %}
 {% if exists %}
 <div class="d-flex align-items-center gap-2 flex-wrap my-2">
-    <a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage}}" role="button">Rebuild Stubs</a>
-    <a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage}}" role="button">Rebuild Shards</a>
+    <a class="btn btn-warning btn-sm" href="?action=rebuild-stubs&storage={{storage|url_encode}}" role="button">Rebuild Stubs</a>
+    <a class="btn btn-warning btn-sm" href="?action=rebuild-shards&storage={{storage|url_encode}}" role="button">Rebuild Shards</a>
+    <a class="btn btn-primary btn-sm" href="?action=indexes&storage={{storage|url_encode}}" role="button"><i class="bi bi-search"></i> Search indexes</a>
 
     <input type="text" class="form-control form-control-sm w-auto" id="input-uuid"
            placeholder="uuid..." name="uuid" onclick="pasteUuidFromClipboard()">
@@ -37,7 +38,7 @@
 {% if hasEntries %}
 <ul class="list-group">
     <li class="list-group-item list-group-item-secondary">
-        <a href="?storage=storage&action=list-classnames"> <span class="badge bg-dark">{{storage}}</span></a>
+        <a href="?action=list-classnames&storage={{ storage|url_encode }}"> <span class="badge bg-dark">{{storage}}</span></a>
     </li>
     {% for classname in classnames %}
     <li class="list-group-item">{{ classname }}&nbsp;<a class="btn btn-secondary btn-sm"

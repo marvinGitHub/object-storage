@@ -1,22 +1,69 @@
 {% extends 'index.html' %}
 
 {% block body %}
-<form action="view.php" method="get">
-    <input type="hidden" name="action" value="rebuild-shards"/>
-    <input type="hidden" name="storage" value="{{ storage|url_encode }}"/>
-    <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{storage}}" role="button">Back</a>
-    <input class="form-control mr-sm-2" type="number" min="0" max="32" name="depth" value="2"/>
-    <input class="btn btn-primary btn-sm" type="submit" value="Rebuild"/>
-</form>
-{% if success != null %}
-    {% if success %}
-    <div class="alert alert-success" role="alert">
-        Done.
+<div class="container-fluid my-3" style="max-width: 900px">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        <a class="btn btn-secondary btn-sm" href="?action=list-classnames&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0">Rebuild shards <span class="badge bg-dark">{{ storage }}</span></h5>
     </div>
+
+    <p class="text-muted">
+        Moves the object files into the directories of the chosen shard depth (currently <strong>{{ currentDepth ?? '?' }}</strong>).
+        The storage is in safe mode until the rebuild is complete: objects can be read, but not changed.
+        The page moves the files step by step; if it is closed, the rebuild can be continued here or with
+        <code>maintenance:rebuild-shards</code>, and the storage stays in safe mode until then.
+    </p>
+
+    {% if running %}
+    <div class="alert alert-warning py-2">A rebuild to depth <strong>{{ running.depth }}</strong> is running: {{ running.processed }} of {{ running.total }} files done. It is continued now.</div>
     {% else %}
-    <div class="alert alert-danger" role="alert">
-        An error occurred while rebuilding shards.
-    </div>
+    <form id="rebuild-form" class="d-flex align-items-end gap-2 mb-3">
+        <div>
+            <label class="form-label small mb-0" for="depth">Shard depth</label>
+            <input class="form-control form-control-sm" id="depth" type="number" min="1" max="32" name="depth" value="{{ currentDepth ?? 2 }}" style="width: 7rem" required/>
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-arrow-repeat"></i> Rebuild</button>
+    </form>
     {% endif %}
-{% endif %}
+
+    <div id="progress-section" class="{% if not running %}hidden{% endif %}">
+        {% include 'step-progress.html' with {unit: 'Objects'} %}
+    </div>
+
+    <a id="back" class="btn btn-outline-secondary btn-sm hidden" href="?action=list-classnames&storage={{ storage|url_encode }}">Back to the classes</a>
+
+    <script>
+        const runner = new StepRunner({
+            params: {storage: '{{ storage|e('js') }}'},
+            startAction: 'rebuild-shards-start',
+            stepAction: 'rebuild-shards-step',
+            extra: {label: 'Files moved', value: progress => progress.moved},
+            onDone(progress) {
+                runner.finish(`Done: ${progress.moved} files of ${progress.total} objects moved to depth ${progress.depth}.`, true);
+                document.getElementById('back').classList.remove('hidden');
+            },
+        });
+
+        async function rebuild(start, startParams = {}) {
+            document.getElementById('progress-section').classList.remove('hidden');
+            document.getElementById('rebuild-form')?.classList.add('hidden');
+            const progress = await runner.run(start, startParams);
+            if (progress === null) {
+                document.getElementById('back').classList.remove('hidden');
+            }
+        }
+
+        {% if running %}
+        rebuild(false);
+        {% else %}
+        document.getElementById('rebuild-form').addEventListener('submit', event => {
+            event.preventDefault();
+            const depth = document.getElementById('depth').value;
+            if (confirm(`Move all object files to shard depth ${depth}? The storage is in safe mode meanwhile.`)) {
+                rebuild(true, {depth});
+            }
+        });
+        {% endif %}
+    </script>
+</div>
 {% endblock body %}

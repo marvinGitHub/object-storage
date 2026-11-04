@@ -1,0 +1,82 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="container-fluid my-3" style="max-width: 900px">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+        <a class="btn btn-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button">Back</a>
+        <h5 class="mb-0">Build search index <code>{{ index.name ?? '' }}</code></h5>
+    </div>
+
+    {% if not searchAvailable or index is null %}
+    <div class="alert alert-warning">Search indexes need the package <code>loupe/loupe</code> and the PHP extensions <code>intl</code> and <code>pdo_sqlite</code>.</div>
+    {% else %}
+    <p class="text-muted">
+        Indexing the objects of <code>{{ index.className }}</code>. The page indexes them step by step; keep it open
+        until the build is complete. If it is closed, the build can be continued later from the index list.
+        Searches use the previous build until this one is complete.
+    </p>
+
+    {% include 'step-progress.html' with {unit: 'Indexed', showFailed: true} %}
+
+    <div class="d-flex gap-2 mb-3">
+        <button id="cancel" class="btn btn-outline-danger btn-sm" onclick="cancelBuild()"><i class="bi bi-x-lg"></i> Cancel build</button>
+        <a id="search" class="btn btn-primary btn-sm hidden" href="?action=index-search&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}"><i class="bi bi-search"></i> Search</a>
+        <a id="list" class="btn btn-outline-secondary btn-sm hidden" href="?action=indexes&storage={{ storage|url_encode }}">Index list</a>
+    </div>
+
+    <div id="errors-wrapper" class="hidden">
+        <h6>Objects that couldn't be indexed (the last 20)</h6>
+        <ul id="errors" class="small font-monospace"></ul>
+    </div>
+
+    <script>
+        const runner = new StepRunner({
+            params: {storage: '{{ storage|e('js') }}', name: '{{ index.name|e('js') }}'},
+            startAction: 'index-build-start',
+            stepAction: 'index-build-step',
+            onProgress(progress) {
+                document.getElementById('errors').replaceChildren(...progress.errors.map(text => {
+                    const li = document.createElement('li');
+                    li.textContent = text;
+                    return li;
+                }));
+                document.getElementById('errors-wrapper').classList.toggle('hidden', progress.errors.length === 0);
+            },
+            onDone(progress) {
+                runner.finish(`Done: ${progress.documents ?? progress.processed} documents in the index.`, true);
+                showLinks(true);
+            },
+        });
+
+        function showLinks(success) {
+            document.getElementById('cancel').classList.add('hidden');
+            document.getElementById('list').classList.remove('hidden');
+            document.getElementById('search').classList.toggle('hidden', !success);
+        }
+
+        async function cancelBuild() {
+            if (!confirm('Cancel the build? The previous build stays active.')) {
+                return;
+            }
+            runner.cancelled = true;
+            try {
+                await runner.post('index-build-cancel');
+                runner.finish('Cancelled.', false);
+                showLinks(false);
+            } catch (e) {
+                runner.fail(e.message);
+            }
+        }
+
+        {% if start or index.status == 'building' %}
+        // the start action continues a running build instead of starting another one
+        runner.run(true).then(progress => progress === null && showLinks(false));
+        {% else %}
+        runner.render({{ index.progress|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|raw }});
+        runner.finish('{{ index.status|e('js') }}', true);
+        showLinks(true);
+        {% endif %}
+    </script>
+    {% endif %}
+</div>
+{% endblock body %}

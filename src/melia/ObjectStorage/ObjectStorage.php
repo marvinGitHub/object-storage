@@ -86,6 +86,7 @@ use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
+use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
 use ReflectionException;
@@ -669,7 +670,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @param string $className The name of the class for which the stub directory path is being generated.
      * @return string The full path to the class stub directory.
      */
-    protected function getClassStubDirectory(string $className): string
+    public function getClassStubDirectory(string $className): string
     {
         return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
     }
@@ -679,7 +680,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *
      * @return string The full path to the stub directory.
      */
-    protected function getStubDirectory(): string
+    public function getStubDirectory(): string
     {
         return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
     }
@@ -843,6 +844,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             }
 
             try {
+                $currentMetadata = null;
+
                 if ($writeGraph || $writeMetadata) {
                     // the revision is read from disk under the lock: the cached metadata may be outdated
                     $tracked = isset($this->revisions[$object]);
@@ -1069,40 +1072,44 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
+                try {
+                    $exists = $this->exists($referencedUuid);
+                    $writeChild = true;
 
-                $exists = $this->exists($referencedUuid);
-                $writeChild = true;
-
-                switch ($strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
-                    case ChildPersistence::IF_NOT_EXIST:
-                        if ($exists) {
+                    switch ($strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
+                        case ChildPersistence::IF_NOT_EXIST:
+                            if ($exists) {
+                                $writeChild = false;
+                            }
+                            break;
+                        case ChildPersistence::NEVER:
                             $writeChild = false;
-                        }
-                        break;
-                    case ChildPersistence::NEVER:
-                        $writeChild = false;
-                        break;
-                    case ChildPersistence::CALLBACK:
-                        try {
-                            $writeChild = $strategy?->shouldPersistChild($context, $value, $referencedUuid, $exists, $path) ?? false;
-                        } catch (Throwable $e) {
-                            $this->getLogger()?->log($e);
-                            $writeChild = false; // fail-closed; change to true if you prefer fail-open
-                        }
-                        break;
-                    default:
-                    case ChildPersistence::ALWAYS:
-                        // ignore
-                        break;
-                }
+                            break;
+                        case ChildPersistence::CALLBACK:
+                            try {
+                                $writeChild = $strategy?->shouldPersistChild($context, $value, $referencedUuid, $exists, $path) ?? false;
+                            } catch (Throwable $e) {
+                                $this->getLogger()?->log($e);
+                                $writeChild = false; // fail-closed; change to true if you prefer fail-open
+                            }
+                            break;
+                        default:
+                        case ChildPersistence::ALWAYS:
+                            // ignore
+                            break;
+                    }
 
-                if ($writeChild) {
-                    $this->serializeAndStore(
-                        $value,
-                        $referencedUuid,
-                        ($strategy?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
-                        $context
-                    );
+                    if ($writeChild) {
+                        $this->serializeAndStore(
+                            $value,
+                            $referencedUuid,
+                            ($strategy?->inheritLifetime($context) ?? false) ? $metadata->getLifetime() : null,
+                            $context
+                        );
+                    }
+                } finally {
+                    // the level is the depth of the graph, not the number of objects and arrays in it
+                    $context->decreaseLevel();
                 }
             }
 
@@ -1113,21 +1120,26 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $out = [];
             $context->increaseLevel();
 
-            foreach ($value as $k => $v) {
-                try {
-                    $isSupportedKey = is_string($k) || is_int($k);
+            try {
+                foreach ($value as $k => $v) {
+                    try {
+                        $isSupportedKey = is_string($k) || is_int($k);
 
-                    if (false === $isSupportedKey) {
-                        throw new UnsupportedKeyException('Only string and integer keys are supported.');
+                        if (false === $isSupportedKey) {
+                            throw new UnsupportedKeyException('Only string and integer keys are supported.');
+                        }
+
+                        $childPath = $path;
+                        $childPath[] = $k;
+
+                        $out[$k] = $this->transformValueForGraph($context, $v, $childPath);
+                    } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
+                        $this->getLogger()?->log($e);
                     }
-
-                    $childPath = $path;
-                    $childPath[] = $k;
-
-                    $out[$k] = $this->transformValueForGraph($context, $v, $childPath);
-                } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
-                    $this->getLogger()?->log($e);
                 }
+            } finally {
+                // the level is the depth of the graph, not the number of objects and arrays in it
+                $context->decreaseLevel();
             }
             return $out;
         }
@@ -1882,12 +1894,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         try {
             $adapter = $this->getIOAdapter();
 
+            // registered also for an existing stub: the registry may have been lost (e.g. while rebuilding stubs)
+            $this->registerClassname($className);
+
             $pathname = $this->getFilePathStub($className, $uuid);
             if ($adapter->isFile($pathname)) {
                 return;
             }
 
-            $this->registerClassname($className);
             $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
             $adapter->touch($pathname);
             $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, static fn() => new StubContext($uuid, $className));
@@ -2023,28 +2037,63 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Rebuilds all stub files in the stub directory by tearing down existing stubs
-     * and recreating them for each listed UUID.
+     * Rebuilds the class index (the stubs) in place: creates the missing stubs, removes those of objects that
+     * don't exist or are of another class, and rebuilds the registry of class names. The index stays usable
+     * meanwhile. Continues a rebuild started step by step, see StubRebuilder.
      *
-     * @return void
-     * @throws StubSavingFailureException
-     * @throws IOException
+     * @param callable(array): void|null $onProgress Called with the progress after every step.
+     * @return array The final progress, see StubRebuilder::getProgress().
      */
-    public function rebuildStubs(): void
+    public function rebuildStubs(?callable $onProgress = null): array
     {
-        /* tear down stub directory, otherwise list() method would use it */
-        $directory = new Directory($this->getStubDirectory());
-        $directory->tearDown();
+        $rebuilder = new StubRebuilder();
+        $rebuilder->setStorage($this);
 
-        foreach ($this->list() as $uuid) {
-            $className = $this->getClassName($uuid);
+        return $rebuilder->rebuildStubs($onProgress);
+    }
 
-            if (empty($className)) {
-                $this->markAsCorrupted($uuid);
-                continue;
+    /**
+     * Rebuilds the registry of class names from the stubs: a class is registered if it has a stub of an object of
+     * this class. Classes without objects are removed from it.
+     *
+     * @return array<string, string> The registered class names.
+     * @throws ClassnameRegistrationFailureException
+     */
+    public function rebuildClassnameRegistry(): array
+    {
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+
+        try {
+            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
+                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
+                $lockedHere = true;
             }
 
-            $this->createStub($className, $uuid);
+            // the stub directories are named after the hash of the class name: the class is read from an object
+            $classNames = [];
+            foreach (glob($this->getStubDirectory() . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR) ?: [] as $classStubDirectory) {
+                foreach ($this->createStubIterator($classStubDirectory) as $uuid) {
+                    $className = $this->getClassName($uuid);
+                    if (null !== $className && md5($className) === basename($classStubDirectory)) {
+                        $classNames[$className] = $className;
+                        break;
+                    }
+                }
+            }
+            ksort($classNames);
+
+            $this->createDirectoryIfNotExist($this->getStubDirectory());
+            $this->getWriter()->atomicWrite($this->getFilePathClassnames(), json_encode($classNames, JSON_THROW_ON_ERROR));
+            $this->registeredClassNamesCache = $classNames;
+
+            return $classNames;
+        } catch (Throwable $e) {
+            throw new ClassnameRegistrationFailureException(message: 'Unable to rebuild the registry of class names', previous: $e);
+        } finally {
+            if ($lockedHere) {
+                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
+            }
         }
     }
 
@@ -2289,7 +2338,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @return void
      * @throws IOException
      */
-    protected function markAsCorrupted(string $uuid): void
+    public function markAsCorrupted(string $uuid): void
     {
         $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
         $adapter = $this->getIOAdapter();

@@ -15,6 +15,19 @@ class DirectoryTest extends TestCase
         $this->assertTrue($result);
     }
 
+    public function testTeardownRemovesNestedContents(): void
+    {
+        $path = $this->reserveRandomDirectory();
+        mkdir($path . '/a/b/c', 0777, true);
+        file_put_contents($path . '/a/file.txt', 'x');
+        file_put_contents($path . '/a/b/c/.hidden', 'x');
+        mkdir($path . '/empty');
+
+        $this->assertTrue(Directory::remove($path));
+        $this->assertDirectoryDoesNotExist($path);
+        $this->assertFalse(Directory::remove($path), 'nothing left to remove');
+    }
+
     public function testTeardownNonExistentDirectory()
     {
         $directory = new Directory('/some/non/existent/directory');
