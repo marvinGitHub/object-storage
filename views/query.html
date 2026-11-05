@@ -1,0 +1,174 @@
+{% extends 'index.html' %}
+
+{% block body %}
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: 'Query'},
+]} %}
+    {% block title %}Query{% endblock %}
+    {% block badges %}<span class="text-muted small">OQL: SELECT … FROM Class … JOIN … WHERE … GROUP BY … ORDER BY … LIMIT</span>{% endblock %}
+{% endembed %}
+
+<form method="get" class="card card-body mb-3" id="query-form">
+    <input type="hidden" name="action" value="query">
+    <input type="hidden" name="storage" value="{{ storage }}">
+    <label class="form-label small mb-1" for="q">Query <span class="text-muted">— Ctrl+Enter runs it</span></label>
+    <textarea class="form-control font-monospace" id="q" name="q" rows="6" spellcheck="false" autofocus
+              placeholder="SELECT p.name, c.title AS category, COUNT(*) AS n&#10;FROM Product p JOIN Category c ON c = p.category&#10;GROUP BY p.name, c.title&#10;ORDER BY n DESC LIMIT 20">{{ query }}</textarea>
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+        <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-play-fill"></i> Run</button>
+        <div class="form-check mb-0" title="INSERT, UPDATE, DELETE: check and list the objects that would be written, write nothing">
+            <input class="form-check-input" type="checkbox" id="dry-run" name="dryRun" value="1" {{ dryRun ? 'checked' : '' }}>
+            <label class="form-check-label small" for="dry-run">Dry run</label>
+        </div>
+        <div class="dropdown">
+            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clock-history"></i> History</button>
+            <ul class="dropdown-menu" id="query-history"></ul>
+        </div>
+        <button class="btn btn-link btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#query-help">Syntax</button>
+        {% if classnames is not empty %}
+        <span class="small text-muted ms-auto">Classes:</span>
+        {% for class in classnames|slice(0, 12) %}
+        <button type="button" class="btn btn-outline-secondary btn-sm py-0 font-monospace query-class" data-class="{{ class }}" title="Insert {{ class }}">{{ class|split('\\')|last }}</button>
+        {% endfor %}
+        {% endif %}
+    </div>
+</form>
+
+<div class="collapse mb-3" id="query-help">
+    <div class="card card-body small">
+        <p class="mb-1"><strong>SELECT</strong> [DISTINCT] expressions [AS name] | * | alias.* <strong>FROM</strong> Class [alias]
+            [[INNER] | LEFT] <strong>JOIN</strong> Class alias <strong>ON</strong> condition …
+            [<strong>WHERE</strong> condition] [<strong>GROUP BY</strong> expressions] [<strong>HAVING</strong> condition]
+            [<strong>ORDER BY</strong> expression [ASC|DESC], …] [<strong>LIMIT</strong> n] [<strong>OFFSET</strong> n]</p>
+        <p class="mb-1"><strong>INSERT INTO</strong> Class (property, …) <strong>VALUES</strong> (value, …), … |
+            <strong>UPDATE</strong> Class [alias] <strong>SET</strong> property = value, … [<strong>WHERE</strong> condition] |
+            <strong>DELETE FROM</strong> Class [alias] [<strong>WHERE</strong> condition]
+            — references with <code>REF('uuid')</code>; asks before writing, <em>Dry run</em> only lists the objects.</p>
+        <ul class="mb-0">
+            <li><code>UUID</code> is the UUID of an object: <code>WHERE UUID = '…'</code>, <code>p.UUID</code>, <code>p.category.UUID</code>; a property named uuid is <code>`uuid`</code>.</li>
+            <li>Classes by their short name (<code>Product</code>) or full name in backticks (<code>`App\Entity\Product`</code>); without an alias, the short name is one.</li>
+            <li>Paths lead into referenced objects: <code>p.category.title</code>; the alias alone is the UUID of the object: <code>JOIN Category c ON c = p.category</code>.</li>
+            <li>Conditions: <code>= != &lt; &lt;= &gt; &gt;=</code>, <code>IS [NOT] NULL</code>, <code>[NOT] IN (…)</code>, <code>[NOT] BETWEEN a AND b</code>, <code>[NOT] LIKE 'Ho%'</code> (ignoring case), <code>AND OR NOT</code>; NULL is unknown, as in SQL.</li>
+            <li>Values: <code>'text'</code> (<code>''</code> for a quote), numbers, <code>TRUE FALSE NULL</code>; <code>+ - * /</code>, <code>||</code> joins texts.</li>
+            <li>Functions: <code>LOWER UPPER LENGTH TRIM SUBSTR ABS ROUND COALESCE IFNULL</code>; aggregates: <code>COUNT(*) COUNT([DISTINCT] x) SUM AVG MIN MAX</code>.</li>
+            <li>ORDER BY, GROUP BY and HAVING take the names of the selection, ORDER BY and GROUP BY its positions (1, 2, …).</li>
+        </ul>
+    </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger font-monospace small" id="query-error">{{ error }}</div>
+{% endif %}
+
+{% if rows is not null %}
+{% set shown = 1000 %}
+{% if statement %}
+{% set done = {INSERT: 'inserted', UPDATE: 'updated', DELETE: 'deleted'}[statement] %}
+<div class="alert {{ dryRun ? 'alert-info' : 'alert-success' }} py-2" id="query-written">
+    {% if dryRun %}<i class="bi bi-eye"></i> Dry run: {{ affected }} object(s) would be {{ done }}, nothing was written.
+    {% else %}<i class="bi bi-check-circle"></i> {{ affected }} object(s) {{ done }}.{% endif %}
+</div>
+{% endif %}
+<p class="text-muted small mb-2" id="query-summary">
+    {{ rows|length|number_format(0, '.', ' ') }} row(s), {{ milliseconds|number_format(0) }} ms{% if rows|length > shown %} — showing the first {{ shown }}, use LIMIT{% endif %}
+</p>
+{% if columns is not empty %}
+<div class="table-responsive card">
+    <table class="table table-sm table-striped small mb-0" id="query-result">
+        <thead><tr>{% for column in columns %}<th class="font-monospace text-nowrap">{{ column }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for row in rows|slice(0, shown) %}
+        <tr>
+            {% for cell in row %}
+            <td class="{{ cell[1] == 'number' ? 'text-end' : '' }} {{ cell[1] in ['json', 'uuid'] ? 'font-monospace' : '' }}">
+                {% if cell[1] == 'null' %}<span class="text-muted">NULL</span>
+                {% elseif cell[1] == 'uuid' %}<a href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ cell[0]|url_encode }}" class="uuid">{{ cell[0] }}</a>
+                {% else %}{{ cell[0] }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endif %}
+
+<script>
+(() => {
+    const form = document.getElementById('query-form');
+    const area = document.getElementById('q');
+
+    // INSERT, UPDATE, DELETE: asked before, sent by POST (the server runs them from the form only)
+    const writing = text => /^(\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(INSERT|UPDATE|DELETE)\b/i.test(text);
+    form.addEventListener('submit', event => {
+        // setAttribute: the input named "action" hides the property
+        if (!writing(area.value)) {
+            form.setAttribute('method', 'get');
+            form.removeAttribute('action');
+            return;
+        }
+        const dry = document.getElementById('dry-run').checked;
+        if (!dry && !confirm('This changes objects of the storage. Run it?')) {
+            event.preventDefault();
+            return;
+        }
+        form.setAttribute('method', 'post');
+        form.setAttribute('action', '?action=query');
+    });
+    area.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            form.requestSubmit();
+        }
+    });
+    document.querySelectorAll('.query-class').forEach(button => button.addEventListener('click', () => {
+        const name = '`' + button.dataset.class + '`';
+        const start = area.selectionStart;
+        area.setRangeText(name, start, area.selectionEnd, 'end');
+        area.focus();
+    }));
+
+    // the last queries of the storage, kept in this browser
+    const key = 'object-storage-viewer:query-history';
+    const storage = {{ storage|json_encode|raw }};
+    const read = () => {
+        try {
+            const all = JSON.parse(localStorage.getItem(key) ?? '{}');
+            return Array.isArray(all[storage]) ? all[storage] : [];
+        } catch (e) {
+            return [];
+        }
+    };
+    const write = entries => {
+        try {
+            const all = JSON.parse(localStorage.getItem(key) ?? '{}');
+            all[storage] = entries;
+            localStorage.setItem(key, JSON.stringify(all));
+        } catch (e) {
+            // not kept
+        }
+    };
+    const ran = {{ (rows is not null ? query : '')|json_encode|raw }};
+    if (ran.trim() !== '') {
+        write([ran, ...read().filter(q => q !== ran)].slice(0, 20));
+    }
+    const menu = document.getElementById('query-history');
+    const entries = read();
+    menu.innerHTML = entries.length ? '' : '<li><span class="dropdown-item-text text-muted small">No queries run in this browser yet.</span></li>';
+    entries.forEach(entry => {
+        const item = document.createElement('li');
+        const button = Object.assign(document.createElement('button'), {type: 'button', className: 'dropdown-item font-monospace small text-truncate', title: entry});
+        button.style.maxWidth = '40rem';
+        button.textContent = entry.replace(/\s+/g, ' ');
+        button.addEventListener('click', () => {
+            area.value = entry;
+            area.focus();
+        });
+        item.appendChild(button);
+        menu.appendChild(item);
+    });
+})();
+</script>
+{% endblock body %}

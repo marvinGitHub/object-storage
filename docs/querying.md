@@ -1,6 +1,6 @@
 # Querying
 
-ObjectStorage has no query language. Instead, you list the UUIDs of a class and filter objects with PHP callbacks. This keeps queries flexible and type-safe, but every filter loads the objects it looks at, so it scans all objects of the given class.
+You list the UUIDs of a class and filter objects with PHP callbacks. This keeps queries flexible and type-safe, but every filter loads the objects it looks at, so it scans all objects of the given class. For queries in SQL — joins, grouping, aggregates, sorting — see [OQL](query.md); for searching many objects by their values, [search indexes](search.md).
 
 ## Listing objects
 

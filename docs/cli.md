@@ -137,6 +137,16 @@ echo '{"name": "shared", "lock": {"type": "redis", "dsn": "redis://redis:6379", 
 - ./object-storage/bin/object-storage ttl --json
 - ./object-storage/bin/object-storage ttl --json --pretty
 
+1. query
+
+- Run an [OQL](query.md) query (`SELECT … FROM Class …`) and print the result as a table, or as JSON with `--json`.
+- Options:
+- --file, -f Read the query from a file (otherwise the argument, or STDIN)
+- --param, -p A parameter: `name=value` for `:name`, `value` for the next `?`; numbers, true, false and null as such, "quoted" as text
+- Examples:
+- ./object-storage/bin/object-storage query "SELECT name, price FROM Product WHERE price < :max ORDER BY price" --param max=10
+- ./object-storage/bin/object-storage query --json --file report.oql
+
 ## Exit Codes
 - 0 Success
 - 1 User or data error (e.g., not found, invalid input)

@@ -12,6 +12,7 @@
                onclick="pasteUuidFromClipboard()" aria-label="UUID of a record">
         <button class="btn btn-primary" type="submit"><i class="bi bi-box-arrow-in-right"></i> Open</button>
     </form>
+    <a class="btn btn-primary btn-sm" href="?action=query&storage={{ storage|url_encode }}" role="button" title="Query the objects with OQL: SELECT … FROM … JOIN … GROUP BY …"><i class="bi bi-terminal"></i> Query</a>
     <a class="btn btn-primary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button"><i class="bi bi-search"></i> Search indexes</a>
     <a class="btn btn-outline-primary btn-sm" href="?action=unique-indexes&storage={{ storage|url_encode }}" role="button" title="Values no two objects of a class may share"><i class="bi bi-key"></i> Unique indexes</a>
     <div class="dropdown">

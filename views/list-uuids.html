@@ -7,7 +7,7 @@
 ]} %}
     {% block title %}Objects{% endblock %}
     {% block badges %}{% if hasEntries %}<span class="badge text-bg-secondary">{{ total|number_format(0, '.', ' ') }}</span>{% endif %}{% endblock %}
-    {% block actions %}{% if hasEntries %}<a class="btn btn-outline-primary btn-sm" href="?action=link-class&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}" title="Turn an attribute holding UUIDs as text into references"><i class="bi bi-link-45deg"></i> Link objects</a>{% endif %}{% endblock %}
+    {% block actions %}{% if hasEntries %}<a class="btn btn-outline-primary btn-sm" href="?action=query&storage={{ storage|url_encode }}&q={{ ('SELECT *\nFROM `' ~ classname ~ '`\nLIMIT 100')|url_encode }}" title="Query the objects of the class with OQL"><i class="bi bi-terminal"></i> Query</a> <a class="btn btn-outline-primary btn-sm" href="?action=link-class&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}" title="Turn an attribute holding UUIDs as text into references"><i class="bi bi-link-45deg"></i> Link objects</a>{% endif %}{% endblock %}
 {% endembed %}
 
 {% if message %}<div class="alert alert-success"><i class="bi bi-check-circle"></i> {{ message }}</div>{% endif %}

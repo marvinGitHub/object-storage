@@ -27,6 +27,7 @@ use melia\ObjectStorage\Cli\Command\Maintenance\PurgeExpiredCommand;
 use melia\ObjectStorage\Cli\Command\Maintenance\RebuildShardsCommand;
 use melia\ObjectStorage\Cli\Command\Maintenance\RebuildStubsCommand;
 use melia\ObjectStorage\Cli\Command\PutCommand;
+use melia\ObjectStorage\Cli\Command\QueryCommand;
 use melia\ObjectStorage\Cli\Command\SafeModeCommand;
 use melia\ObjectStorage\Cli\Command\StatsCommand;
 use Symfony\Component\Console\Application as SymfonyApplication;
@@ -64,6 +65,7 @@ final class Application extends SymfonyApplication
             new UniqueRebuildCommand(),
             new UniqueDropCommand(),
             new UniqueFindCommand(),
+            new QueryCommand(),
         ]);
 
         // Global styles can be further customized in individual commands via Styles

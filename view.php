@@ -16,6 +16,8 @@ use melia\ObjectStorage\Unique\PathIndexes as UniquePathIndexes;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Migration\AttributeToReference;
+use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Query\Oql;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
@@ -627,6 +629,65 @@ try {
                 $logger->error($e);
                 $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
             }
+            break;
+        case 'query':
+            // OQL: SELECT … FROM Class … on the objects of the storage (docs/query.md)
+            $storageDir = $_REQUEST['storage'] ?? null;
+            $query = (string)($_POST['q'] ?? $_GET['q'] ?? '');
+            $dryRun = isset($_POST['dryRun']);
+            $storage = $buildStorage($storageDir);
+            $result = null;
+            $error = null;
+            $milliseconds = null;
+            if ('' !== trim($query)) {
+                $started = microtime(true);
+                try {
+                    // INSERT, UPDATE and DELETE only from the form (POST): a link or the history never writes
+                    if (Oql::writes($query) && 'POST' !== ($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
+                        throw new QueryException('INSERT, UPDATE and DELETE run from the form only: check the statement and press Run.');
+                    }
+                    $result = (new Oql($storage))->query($query, [], $dryRun);
+                } catch (QueryException $e) {
+                    $error = $e->getMessage();
+                } catch (Throwable $e) {
+                    $logger->error($e);
+                    $error = 'The query failed: ' . $e->getMessage();
+                }
+                $milliseconds = (microtime(true) - $started) * 1000;
+            }
+            // values for the table: references stay UUIDs, lists and objects JSON
+            $cell = static fn(mixed $value): array => match (true) {
+                null === $value => ['NULL', 'null'],
+                is_bool($value) => [$value ? 'true' : 'false', 'boolean'],
+                is_array($value) => [(string)json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'json'],
+                is_float($value) => [(string)json_encode($value, JSON_PRESERVE_ZERO_FRACTION), 'number'],
+                is_int($value) => [(string)$value, 'number'],
+                default => [(string)$value, is_string($value) && UuidValidator::validate($value) ? 'uuid' : 'string'],
+            };
+            $classnames = [];
+            try {
+                $classnames = $storage->getClassNames();
+                sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
+            } catch (Throwable $e) {
+                $logger->error($e);
+            }
+
+            echo $twig->render('query.html', [
+                'storage' => $storageDir,
+                'query' => $query,
+                'classnames' => $classnames,
+                'error' => $error,
+                'columns' => $result?->columns ?? [],
+                // the rows; of a dry run of INSERT, the objects have no UUIDs yet
+                'rows' => null === $result ? null : array_map(
+                    static fn(array $row): array => array_map($cell, $row),
+                    null === $result->statement ? $result->rows : array_values(array_filter($result->rows, static fn(array $row): bool => null !== $row[0]))
+                ),
+                'statement' => $result?->statement,
+                'affected' => $result?->affected() ?? 0,
+                'dryRun' => $dryRun,
+                'milliseconds' => $milliseconds,
+            ]);
             break;
         case 'list-classnames':
             $storageDir = $_GET['storage'] ?? null;

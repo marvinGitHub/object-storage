@@ -102,6 +102,7 @@ Continue with [Getting started](docs/getting-started.md) for the details of stor
 | [Getting started](docs/getting-started.md) | Creating a storage, storing, loading, updating and deleting objects, UUIDs |
 | [Concepts](docs/concepts.md) | Object graphs, lazy loading, caching and what is stored on disk |
 | [Querying](docs/querying.md) | Listing, counting and filtering objects |
+| [OQL](docs/query.md) | Querying objects with SQL: `SELECT` with joins, paths into referenced objects, `GROUP BY`, aggregates, `ORDER BY`; in code, the CLI and the viewer |
 | [Unique indexes](docs/unique.md) | Values no two objects of a class may share, like a UNIQUE constraint; finding objects by them |
 | [Search indexes](docs/search.md) | Full-text search, filters and facets with exchangeable engines (Loupe included), managed in the viewer |
 | [Lifetime](docs/lifetime.md) | Expiring objects, e.g. for caches |
