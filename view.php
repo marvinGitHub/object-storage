@@ -10,6 +10,9 @@ use melia\ObjectStorage\Configuration\LockSettings;
 use melia\ObjectStorage\Configuration\Registry as ConfigurationRegistry;
 use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
 use melia\ObjectStorage\Transfer\ObjectTransfer;
+use melia\ObjectStorage\Unique\Definition as UniqueDefinition;
+use melia\ObjectStorage\Unique\Manager as UniqueManager;
+use melia\ObjectStorage\Unique\PathIndexes as UniquePathIndexes;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
@@ -33,7 +36,7 @@ use melia\ObjectStorage\Search\Index\Manager;
 use melia\ObjectStorage\Search\Loupe\LoupeEngine;
 use melia\ObjectStorage\Search\Request;
 use Loupe\Loupe\LoupeFactory;
-use function SebastianBergmann\ObjectGraph\object_graph_dump;
+use melia\ObjectStorage\Graph\Export\Dot\DotExporter;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
@@ -140,9 +143,36 @@ $searchFor = static function (ObjectStorage $storage) use ($searchEngines): ?Man
 
 $engineNames = array_map(static fn(EngineInterface $engine): string => $engine->getName(), $searchEngines);
 
-$buildStorage = static function (?string $storageDir) use ($buildStorage, $searchFor): ObjectStorage {
+/* the unique indexes of a storage, attached so every write in the viewer is checked against them */
+$uniqueFor = static function (ObjectStorage $storage): UniqueManager {
+    static $instances = [];
+
+    $id = spl_object_id($storage);
+    if (!isset($instances[$id])) {
+        $instances[$id] = new UniqueManager($storage);
+        $instances[$id]->attach();
+    }
+
+    return $instances[$id];
+};
+
+/* the fields of a search index form with the unique indexes on their paths: flag and case handling */
+$withUniqueFlags = static function (array $fields, string $className, ObjectStorage $storage) use ($uniqueFor): array {
+    $unique = '' === $className ? [] : (new UniquePathIndexes($uniqueFor($storage)))->forClass($className);
+    return array_map(static function (array $field) use ($unique): array {
+        $index = $unique[$field['path'] ?? ''] ?? null;
+        return $field + [
+            'unique' => null !== $index,
+            'uniqueIgnoreCase' => $index?->caseInsensitive ?? false,
+            'uniqueName' => $index?->name,
+        ];
+    }, $fields);
+};
+
+$buildStorage = static function (?string $storageDir) use ($buildStorage, $searchFor, $uniqueFor): ObjectStorage {
     $storage = $buildStorage((string)$storageDir);
     $searchFor($storage);
+    $uniqueFor($storage);
     return $storage;
 };
 
@@ -379,6 +409,60 @@ try {
             } catch (Throwable $e) {
                 $logger->error($e);
                 $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
+            break;
+        case 'unique-indexes':
+            // the unique indexes of a storage: values no two objects of a class may share
+            $storageDir = (string)($_GET['storage'] ?? '');
+            $storage = $buildStorage($storageDir);
+            $unique = $uniqueFor($storage);
+            $classnames = $storage->getClassNames();
+            sort($classnames, SORT_NATURAL | SORT_FLAG_CASE);
+
+            echo $twig->render('unique-indexes.html', [
+                'storage' => $storageDir,
+                'indexes' => array_map(static fn(UniqueDefinition $definition): array => $definition->toArray(), array_values($unique->list())),
+                'classnames' => $classnames,
+                'message' => $_GET['message'] ?? null,
+                'error' => $_GET['error'] ?? null,
+                'form' => [
+                    'name' => (string)($_GET['name'] ?? ''),
+                    'classname' => (string)($_GET['classname'] ?? ''),
+                    'paths' => (string)($_GET['paths'] ?? ''),
+                    'caseInsensitive' => isset($_GET['caseInsensitive']),
+                ],
+            ]);
+            break;
+        case 'unique-create':
+        case 'unique-rebuild':
+        case 'unique-drop':
+            // form posts of the page of unique indexes; the page shows the outcome
+            $requirePost();
+            $storageDir = (string)($_POST['storage'] ?? '');
+            $name = trim((string)($_POST['name'] ?? ''));
+            $back = '?action=unique-indexes&storage=' . rawurlencode($storageDir);
+            try {
+                $unique = $uniqueFor($buildStorage($storageDir));
+                $message = match ($action) {
+                    'unique-create' => (static function () use ($unique, $name): string {
+                        $paths = array_values(array_filter(array_map('trim', explode(',', (string)($_POST['paths'] ?? '')))));
+                        $unique->create(new UniqueDefinition($name, trim((string)($_POST['classname'] ?? '')), $paths, isset($_POST['caseInsensitive'])));
+                        return sprintf('Unique index %s created.', $name);
+                    })(),
+                    'unique-rebuild' => sprintf('Unique index %s rebuilt: %d values.', $name, $unique->rebuild($name)),
+                    'unique-drop' => $unique->drop($name) ? sprintf('Unique index %s dropped.', $name) : sprintf('There is no unique index %s.', $name),
+                };
+                header('Location: ' . $back . '&message=' . rawurlencode($message));
+            } catch (Throwable $e) {
+                $logger->error($e);
+                // the form as it was, so nothing typed is lost
+                $form = 'unique-create' === $action ? '&' . http_build_query(array_filter([
+                    'name' => $name,
+                    'classname' => $_POST['classname'] ?? null,
+                    'paths' => $_POST['paths'] ?? null,
+                    'caseInsensitive' => isset($_POST['caseInsensitive']) ? '1' : null,
+                ])) : '';
+                header('Location: ' . $back . '&error=' . rawurlencode($e->getMessage()) . $form);
             }
             break;
         case 'storage-create':
@@ -632,11 +716,20 @@ try {
                 $metadata = Metadata::createFromArray(json_decode(file_get_contents($storage->getFilePathMetadata($uuid)), true, 512, JSON_THROW_ON_ERROR));
                 $metadata->setUuid($uuidNew);
 
-                // written as a group (the writer creates the shard directory), so a crash leaves no half copy
-                $storage->getWriter()->atomicWriteAll([
-                    $storage->getFilePathData($uuidNew) => $data,
-                    $storage->getFilePathMetadata($uuidNew) => json_encode($metadata, JSON_THROW_ON_ERROR),
-                ]);
+                // written without store(): the constraints (e.g. unique values) are checked explicitly; a
+                // duplicate of an object with unique values is refused
+                $finalizeConstraints = $storage->checkConstraints($uuidNew, $metadata->getClassName(), $data, $metadata->getReservedReferenceName());
+                $written = false;
+                try {
+                    // written as a group (the writer creates the shard directory), so a crash leaves no half copy
+                    $storage->getWriter()->atomicWriteAll([
+                        $storage->getFilePathData($uuidNew) => $data,
+                        $storage->getFilePathMetadata($uuidNew) => json_encode($metadata, JSON_THROW_ON_ERROR),
+                    ]);
+                    $written = true;
+                } finally {
+                    $finalizeConstraints($written);
+                }
                 $storage->createStub($storage->getClassName($uuid), $uuidNew);
                 $storage->getLockAdapter()->releaseLock($uuid);
                 $success = true;
@@ -650,6 +743,10 @@ try {
             } catch (Throwable $e) {
                 $success = false;
                 $logger->error($e);
+                $duplicateError = $e->getMessage();
+                if (isset($storage) && $storage->getLockAdapter()->isLockedByThisProcess((string)$uuid)) {
+                    $storage->getLockAdapter()->releaseLock((string)$uuid);
+                }
             }
 
             echo $twig->render('duplicate-record.html', [
@@ -657,6 +754,7 @@ try {
                 'exists' => $exists ?? false,
                 'success' => $success,
                 'uuidNew' => $uuidNew ?? '',
+                'error' => $duplicateError ?? null,
             ]);
 
             break;
@@ -796,20 +894,28 @@ try {
                         $storage->getLockAdapter()->acquireExclusiveLock($uuid);
                         $lockAcquired = true;
 
-                        $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
+                        // written without store(): the constraints (e.g. unique values) are checked explicitly
+                        $finalizeConstraints = $storage->checkConstraints($uuid, $metadata->getClassName(), $json, $metadata->getReservedReferenceName());
+                        $written = false;
+                        try {
+                            $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
 
-                        if (!$dataWritten) {
-                            throw new RuntimeException('Unable to write object data.');
-                        }
+                            if (!$dataWritten) {
+                                throw new RuntimeException('Unable to write object data.');
+                            }
 
-                        $metadata->setChecksum(md5($json));
-                        $metadata->setChecksumAlgorithm('md5');
+                            $metadata->setChecksum(md5($json));
+                            $metadata->setChecksumAlgorithm('md5');
 
-                        $metadataJson = json_encode($metadata, JSON_THROW_ON_ERROR);
-                        $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), $metadataJson);
+                            $metadataJson = json_encode($metadata, JSON_THROW_ON_ERROR);
+                            $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), $metadataJson);
 
-                        if (!$metadataWritten) {
-                            throw new RuntimeException('Unable to write metadata.');
+                            if (!$metadataWritten) {
+                                throw new RuntimeException('Unable to write metadata.');
+                            }
+                            $written = true;
+                        } finally {
+                            $finalizeConstraints($written);
                         }
 
                         $success = true;
@@ -832,6 +938,7 @@ try {
                     } catch (Throwable $e) {
                         $success = false;
                         $logger->error($e);
+                        $saveError = $e->getMessage();
                     } finally {
                         if ($lockAcquired && $storage?->getLockAdapter() && $storage->getLockAdapter()->hasActiveExclusiveLock($uuid)) {
                             $storage->getLockAdapter()->releaseLock($uuid);
@@ -847,6 +954,7 @@ try {
                 'updatedIndexes' => $updatedIndexes ?? [],
                 'skippedIndexes' => $skippedIndexes ?? [],
                 'indexError' => $indexError ?? null,
+                'error' => $saveError ?? null,
             ]);
             break;
         case 'export-record':
@@ -862,7 +970,9 @@ try {
                 $visitor = new GraphVisitor($storage);
                 $referenceGraph = $visitor->buildReferenceGraph($target, $uuid, $target::class);
 
-                object_graph_dump($destination, $referenceGraph);
+                if (false === file_put_contents($destination, (new DotExporter())->export($referenceGraph))) {
+                    throw new RuntimeException('Unable to write ' . $destination);
+                }
                 $success = true;
 
                 header('Content-Description: File Transfer');
@@ -968,6 +1078,7 @@ try {
             if (isset($_GET['suggest']) && '' !== $classname) {
                 $fields = $suggestFields($storage, $classname);
             }
+            $fields = $withUniqueFlags($fields, (string)$classname, $storage);
 
             echo $twig->render('index-edit.html', [
                 'storage' => $storageDir,
@@ -994,6 +1105,24 @@ try {
 
             try {
                 $definition = $definitionFromRequest($_POST);
+                if ($isNew && $search->has($definition->name)) {
+                    throw new RuntimeException(sprintf('A search index "%s" exists already.', $definition->name));
+                }
+
+                // the unique flags of the fields first: if a value isn't unique, nothing is saved
+                $uniquePaths = [];
+                foreach ($_POST['fields'] ?? [] as $field) {
+                    $path = trim((string)($field['path'] ?? ''));
+                    if ('' !== $path) {
+                        $uniquePaths[$path] = [
+                            'unique' => isset($field['unique']),
+                            'caseInsensitive' => isset($field['uniqueIgnoreCase']),
+                            'name' => (string)($field['name'] ?? $path),
+                        ];
+                    }
+                }
+                (new UniquePathIndexes($uniqueFor($storage)))->apply($definition->className, $uniquePaths, $definition->name);
+
                 $isNew ? $search->create($definition) : $search->update($definition);
 
                 // build it right away, showing the progress
@@ -1018,10 +1147,13 @@ try {
                         'searchable' => isset($field['searchable']),
                         'filterable' => isset($field['filterable']),
                         'sortable' => isset($field['sortable']),
+                        'unique' => isset($field['unique']),
+                        'uniqueIgnoreCase' => isset($field['uniqueIgnoreCase']),
                     ], $_POST['fields'] ?? [])),
                     'types' => array_map(static fn(FieldType $type): string => $type->value, FieldType::cases()),
                     'engines' => $engineNames,
-                    'engine' => $_POST['engine'] ?? null,
+                    // an edited index doesn't post its engine (it can't be changed)
+                    'engine' => $_POST['engine'] ?? (!$isNew && $search->has((string)($_POST['name'] ?? '')) ? $search->get((string)$_POST['name'])->getEngineName() : null),
                     'error' => $e->getMessage(),
                 ]);
             }

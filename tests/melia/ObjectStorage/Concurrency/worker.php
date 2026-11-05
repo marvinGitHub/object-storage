@@ -126,6 +126,23 @@ switch ($scenario) {
         }
         break;
 
+    // stores new accounts with the same email as all other workers, with a unique index on it: only one may succeed
+    case 'register-unique':
+        [$email, $rounds] = $args;
+        $unique = new \melia\ObjectStorage\Unique\Manager($storage);
+        $unique->attach();
+        for ($i = 0; $i < (int)$rounds; $i++) {
+            try {
+                $storage->store(new \Tests\melia\ObjectStorage\Concurrency\Account($email, $worker . '-' . $i));
+                touch($dir . DIRECTORY_SEPARATOR . 'stored-' . $worker . '-' . $i);
+            } catch (\melia\ObjectStorage\Unique\Exception\UniqueConstraintViolationException) {
+                // expected for all but one attempt
+            } catch (Throwable $e) {
+                $report($e);
+            }
+        }
+        break;
+
     default:
         echo "ERROR unknown scenario $scenario\n";
         exit(1);

@@ -14,7 +14,7 @@
     <a class="uuid" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ uuidNew|url_encode }}">{{ uuidNew }}</a>.
 </div>
 {% else %}
-<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be duplicated.</div>
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be duplicated.{% if error %}<div class="small mt-1">{{ error }}</div>{% endif %}</div>
 {% endif %}
 
 <div class="d-flex gap-2">

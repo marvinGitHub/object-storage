@@ -7,15 +7,16 @@ namespace melia\ObjectStorage\Cli\Command\Maintenance;
 use melia\ObjectStorage\Cli\Command\BaseCommand;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
+#[AsCommand(name: 'maintenance:rebuild-stubs')]
 final class RebuildStubsCommand extends BaseCommand
 {
-    protected static $defaultName = 'maintenance:rebuild-stubs';
     protected static $defaultDescription = 'Rebuilds the class index (stubs) in place; continues an interrupted rebuild.';
 
     protected function configure(): void

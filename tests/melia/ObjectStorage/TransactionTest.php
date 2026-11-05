@@ -12,6 +12,7 @@ use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Transaction;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\MockObject\MockObject;
 use ReflectionException;
 use RuntimeException;
@@ -19,7 +20,10 @@ use Throwable;
 
 /**
  * Transaction unit tests covering begin, store/load/delete, commit, rollback and state transitions.
+ *
+ * The doubles of setUp() are mocks for the tests that set expectations on them and stubs for the others.
  */
+#[AllowMockObjectsWithoutExpectations]
 class TransactionTest extends TestCase
 {
     /** @var LockAdapterInterface&MockObject */
@@ -88,7 +92,7 @@ class TransactionTest extends TestCase
         $uuid = 'u-1';
 
         // exists -> false, so no backup; lock is required
-        $this->storage->method('exists')->with($uuid)->willReturn(false);
+        $this->storage->expects($this->atLeastOnce())->method('exists')->with($uuid)->willReturn(false);
 
         // Expect lock
         $this->lockAdapter->expects($this->once())
@@ -112,8 +116,8 @@ class TransactionTest extends TestCase
 
         $uuid = 'u-2';
 
-        $this->storage->method('exists')->with($uuid)->willReturn(true);
-        $this->storage->method('load')->with($uuid)->willReturn((object)['y' => 2]);
+        $this->storage->expects($this->atLeastOnce())->method('exists')->with($uuid)->willReturn(true);
+        $this->storage->expects($this->atLeastOnce())->method('load')->with($uuid)->willReturn((object)['y' => 2]);
 
         // Expect lock
         $this->lockAdapter->expects($this->once())
@@ -133,7 +137,7 @@ class TransactionTest extends TestCase
         $txn->begin();
 
         $uuid = 'u-missing';
-        $this->storage->method('exists')->with($uuid)->willReturn(false);
+        $this->storage->expects($this->atLeastOnce())->method('exists')->with($uuid)->willReturn(false);
 
         $this->expectException(ObjectNotFoundException::class);
         $txn->delete($uuid);
@@ -154,7 +158,7 @@ class TransactionTest extends TestCase
             [$uuid1, false],
             [$uuid2, true],
         ]);
-        $this->storage->method('load')->with($uuid2)->willReturn((object)['old' => 'data']);
+        $this->storage->expects($this->atLeastOnce())->method('load')->with($uuid2)->willReturn((object)['old' => 'data']);
 
         // PHPUnit 10 removed withConsecutive(); validate the invocation order
         // with a callback instead.
@@ -214,7 +218,7 @@ class TransactionTest extends TestCase
         ]);
 
         // Backup for existing
-        $this->storage->method('load')->with($uuidExisting)->willReturn(clone $existingObj);
+        $this->storage->expects($this->atLeastOnce())->method('load')->with($uuidExisting)->willReturn(clone $existingObj);
 
         // Locks for both
         $this->lockAdapter->expects($this->exactly(2))->method('acquireExclusiveLock');
@@ -291,7 +295,7 @@ class TransactionTest extends TestCase
         $txn->begin();
 
         $uuid = 'u-reflection-failure';
-        $this->storage->method('exists')->with($uuid)->willReturn(false);
+        $this->storage->expects($this->atLeastOnce())->method('exists')->with($uuid)->willReturn(false);
 
         $this->lockAdapter->expects($this->once())
             ->method('acquireExclusiveLock')

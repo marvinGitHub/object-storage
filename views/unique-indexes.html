@@ -1,0 +1,92 @@
+{% extends 'index.html' %}
+
+{% block body %}
+{% embed 'page-header.html' with {crumbs: [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: 'Unique indexes'},
+]} %}
+    {% block title %}Unique indexes{% endblock %}
+    {% block badges %}{% if indexes is not empty %}<span class="badge text-bg-secondary">{{ indexes|length }}</span>{% endif %}{% endblock %}
+    {% block actions %}
+    <a class="btn btn-outline-primary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}"><i class="bi bi-search"></i> Search indexes</a>
+    {% endblock %}
+    {% block intro %}
+    <p class="page-intro">
+        Values no two objects of a class may share, like a UNIQUE constraint: storing, editing or copying an object with
+        values another object has fails. Objects with a missing (null) value aren't affected. Kept in
+        <code>{{ storage }}/unique/internal</code>.
+    </p>
+    {% endblock %}
+{% endembed %}
+
+{% if message %}<div class="alert alert-success"><i class="bi bi-check-circle"></i> {{ message }}</div>{% endif %}
+{% if error %}<div class="alert alert-danger"><i class="bi bi-exclamation-octagon"></i> {{ error }}</div>{% endif %}
+
+{% if indexes is not empty %}
+<div class="card mb-3">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead><tr><th>Name</th><th>Class</th><th>Paths</th><th>Case</th><th></th></tr></thead>
+            <tbody>
+            {% for index in indexes %}
+            <tr>
+                <td><strong>{{ index.name }}</strong></td>
+                <td><code>{{ index.className }}</code></td>
+                <td>{% for path in index.paths %}<span class="badge text-bg-light border font-monospace">{{ path }}</span> {% endfor %}</td>
+                <td class="small">{{ index.caseInsensitive ? 'ignored' : 'exact' }}</td>
+                <td class="text-end text-nowrap">
+                    <form method="post" action="?action=unique-rebuild" class="d-inline">
+                        <input type="hidden" name="action" value="unique-rebuild">
+                        <input type="hidden" name="storage" value="{{ storage }}">
+                        <input type="hidden" name="name" value="{{ index.name }}">
+                        <button class="btn btn-outline-secondary btn-sm" type="submit" title="Claim the values of all objects again, e.g. after writes without the index"><i class="bi bi-arrow-repeat"></i> Rebuild</button>
+                    </form>
+                    <form method="post" action="?action=unique-drop" class="d-inline" onsubmit="return confirm('Drop the unique index {{ index.name|e('js') }}? The objects are not affected.');">
+                        <input type="hidden" name="action" value="unique-drop">
+                        <input type="hidden" name="storage" value="{{ storage }}">
+                        <input type="hidden" name="name" value="{{ index.name }}">
+                        <button class="btn btn-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Drop</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info"><i class="bi bi-info-circle"></i> No unique indexes yet.</div>
+{% endif %}
+
+<form class="card" method="post" action="?action=unique-create">
+    <div class="card-header">New unique index</div>
+    <div class="card-body row g-3">
+        <input type="hidden" name="action" value="unique-create">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <div class="col-md-3">
+            <label class="form-label" for="unique-name">Name</label>
+            <input class="form-control" id="unique-name" name="name" value="{{ form.name }}" required pattern="[a-z0-9][a-z0-9_\-]{0,63}" placeholder="customer-email">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label" for="unique-class">Class</label>
+            <select class="form-select" id="unique-class" name="classname" required>
+                <option value="">choose…</option>
+                {% for c in classnames %}<option value="{{ c }}" {% if c == form.classname %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="col-md-5">
+            <label class="form-label" for="unique-paths">Paths</label>
+            <input class="form-control font-monospace" id="unique-paths" name="paths" value="{{ form.paths }}" required placeholder="email, or customer, number">
+            <div class="form-text">Paths in the stored data, comma-separated for a combination; a reference counts by its UUID.</div>
+        </div>
+        <div class="col-12 d-flex align-items-center gap-3">
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="unique-case" name="caseInsensitive" {% if form.caseInsensitive %}checked{% endif %}>
+                <label class="form-check-label" for="unique-case">Ignore case and surrounding spaces (e.g. emails)</label>
+            </div>
+            <button class="btn btn-primary btn-sm ms-auto" type="submit"><i class="bi bi-plus-lg"></i> Create</button>
+        </div>
+        <div class="col-12 form-text mt-0">Creating fails if objects stored before share values; the message names them.</div>
+    </div>
+</form>
+{% endblock body %}

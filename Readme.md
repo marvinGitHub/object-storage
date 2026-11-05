@@ -39,6 +39,7 @@ It is not a replacement for a database when you need indexes, joins or ad-hoc qu
 ## Requirements
 
 - PHP 8.5 or newer with `ext-json`
+- Symfony 8 (`symfony/console`, `symfony/cache`, `symfony/lock`), installed with the package
 - A writable directory for the storage
 
 ## Installation
@@ -101,6 +102,7 @@ Continue with [Getting started](docs/getting-started.md) for the details of stor
 | [Getting started](docs/getting-started.md) | Creating a storage, storing, loading, updating and deleting objects, UUIDs |
 | [Concepts](docs/concepts.md) | Object graphs, lazy loading, caching and what is stored on disk |
 | [Querying](docs/querying.md) | Listing, counting and filtering objects |
+| [Unique indexes](docs/unique.md) | Values no two objects of a class may share, like a UNIQUE constraint; finding objects by them |
 | [Search indexes](docs/search.md) | Full-text search, filters and facets with exchangeable engines (Loupe included), managed in the viewer |
 | [Lifetime](docs/lifetime.md) | Expiring objects, e.g. for caches |
 | [Copying and moving](docs/transfer.md) | Copying and moving objects between storages, in code, the CLI and the viewer |
@@ -121,6 +123,7 @@ Complete scenarios, each runnable as is:
 - [Inventory with concurrent updates](docs/examples/inventory-concurrent-updates.md) — exclusive loads, read-modify-write
 - [An audit log from events](docs/examples/audit-log-with-events.md) — events with the previous and the new state
 - [Product search](docs/examples/product-search.md) — a search index with full text, filters, sorting and facets
+- [Coming from Doctrine ORM](docs/examples/coming-from-doctrine.md) — a shop with entities, repositories, cascades, unique keys, queries and full-text search, compared with Doctrine
 - [Renaming classes](docs/examples/renaming-classes.md) — keeping stored data loadable after a refactoring
 
 ## Changelog and license

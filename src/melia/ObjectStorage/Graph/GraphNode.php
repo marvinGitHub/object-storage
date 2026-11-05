@@ -20,7 +20,7 @@ namespace melia\ObjectStorage\Graph;
  * (GraphVisitor reuses it wherever that UUID is referenced again), so
  * shared/circular references show up as the same object appearing in
  * multiple places in the tree - which is exactly what
- * object_graph_dump() is built to detect and represent correctly, no
+ * DotExporter draws as one node with several incoming edges, no
  * separate edge bookkeeping needed on our side.
  */
 final class GraphNode

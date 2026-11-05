@@ -103,6 +103,22 @@ class ConcurrencyTest extends TestCase
         $this->assertSame(\melia\ObjectStorage\Search\Index\IndexInterface::STATUS_NEW, $search->get('products')->getStatus());
     }
 
+    public function testAUniqueValueIsStoredOnceAcrossProcesses(): void
+    {
+        $unique = new \melia\ObjectStorage\Unique\Manager($this->storage);
+        $unique->create(new \melia\ObjectStorage\Unique\Definition('account-email', Account::class, 'email', caseInsensitive: true));
+
+        $errors = $this->runWorkers('register-unique', ['ada@example.com', 10]);
+
+        $this->assertSame([], $errors);
+        $this->assertCount(1, glob($this->storage->getStorageDir() . DIRECTORY_SEPARATOR . 'stored-*'), 'exactly one write succeeds');
+        $this->assertSame(1, iterator_count((new ObjectStorage($this->storage->getStorageDir()))->list(Account::class)));
+
+        $winner = $unique->find('account-email', 'ADA@example.com');
+        $this->assertInstanceOf(Account::class, $winner);
+        $this->assertStorageIsConsistent();
+    }
+
     /**
      * Starts the workers, lets them begin at the same time and waits for all of them.
      *

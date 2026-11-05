@@ -4,6 +4,7 @@ namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Strategy\Standard;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class ObjectStorageShardingTest extends TestCase
 {
@@ -31,9 +32,7 @@ class ObjectStorageShardingTest extends TestCase
         $this->assertSame('child', (new ObjectStorage($this->storage->getStorageDir()))->load($uuid)->title);
     }
 
-    /**
-     * @dataProvider provideSyncSettings
-     */
+    #[DataProvider('provideSyncSettings')]
     public function testRebuildingStubsMovesObjectsWithoutClassNameAside(bool $sync): void
     {
         $this->storage->getWriter()->setSyncEnabled($sync);

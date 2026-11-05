@@ -14,13 +14,14 @@ use melia\ObjectStorage\Search\Exception\NoSuitableIndexException;
 use melia\ObjectStorage\Search\Exception\UnsupportedQueryException;
 use melia\ObjectStorage\Search\Field;
 use melia\ObjectStorage\Search\FieldType;
-use melia\ObjectStorage\Search\Index\Index;
 use melia\ObjectStorage\Search\Index\Definition;
+use melia\ObjectStorage\Search\Index\Index;
 use melia\ObjectStorage\Search\Index\IndexInterface;
 use melia\ObjectStorage\Search\Index\Manager;
 use melia\ObjectStorage\Search\Index\State;
 use melia\ObjectStorage\Search\Request;
 use melia\ObjectStorage\Util\UuidTrie;
+use PHPUnit\Framework\Attributes\DataProvider;
 use stdClass;
 use Tests\melia\ObjectStorage\TestCase;
 
@@ -696,9 +697,7 @@ class IndexManagerTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider invalidDefinitions
-     */
+    #[DataProvider('invalidDefinitions')]
     public function testInvalidDefinitionsAreRejected(callable $create): void
     {
         $this->expectException(InvalidIndexDefinitionException::class);

@@ -32,6 +32,7 @@ Commands:
 - maintenance:purge-expired
 - configuration:list, configuration:assign, configuration:check, configuration:import, configuration:export, configuration:delete
 - copy, move — objects into another storage, see [Copying and moving](transfer.md#cli)
+- unique:list, unique:create, unique:rebuild, unique:drop, unique:find — see [Unique indexes](unique.md#viewer-and-cli); all commands writing objects are checked against the unique indexes of the storage
 
 ## Configurations
 

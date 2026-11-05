@@ -62,6 +62,7 @@ abstract class TransferCommand extends BaseCommand
 
         $toConfiguration = $input->getOption('to-configuration');
         $target = $this->registry($input)->open($targetDir, is_string($toConfiguration) && '' !== $toConfiguration ? $toConfiguration : null);
+        $this->attachUniqueIndexes($target); // copies are checked against the unique indexes of the target
 
         return $this->withStorage($input, function (ObjectStorage $source) use ($target, $uuids, $className, $all, $onConflict, $input, $output): int {
             $transfer = new ObjectTransfer($source, $target);

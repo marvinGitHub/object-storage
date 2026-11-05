@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace melia\ObjectStorage\Cli\Command\Configuration;
 
 use melia\ObjectStorage\Cli\Command\BaseCommand;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -13,10 +14,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Deletes a configuration; storages it is assigned to can't be opened until they are assigned another one.
  */
+#[AsCommand(name: 'configuration:delete')]
 final class ConfigurationDeleteCommand extends BaseCommand
 {
-    protected static $defaultName = 'configuration:delete';
-
     protected function configure(): void
     {
         parent::configure();

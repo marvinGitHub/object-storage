@@ -5,13 +5,12 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\Exception\TypeConversionFailureException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Strategy\Standard;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class StandardHydrationTest extends TestCase
 {
-    /**
-     * @dataProvider provideLosslessConversions
-     */
+    #[DataProvider('provideLosslessConversions')]
     public function testScalarValuesAreConvertedToDeclaredType(string $property, mixed $value, mixed $expected): void
     {
         $target = new HydrationTarget();
@@ -35,9 +34,7 @@ final class StandardHydrationTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider provideLossyConversions
-     */
+    #[DataProvider('provideLossyConversions')]
     public function testLossyConversionIsRejected(string $property, mixed $value): void
     {
         $this->expectException(TypeConversionFailureException::class);

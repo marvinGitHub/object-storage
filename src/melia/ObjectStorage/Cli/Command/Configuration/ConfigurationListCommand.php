@@ -6,6 +6,7 @@ namespace melia\ObjectStorage\Cli\Command\Configuration;
 
 use melia\ObjectStorage\Cli\Command\BaseCommand;
 use melia\ObjectStorage\Configuration\Registry;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -13,10 +14,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Lists the named configurations and which one the storage (--dir) is assigned.
  */
+#[AsCommand(name: 'configuration:list')]
 final class ConfigurationListCommand extends BaseCommand
 {
-    protected static $defaultName = 'configuration:list';
-
     protected function configure(): void
     {
         parent::configure();

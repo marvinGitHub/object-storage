@@ -5,15 +5,15 @@ declare(strict_types=1);
 namespace melia\ObjectStorage\Cli\Command\Maintenance;
 
 use melia\ObjectStorage\Cli\Command\BaseCommand;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
+#[AsCommand(name: 'maintenance:purge-expired')]
 final class PurgeExpiredCommand extends BaseCommand
 {
-    protected static $defaultName = 'maintenance:purge-expired';
-
     protected function configure(): void
     {
         parent::configure();

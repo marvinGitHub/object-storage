@@ -6,6 +6,7 @@ namespace melia\ObjectStorage\Cli\Command\Configuration;
 
 use melia\ObjectStorage\Cli\Command\BaseCommand;
 use melia\ObjectStorage\Configuration\Configuration;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -16,10 +17,9 @@ use Symfony\Component\Console\Output\OutputInterface;
  * Creates or replaces a configuration from JSON, as configuration:export prints it; missing settings get their
  * defaults.
  */
+#[AsCommand(name: 'configuration:import')]
 final class ConfigurationImportCommand extends BaseCommand
 {
-    protected static $defaultName = 'configuration:import';
-
     protected function configure(): void
     {
         parent::configure();

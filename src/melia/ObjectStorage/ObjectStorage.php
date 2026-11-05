@@ -15,6 +15,7 @@ use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Configuration\Configuration;
 use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
 use melia\ObjectStorage\Configuration\Factory as ConfigurationFactory;
+use melia\ObjectStorage\Constraint\ConstraintsTrait;
 use melia\ObjectStorage\Context\GraphBuilderContext;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\ClassnameChangeContext;
@@ -31,6 +32,7 @@ use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\ClassnameRegistrationFailureException;
 use melia\ObjectStorage\Exception\ClosureSerializationNotSupportedException;
+use melia\ObjectStorage\Exception\ConstraintViolationException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
@@ -136,6 +138,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use ClassRenameMapAwareTrait;
 
     use RawAccessTrait;
+    use ConstraintsTrait; // addConstraint(), checkConstraints(): rules written objects have to satisfy, e.g. unique values
 
  // readRaw(), writeRaw(): objects as stored, e.g. to copy them into another storage
 
@@ -628,8 +631,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             }
             $eventDispatcher?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
 
-            // passed on as it is (it is an ObjectSavingFailureException too), so callers can catch the conflict itself
-            if ($e instanceof RevisionConflictException) {
+            // passed on as they are (ObjectSavingFailureExceptions too), so callers can catch the conflict or the
+            // violation itself; a violation may come from a referenced object stored along
+            if ($e instanceof RevisionConflictException || $e instanceof ConstraintViolationException) {
                 throw $e;
             }
 
@@ -770,12 +774,18 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $previousRevision = $currentMetadata?->getRevision();
                     $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject, $revision, $previousRevision);
 
+                    // under the lock of the object, with the data as it will be stored; a violation prevents the write
+                    $finalizeConstraints = $this->checkConstraints($uuid, $className, $serializedGraph, $metadata->getReservedReferenceName());
+                    $written = false;
                     try {
                         $this->writeObjectFiles($uuid, $serializedGraph, $metadata);
+                        $written = true;
                         $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
                     } catch (Throwable $e) {
                         $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
                         throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
+                    } finally {
+                        $finalizeConstraints($written);
                     }
                 }
 

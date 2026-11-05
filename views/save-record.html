@@ -31,6 +31,6 @@
 {% endif %}
 
 {% else %}
-<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be saved.</div>
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon"></i> Record could not be saved.{% if error is defined and error %}<div class="small mt-1">{{ error }}</div>{% endif %}</div>
 {% endif %}
 {% endblock body %}

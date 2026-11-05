@@ -13,7 +13,9 @@ use melia\ObjectStorage\Configuration\Exception\ConfigurationNotFoundException;
 use melia\ObjectStorage\Configuration\Registry;
 use melia\ObjectStorage\Exception\InvalidMaxDepthException;
 use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Strategy\Standard;
+use melia\ObjectStorage\Unique\Manager as UniqueManager;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -95,6 +97,16 @@ abstract class BaseCommand extends Command
     }
 
     /**
+     * Checks the writes to a storage against its unique indexes, see Unique\Manager.
+     */
+    protected function attachUniqueIndexes(ObjectStorage $storage): UniqueManager
+    {
+        $unique = new UniqueManager($storage);
+        $unique->attach();
+        return $unique;
+    }
+
+    /**
      * @throws IOException
      * @throws InvalidMaxDepthException
      */
@@ -116,6 +128,9 @@ abstract class BaseCommand extends Command
                 throw new RuntimeException('Configured shard depth cannot be applied: unsupported strategy instance.');
             }
         }
+
+        // every write of a command (put, copy, move, …) is checked against the unique indexes of the storage
+        $this->attachUniqueIndexes($storage);
 
         return $fn($storage, $dir);
     }

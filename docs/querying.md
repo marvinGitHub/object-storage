@@ -86,6 +86,6 @@ Keys and values of `$subSet` are both accepted, so the `UUID => object` result o
 
 ## Performance
 
-- Filtering costs one read per object of the class, cached objects excepted. A few thousand objects are fine; for large data sets with frequent queries, keep your own index (e.g. maintained by [events](events.md)) or use a database.
+- Filtering costs one read per object of the class, cached objects excepted. A few thousand objects are fine; for large data sets with frequent queries, use a [search index](search.md): filters, sorting, paging and full text without loading objects. See [Coming from Doctrine ORM](examples/coming-from-doctrine.md) for repositories built on it.
 - Always pass the class name to `match()` and `list()`.
 - The class index is updated by `store()` and `delete()`. If files were copied or moved outside the storage, rebuild it, see [Maintenance](maintenance.md#rebuilding-the-class-index).

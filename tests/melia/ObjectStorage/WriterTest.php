@@ -200,7 +200,7 @@ class WriterTest extends TestCase
      */
     private function createRecordingAdapter(array &$calls, bool $fsyncSucceeds = true, ?string $failWriteOf = null): AdapterInterface
     {
-        $adapter = $this->createMock(AdapterInterface::class);
+        $adapter = $this->createStub(AdapterInterface::class);
         $adapter->method('isDir')->willReturn(true); // the target directory exists
         $adapter->method('filePutContents')->willReturnCallback(static function (string $filename, string $data) use (&$calls, $failWriteOf) {
             $calls[] = 'write ' . $filename;

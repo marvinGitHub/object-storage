@@ -16,14 +16,15 @@ use Throwable;
  * properties (including dynamically attached ones) and in array cells,
  * recursively - so the resulting graph contains only real objects.
  *
- * Why this is needed: sebastian/object-graph's object_graph_dump()
- * inspects properties via Reflection. It has no idea that a property
- * holding an instance of melia\ObjectStorage\LazyLoadReference is a
- * stand-in for something else, so it will happily draw a node for the
- * proxy itself instead of following the reference. Running the graph
- * through GraphVisitor first forces every reference to resolve (which,
- * per ObjectStorage's own "parent auto-update" behaviour, replaces the
- * proxy in place) before you hand the root object to object_graph_dump().
+ * Why this is needed: tools that inspect an object graph via Reflection
+ * have no idea that a property holding an instance of
+ * melia\ObjectStorage\LazyLoadReference is a stand-in for something
+ * else, so they draw a node for the proxy itself instead of following
+ * the reference. Running the graph through GraphVisitor first forces
+ * every reference to resolve (which, per ObjectStorage's own "parent
+ * auto-update" behaviour, replaces the proxy in place) before you hand
+ * the root object to such a tool. To draw only which stored objects
+ * reference which, use buildReferenceGraph() and Export\Dot\DotExporter.
  *
  * Property discovery is delegated to melia\ObjectStorage\Reflection\Reflection
  * so it stays consistent with the rest of the library:
@@ -52,7 +53,9 @@ use Throwable;
  *
  *   (new GraphVisitor($storage))->resolve($root);
  *
- *   \SebastianBergmann\ObjectGraph\object_graph_dump('graph.svg', $root);
+ *   // or only the connections between stored objects, as a Graphviz file
+ *   $graph = (new GraphVisitor($storage))->buildReferenceGraph($root, $uuid);
+ *   file_put_contents('graph.dot', (new Export\Dot\DotExporter())->export($graph));
  */
 final class GraphVisitor
 {
@@ -253,7 +256,7 @@ final class GraphVisitor
      * Unlike resolve(), this does NOT mutate $root or anything it
      * points to - it returns an entirely separate tree of GraphNode /
      * DanglingReference instances, safe to feed straight into
-     * object_graph_dump() when you want to see the connection graph
+     * DotExporter when you want to see the connection graph
      * rather than the full object graph.
      *
      * $rootUuid is required rather than inferred, since $root - loaded
@@ -279,7 +282,7 @@ final class GraphVisitor
      * A given UUID only ever produces one GraphNode instance, reused
      * wherever that UUID is referenced again - shared/circular
      * references show up as that same instance appearing in multiple
-     * places in the tree, which object_graph_dump() detects and
+     * places in the tree, which DotExporter detects and
      * represents correctly on its own.
      *
      * Dangling references (see resolve()'s docblock) become

@@ -7,15 +7,16 @@ namespace melia\ObjectStorage\Cli\Command\Maintenance;
 use melia\ObjectStorage\Cli\Command\BaseCommand;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
+#[AsCommand(name: 'maintenance:rebuild-shards')]
 final class RebuildShardsCommand extends BaseCommand
 {
-    protected static $defaultName = 'maintenance:rebuild-shards';
     protected static $defaultDescription = 'Relocates stored objects into the correct shard directories (safe-mode enabled); continues an interrupted rebuild.';
 
     protected function configure(): void

@@ -118,7 +118,15 @@ trait RawAccessTrait
 
             $this->removeFromCache($uuid);
 
-            $this->writeObjectFiles($uuid, $object->data, $metadata);
+            // the constraints of this storage apply to copies as well, e.g. unique values
+            $finalizeConstraints = $this->checkConstraints($uuid, $metadata->getClassName(), $object->data, $metadata->getReservedReferenceName());
+            $written = false;
+            try {
+                $this->writeObjectFiles($uuid, $object->data, $metadata);
+                $written = true;
+            } finally {
+                $finalizeConstraints($written);
+            }
             $this->cacheMetadata($metadata);
 
             $className = $metadata->getClassName();

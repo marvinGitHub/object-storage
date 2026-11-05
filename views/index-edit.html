@@ -84,6 +84,10 @@
             structures, <code>lines.title</code> collects the titles of all lines. Referenced objects are indexed as
             their UUID. Values are converted to the <strong>type</strong>; values that can't be converted are indexed as
             <code>null</code>. <code>uuid</code> and <code>revision</code> are always part of a document.
+            <strong>Unique</strong> makes the value of the path unique among all objects of the class, like a UNIQUE
+            constraint: a <a href="?action=unique-indexes&storage={{ storage|url_encode }}">unique index</a> is created
+            (or dropped when unchecked), checked on every write, also outside this search index. Saving fails if stored
+            objects share a value.
         </p>
         <table class="table table-sm align-middle" id="fields">
             <thead>
@@ -94,6 +98,7 @@
                 <th class="text-center">Searchable</th>
                 <th class="text-center">Filterable</th>
                 <th class="text-center">Sortable</th>
+                <th class="text-center" title="No two objects of the class may have the same value: a unique index on the path, checked on every write">Unique</th>
                 <th></th>
             </tr>
             </thead>
@@ -118,6 +123,12 @@
             <td class="text-center"><input class="form-check-input" type="checkbox" data-key="searchable"></td>
             <td class="text-center"><input class="form-check-input" type="checkbox" data-key="filterable"></td>
             <td class="text-center"><input class="form-check-input" type="checkbox" data-key="sortable"></td>
+            <td class="text-center text-nowrap" data-unique-cell>
+                <input class="form-check-input" type="checkbox" data-key="unique" onchange="toggleIgnoreCase(this)">
+                <label class="small text-muted ms-1" data-ignore-case title="Ignore case and surrounding spaces, e.g. for emails">
+                    <input class="form-check-input" type="checkbox" data-key="uniqueIgnoreCase"> ignore case
+                </label>
+            </td>
             <td class="text-end"><button class="btn btn-outline-danger btn-sm" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x-lg"></i></button></td>
         </tr>
     </template>
@@ -139,7 +150,18 @@
                 }
             });
 
+            // an existing unique index on the path: its name as a hint
+            if (field.uniqueName) {
+                row.querySelector('[data-unique-cell]').title = `Unique index "${field.uniqueName}"`;
+            }
+            toggleIgnoreCase(row.querySelector('[data-key="unique"]'));
+
             document.querySelector('#fields tbody').appendChild(row);
+        }
+
+        // "ignore case" only matters for a unique field
+        function toggleIgnoreCase(checkbox) {
+            checkbox.closest('td').querySelector('[data-ignore-case]').classList.toggle('invisible', !checkbox.checked);
         }
 
         function suggestFields() {

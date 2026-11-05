@@ -8,6 +8,7 @@ use melia\ObjectStorage\Cli\Command\BaseCommand;
 use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
 use melia\ObjectStorage\Configuration\Factory;
 use melia\ObjectStorage\Configuration\Registry;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -16,10 +17,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Checks that the backends of a configuration work: takes a lock and uses the cache.
  */
+#[AsCommand(name: 'configuration:check')]
 final class ConfigurationCheckCommand extends BaseCommand
 {
-    protected static $defaultName = 'configuration:check';
-
     protected function configure(): void
     {
         parent::configure();

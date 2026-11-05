@@ -14,6 +14,11 @@ use melia\ObjectStorage\Cli\Command\Configuration\ConfigurationListCommand;
 use melia\ObjectStorage\Cli\Command\ConfigureShardDepthCommand;
 use melia\ObjectStorage\Cli\Command\Transfer\CopyCommand;
 use melia\ObjectStorage\Cli\Command\Transfer\MoveCommand;
+use melia\ObjectStorage\Cli\Command\Unique\UniqueCreateCommand;
+use melia\ObjectStorage\Cli\Command\Unique\UniqueDropCommand;
+use melia\ObjectStorage\Cli\Command\Unique\UniqueFindCommand;
+use melia\ObjectStorage\Cli\Command\Unique\UniqueListCommand;
+use melia\ObjectStorage\Cli\Command\Unique\UniqueRebuildCommand;
 use melia\ObjectStorage\Cli\Command\DeleteCommand;
 use melia\ObjectStorage\Cli\Command\GetCommand;
 use melia\ObjectStorage\Cli\Command\LifetimeCommand;
@@ -54,6 +59,11 @@ final class Application extends SymfonyApplication
             new ConfigurationDeleteCommand(),
             new CopyCommand(),
             new MoveCommand(),
+            new UniqueListCommand(),
+            new UniqueCreateCommand(),
+            new UniqueRebuildCommand(),
+            new UniqueDropCommand(),
+            new UniqueFindCommand(),
         ]);
 
         // Global styles can be further customized in individual commands via Styles

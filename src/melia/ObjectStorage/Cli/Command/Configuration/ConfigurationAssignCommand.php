@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace melia\ObjectStorage\Cli\Command\Configuration;
 
 use melia\ObjectStorage\Cli\Command\BaseCommand;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -14,10 +15,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Assigns a configuration to the storage (--dir), so it is opened with it; --none removes the assignment.
  */
+#[AsCommand(name: 'configuration:assign')]
 final class ConfigurationAssignCommand extends BaseCommand
 {
-    protected static $defaultName = 'configuration:assign';
-
     protected function configure(): void
     {
         parent::configure();

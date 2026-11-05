@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace melia\ObjectStorage\Cli\Command;
 
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
+#[AsCommand(name: 'ttl')]
 final class LifetimeCommand extends BaseCommand
 {
-    protected static $defaultName = 'ttl';
-
     protected function configure(): void
     {
         parent::configure();

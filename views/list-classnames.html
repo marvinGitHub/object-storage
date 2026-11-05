@@ -13,6 +13,7 @@
         <button class="btn btn-primary" type="submit"><i class="bi bi-box-arrow-in-right"></i> Open</button>
     </form>
     <a class="btn btn-primary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}" role="button"><i class="bi bi-search"></i> Search indexes</a>
+    <a class="btn btn-outline-primary btn-sm" href="?action=unique-indexes&storage={{ storage|url_encode }}" role="button" title="Values no two objects of a class may share"><i class="bi bi-key"></i> Unique indexes</a>
     <div class="dropdown">
         <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="The configuration of the storage: locks, cache, strategy">
             <i class="bi bi-gear"></i> {{ configuration ?? 'Default configuration' }}

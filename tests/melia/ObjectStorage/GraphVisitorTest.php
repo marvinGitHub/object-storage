@@ -392,7 +392,7 @@ final class GraphVisitorTest extends TestCase
             });
         $stateHandler->expects(self::once())->method('disableSafeMode');
 
-        $storage = $this->createMock(ObjectStorage::class);
+        $storage = $this->createStub(ObjectStorage::class);
         $storage->method('getStateHandler')->willReturn($stateHandler);
 
         $parent = new ParentFixture();
@@ -412,7 +412,7 @@ final class GraphVisitorTest extends TestCase
         $stateHandler->expects(self::once())->method('safeModeEnabled')->willReturn(true); // already on
         $stateHandler->expects(self::never())->method('disableSafeMode');
 
-        $storage = $this->createMock(ObjectStorage::class);
+        $storage = $this->createStub(ObjectStorage::class);
         $storage->method('getStateHandler')->willReturn($stateHandler);
 
         $parent = new ParentFixture();
@@ -432,7 +432,7 @@ final class GraphVisitorTest extends TestCase
         $stateHandler->expects(self::never())->method('safeModeEnabled');
         $stateHandler->expects(self::never())->method('disableSafeMode');
 
-        $storage = $this->createMock(ObjectStorage::class);
+        $storage = $this->createStub(ObjectStorage::class);
         // restoreSafeMode: false short-circuits before getStateHandler() is
         // ever called - it's only stubbed here in case that assumption
         // changes.

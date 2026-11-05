@@ -65,26 +65,25 @@
     ],
     "coverage": [
       "@composer install",
-      "XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-text --whitelist src"
+      "XDEBUG_MODE=coverage vendor/bin/phpunit --coverage-text --coverage-filter src"
     ]
   },
   "require": {
     "php": ">=8.5",
     "ext-json": "*",
-    "symfony/console": "^6.0",
+    "symfony/console": "^8.0",
     "psr/simple-cache": "^3.0",
-    "symfony/cache": "^6.0",
-    "symfony/lock": "^6.4"
+    "symfony/cache": "^8.0",
+    "symfony/lock": "^8.0"
   },
   "require-dev": {
     "ext-xdebug": "*",
-    "twig/twig": "^3.19",
+    "twig/twig": "^3.30",
     "fakerphp/faker": "^1.24",
-    "phpstan/phpstan": "^2.2",
+    "phpstan/phpstan": "^2.3",
     "perftools/php-profiler": "^1.4",
-    "monolog/monolog": "^2.10",
-    "phpunit/phpunit": "^10",
-    "sebastian/object-graph": "^3.0",
+    "monolog/monolog": "^3.0",
+    "phpunit/phpunit": "^13.0",
     "loupe/loupe": "^1.1"
   },
   "suggest": {

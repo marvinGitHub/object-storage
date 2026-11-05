@@ -5,15 +5,15 @@ namespace Tests\melia\ObjectStorage;
 use DateTimeImmutable;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\LazyLoadReference;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use WeakReference;
 
 final class LazyLoadReferenceLifecycleTest extends TestCase
 {
     /**
      * Runs in a separate process: the leak only affected the first reference loaded in a process.
-     *
-     * @runInSeparateProcess
      */
+    #[RunInSeparateProcess]
     public function testLoadedReferenceAndRootAreGarbageCollected(): void
     {
         $parent = new LifecycleParent();

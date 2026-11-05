@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace melia\ObjectStorage\Cli\Command;
 
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
+#[AsCommand(name: 'stats')]
 final class StatsCommand extends BaseCommand
 {
-    protected static $defaultName = 'stats';
-
     protected function configure(): void
     {
         parent::configure();

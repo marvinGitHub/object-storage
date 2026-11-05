@@ -2,6 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 class StaticFunctionTest extends TestCase
 {
     /**
@@ -17,9 +18,7 @@ class StaticFunctionTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider providerTestStaticFunction
-     */
+    #[DataProvider('providerTestStaticFunction')]
     public function testStaticFunction(string $arg)
     {
         $staticFunction = static fn() => $arg;

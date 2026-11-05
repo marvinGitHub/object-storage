@@ -6,15 +6,16 @@ namespace melia\ObjectStorage\Cli\Command;
 
 use melia\ObjectStorage\Cli\Config\CliConfig;
 use RuntimeException;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
+#[AsCommand(name: 'config:shard-depth')]
 final class ConfigureShardDepthCommand extends BaseCommand
 {
-    protected static $defaultName = 'config:shard-depth';
     protected static $defaultDescription = 'Configure a per-storage-dir shard depth for CLI commands (stored centrally).';
 
     protected function configure(): void
