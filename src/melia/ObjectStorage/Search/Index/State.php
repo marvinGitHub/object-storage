@@ -26,6 +26,15 @@ final class State
     public array $updates = [];
 
     /**
+     * The classes of the referenced objects documents were built from (paths into referenced objects, e.g.
+     * "category.title"): changes of their objects update the documents built from them. Only grows, until the
+     * index is dropped.
+     *
+     * @var string[]
+     */
+    public array $joinedClasses = [];
+
+    /**
      * @param string $name The name of the index.
      * @param int|null $generation The active generation (the Loupe database searched), null before the first build.
      * @param array{generation: int, total: int, processed: int, failed: int, cursor: ?string, startedAt: string}|null $build

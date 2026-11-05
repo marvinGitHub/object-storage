@@ -20,6 +20,7 @@ The code below is tested: [`tests/…/Examples/Shop/Shop.php`](../../tests/melia
 | `cascade: ['remove']`, `orphanRemoval` | the [child deletion policy](../configuration.md#child-deletion-whether-referenced-objects-are-deleted-along) of the strategy |
 | `#[ORM\UniqueConstraint]`, `unique: true` | a [unique index](../unique.md) |
 | `findBy()`, QueryBuilder, DQL | a [search index](../search.md): filters, sorting, paging, facets; `match()` for small sets |
+| `JOIN` in DQL, e.g. orders by the name of their customer | a field with a path into the referenced object, `customer.name` ([joins](../search.md#joins-paths-into-referenced-objects)) |
 | a FULLTEXT index, Elasticsearch | the same search index: full text, typo tolerant |
 | `#[ORM\Version]` | [optimistic locking](../concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) |
 | `wrapInTransaction()` | `Transaction` |
@@ -222,6 +223,7 @@ final class ShopIndexes
         if (!$search->has('orders')) {
             $search->create(new Definition('orders', Order::class, [
                 new Field('customer', 'customer', searchable: false, filterable: true), // the UUID of the customer
+                new Field('customerName', 'customer.name'),                             // a join: the name of the customer
                 new Field('status', 'status', searchable: false, filterable: true),
                 new Field('total', 'total', FieldType::NUMBER, searchable: false, filterable: true, sortable: true),
                 new Field('placedAt', 'placedAt', FieldType::NUMBER, searchable: false, filterable: true, sortable: true),
@@ -239,6 +241,7 @@ final class ShopIndexes
 ```
 
 - A field takes its value from the stored data: `customer` holds the UUID of the referenced customer — the foreign key, so to speak.
+- A path leads into referenced objects, like a JOIN: `customer.name` indexes the name of the customer with the order, so `$search->searchObjects(Order::class, new Request('Ada'))` finds the orders of Ada. Renaming the customer updates their orders, see [Joins](../search.md#joins-paths-into-referenced-objects).
 - With `attach()`, every `store()` and `delete()` updates the indexes of the class before it returns. For many writes, `attach(autoSync: false)` only records the change, and a cron job calls `$search->sync()`.
 - Adding a field later: `$search->update()` with the new definition, then `build()`; searches use the previous build meanwhile. The [viewer](../maintenance.md#the-web-viewer) does the same under **Search indexes**, with progress.
 

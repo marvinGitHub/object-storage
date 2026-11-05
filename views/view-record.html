@@ -108,7 +108,7 @@
                         <input class="form-check-input index-choice" type="checkbox" name="indexes[]" value="{{ index.name }}" id="index-{{ index.name }}" checked>
                         <label class="form-check-label" for="index-{{ index.name }}">
                             {{ index.name }}
-                            <small class="text-muted">{{ index.engine }}, {{ index.status }}{% if index.pending %}, change pending{% endif %}</small>
+                            <small class="text-muted">{{ index.engine }}, {{ index.status }}{% if index.joined %}, <span title="Its documents are built from objects of this class, e.g. a path like category.title: the documents built from this record are updated">joined</span>{% endif %}{% if index.pending %}, change pending{% endif %}</small>
                         </label>
                     </div>
                     {% endfor %}

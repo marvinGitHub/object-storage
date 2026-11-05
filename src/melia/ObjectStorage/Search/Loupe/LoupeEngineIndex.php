@@ -6,6 +6,7 @@ use Loupe\Loupe\Exception\InvalidDocumentException;
 use Loupe\Loupe\Loupe;
 use Loupe\Loupe\SearchParameters;
 use Loupe\Loupe\SearchResult as LoupeSearchResult;
+use melia\ObjectStorage\Search\DocumentBuilder;
 use melia\ObjectStorage\Search\Engine\EngineIndexInterface;
 use melia\ObjectStorage\Search\Exception\SearchException;
 use melia\ObjectStorage\Search\Exception\UnsupportedQueryException;
@@ -96,6 +97,32 @@ final class LoupeEngineIndex implements EngineIndexInterface
             return array_map(static fn(array $hit): string => (string)$hit['uuid'], $this->getLoupe()->search($parameters)->getHits());
         } catch (Throwable $e) {
             throw new SearchException(message: 'Unable to find expired documents: ' . $e->getMessage(), previous: $e);
+        }
+    }
+
+    public function referencing(array $uuids, int $limit, string $prefix = ''): array
+    {
+        if ([] === $uuids) {
+            return [];
+        }
+
+        $quote = static fn(string $value): string => "'" . str_replace("'", "''", $value) . "'";
+        $filter = sprintf('%s IN (%s)', DocumentBuilder::ATTRIBUTE_REFERENCED, implode(', ', array_map($quote, array_values($uuids))));
+        if ('' !== $prefix) {
+            // "~" sorts after all characters of UUIDs
+            $filter .= sprintf(' AND uuid >= %s AND uuid < %s', $quote($prefix), $quote($prefix . '~'));
+        }
+
+        // Loupe returns at most maxTotalHits documents per search
+        $parameters = SearchParameters::create()
+            ->withFilter($filter)
+            ->withAttributesToRetrieve(['uuid'])
+            ->withLimit(max(1, min($limit, $this->getLoupe()->getConfiguration()->getMaxTotalHits())));
+
+        try {
+            return array_map(static fn(array $hit): string => (string)$hit['uuid'], $this->getLoupe()->search($parameters)->getHits());
+        } catch (Throwable $e) {
+            throw new SearchException(message: 'Unable to find the documents referencing objects: ' . $e->getMessage(), previous: $e);
         }
     }
 

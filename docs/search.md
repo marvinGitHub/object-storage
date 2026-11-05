@@ -73,13 +73,37 @@ A field takes a value from the **stored data** of an object, not from the object
 | `filterable` | the field can be used in filters and facets |
 | `sortable` | results can be sorted by the field; not for lists |
 
-Every document also has the attributes `uuid` (filterable), `revision` (the [revision](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) of the object) and `expiresAt` (when the object expires, in seconds since the epoch, `null` if never; filterable), so these names can't be used for fields.
+Every document also has the attributes `uuid` (filterable), `revision` (the [revision](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) of the object), `expiresAt` (when the object expires, in seconds since the epoch, `null` if never; filterable) and `referencedUuids` (the referenced objects it was built from, see [Joins](#joins-paths-into-referenced-objects)), so these names can't be used for fields.
 
 What the path leads to:
 
 - **Properties** as stored, see [Serialization](serialization.md); with `__serialize()`, the keys of the returned array.
-- **Referenced objects** as their UUID: a field `category` holds the UUID of the category, so a filter like `category = '<uuid>'` finds all products of a category. A path doesn't lead into referenced objects (`category.title` is `null`); store the value in the object itself, or in an array, to index it.
+- **Referenced objects** as their UUID: a field `category` holds the UUID of the category, so a filter like `category = '<uuid>'` finds all products of a category.
+- **Into referenced objects**: `category.title` is the title of the referenced category, `labels.title` the titles of all referenced labels, see [Joins](#joins-paths-into-referenced-objects). Nested objects, e.g. an address, are referenced objects as well: `address.city`.
 - A missing value is `null`.
+
+### Joins: paths into referenced objects
+
+A path leads into referenced objects, like a join of a database, but when indexing: the document of a product holds the title of its category, so searching, filtering, sorting and facets work with it like with any field.
+
+```php
+$search->create(new Definition('products', Product::class, [
+    new Field('name', 'name'),
+    new Field('category', 'category.title', filterable: true),           // the title of the category
+    new Field('department', 'category.parent.title'),                    // two references away
+    new Field('labels', 'labels.title', FieldType::STRING_ARRAY, filterable: true), // all referenced labels
+]));
+
+$search->get('products')->search(new Request('oak', filter: "category = 'Chairs'"));
+```
+
+- A path follows at most three references (`DocumentBuilder::MAX_REFERENCES_PER_PATH`), e.g. `order.customer.address.city`. A referenced object that doesn't exist (anymore) or has expired gives `null`.
+- **Changes of referenced objects** update the documents built from them: every document records the UUIDs of the referenced objects it was read from (the attribute `referencedUuids`), and the index the classes of those objects (`IndexInterface::getJoinedClasses()`). With the manager attached, storing or deleting such an object records it as a change of a referenced object (`recordReferenceChange()`); the sync finds the documents built from it and applies them as pending changes. Renaming a category updates all its products.
+- **Many documents** built from one object, e.g. a category of 50,000 products: auto sync applies at most `Manager::AUTO_SYNC_MAX_CHANGES` (1,000) changes after a `store()`, so storing the category stays fast; the others stay pending for the next sync (e.g. a cron job, or **Sync** in the viewer). Until then, searches find some products by the previous title.
+- Objects written without the storage aren't recorded, as for any change: notify the manager with `notifyChanged($uuid)`, which also records the object as referenced object of the indexes reading its class.
+- The referenced objects are read when indexing, so each costs a read: products sharing a category read it once per build or sync step.
+- Indexes built before joins were supported have to be rebuilt: their documents don't record referenced objects.
+- In the [viewer](#the-viewer), **Suggest fields** suggests paths into referenced objects, and saving a record offers the indexes with documents built from it (marked *joined*), e.g. the products index when saving a category.
 
 ### Types
 
@@ -362,6 +386,7 @@ final class MyEngineIndex implements EngineIndexInterface
     public function delete(array $uuids): void { /* … */ }
     public function count(): int { /* … */ }
     public function expired(float $before, int $limit): array { /* UUIDs of documents with expiresAt <= $before */ }
+    public function referencing(array $uuids, int $limit, string $prefix = ''): array { /* UUIDs starting with $prefix of documents whose referencedUuids contain one of $uuids */ }
     public function search(object $request): Result { /* translate a Request, or accept own query objects */ }
     public function close(): void {}
 }
@@ -370,7 +395,7 @@ $search = new Manager($storage, [new LoupeEngine(), new MyEngine()]);
 $search->create(new Definition('articles', Article::class, $fields, engine: 'my'));
 ```
 
-Documents arrive with the attributes `uuid`, `revision`, `expiresAt` and one per field, with values already converted to the types of the fields. The data of an index lives in `<storage dir>/indexes/<engine>/<name>/`; an engine storing its data elsewhere derives a unique name from the directory it gets. The viewer shows the syntax help of an engine from the template `views/search-help-<engine>.html`, if there is one.
+Documents arrive with the attributes `uuid`, `revision`, `expiresAt`, `referencedUuids` (a list of strings, filterable for `referencing()`) and one per field, with values already converted to the types of the fields. The data of an index lives in `<storage dir>/indexes/<engine>/<name>/`; an engine storing its data elsewhere derives a unique name from the directory it gets. The viewer shows the syntax help of an engine from the template `views/search-help-<engine>.html`, if there is one.
 
 ## The viewer
 
@@ -419,7 +444,7 @@ As one record, a set is read and written as a whole, like any object: changing i
 
 ## Things to know
 
-- **Files**: everything lives in `<storage dir>/indexes/`. The definition, the state (status, build progress, last errors) and three sets of UUIDs of every index are objects of an internal object storage in `internal/`, written crash-safe like any stored object, one record each. The sets are [UUID tries](#uuid-tries): the pending changes, the objects still to index by a running build, and the changes to take over at its end. The directory of an index, `<engine>/<name>/`, only holds the data of the engine for the active generation (`data-<generation>/`, with the definition it was built with). Back the directory up with the storage, or rebuild the indexes.
+- **Files**: everything lives in `<storage dir>/indexes/`. The definition, the state (status, build progress, last errors) and four sets of UUIDs of every index are objects of an internal object storage in `internal/`, written crash-safe like any stored object, one record each. The sets are [UUID tries](#uuid-tries): the pending changes, the changed referenced objects, the objects still to index by a running build, and the changes to take over at its end. The directory of an index, `<engine>/<name>/`, only holds the data of the engine for the active generation (`data-<generation>/`, with the definition it was built with). Back the directory up with the storage, or rebuild the indexes.
 - **Eventual consistency**: with auto sync, an index is up to date when `store()` returns, unless another process holds the index; then it is up to date after the next sync. The storage is the source: `searchObjects()` loads the current state of each hit.
 - **Several processes** may store, sync and search at the same time. Syncs and build steps of an index run one after the other, under a lock of the internal storage; searches and `store()` never wait for them.
 - **Speed** with Loupe: as a rough guide, building an index of 2,000 small products took 1 to 9 seconds on a laptop, and searches with filters, sorting and facets took 3 to 13 milliseconds. Measure with your data: long texts, many fields and many languages cost more.

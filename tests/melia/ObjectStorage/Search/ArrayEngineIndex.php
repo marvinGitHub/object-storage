@@ -73,6 +73,18 @@ final class ArrayEngineIndex implements EngineIndexInterface
         return array_slice($uuids, 0, max(1, $limit));
     }
 
+    public function referencing(array $uuids, int $limit, string $prefix = ''): array
+    {
+        $found = [];
+        foreach ($this->read() as $uuid => $document) {
+            if (str_starts_with((string)$uuid, $prefix) && [] !== array_intersect($uuids, $document['referencedUuids'] ?? [])) {
+                $found[] = (string)$uuid;
+            }
+        }
+        sort($found);
+        return array_slice($found, 0, max(1, $limit));
+    }
+
     public function search(object $request): Result
     {
         if (!$request instanceof Request) {

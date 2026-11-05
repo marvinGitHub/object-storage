@@ -283,4 +283,35 @@ class LoupeEngineTest extends TestCase
         (new LoupeEngine())->validate($definition);
         $this->assertSame('loupe', $this->search->create($definition)->getEngineName());
     }
+
+    public function testPathsIntoReferencedObjectsAreUpdatedWhenTheyChange(): void
+    {
+        $fruit = new Category('Fruit');
+        $apple = $this->storage->store(new Product('Apple', category: $fruit));
+        $banana = $this->storage->store(new Product('Banana', category: $fruit));
+        $chair = $this->storage->store(new Product('Chair', category: new Category('Furniture')));
+
+        $index = $this->search->create(new Definition('products', Product::class, [
+            new Field('name', 'name'),
+            new Field('categoryTitle', 'category.title', filterable: true),
+        ], languages: ['en']));
+        $index->build();
+        $this->search->attach();
+
+        $this->assertEqualsCanonicalizing([$apple, $banana], $this->find($index, 'fruit'));
+        $this->assertSame([$chair], $this->find($index, '', "categoryTitle = 'Furniture'"));
+
+        $fruitUuid = json_decode(file_get_contents($this->storage->getFilePathData($apple)), true)['category']['__reference'];
+        $handle = (fn() => $this->openGeneration($this->getState()->generation))->call($index);
+        $this->assertEqualsCanonicalizing([$apple, $banana], $handle->referencing([$fruitUuid, 'unknown'], 10));
+        $this->assertSame([], $handle->referencing([$fruitUuid], 10, 'x'), 'by the prefix of the UUID');
+        $this->assertSame([$apple], $handle->referencing([$fruitUuid], 10, $apple));
+
+        $category = $this->storage->load($fruitUuid);
+        $category->title = "Produce's";
+        $this->storage->store($category, $fruitUuid);
+
+        $this->assertSame([], $this->find($index, 'fruit'));
+        $this->assertEqualsCanonicalizing([$apple, $banana], $this->find($index, '', "categoryTitle = 'Produce''s'"));
+    }
 }

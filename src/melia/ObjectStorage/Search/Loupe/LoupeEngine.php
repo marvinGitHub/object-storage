@@ -7,6 +7,7 @@ use Loupe\Loupe\Configuration;
 use Loupe\Loupe\Internal\Filter\Lexer;
 use Loupe\Loupe\LoupeFactory;
 use Loupe\Loupe\LoupeFactoryInterface;
+use melia\ObjectStorage\Search\DocumentBuilder;
 use melia\ObjectStorage\Search\Engine\EngineIndexInterface;
 use melia\ObjectStorage\Search\Engine\EngineInterface;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
@@ -100,8 +101,8 @@ final class LoupeEngine implements EngineInterface
             ->withPrimaryKey('uuid')
             ->withSearchableAttributes($definition->fieldNames(static fn(Field $field): bool => $field->searchable))
             // the UUID can always be filtered, e.g. to restrict a search to known objects; the expiration to find
-            // expired objects
-            ->withFilterableAttributes(['uuid', 'expiresAt', ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable)])
+            // expired objects; the referenced objects to find the documents depending on them
+            ->withFilterableAttributes(['uuid', 'expiresAt', DocumentBuilder::ATTRIBUTE_REFERENCED, ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable)])
             ->withSortableAttributes($definition->fieldNames(static fn(Field $field): bool => $field->sortable));
 
         if ([] !== $definition->languages) {

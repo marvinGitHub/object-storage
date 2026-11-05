@@ -10,8 +10,9 @@ use melia\ObjectStorage\Search\Result;
 /**
  * The documents of one generation of an index in an engine.
  *
- * A document has the attributes "uuid" (its identity), "revision" and one per field of the definition, with
- * values already converted to the types of the fields (or null).
+ * A document has the attributes "uuid" (its identity), "revision", "expiresAt", "referencedUuids" (the UUIDs of the
+ * referenced objects it was built from, a list of strings) and one per field of the definition, with values already
+ * converted to the types of the fields (or null).
  */
 interface EngineIndexInterface
 {
@@ -46,6 +47,19 @@ interface EngineIndexInterface
      * @throws SearchException
      */
     public function expired(float $before, int $limit): array;
+
+    /**
+     * Finds the documents built from referenced objects: those whose attribute "referencedUuids" contains one of
+     * the UUIDs, and whose UUID starts with a prefix. The index asks again with longer prefixes if the limit is
+     * reached, so an engine needn't page through many documents.
+     *
+     * @param string[] $uuids UUIDs of referenced objects.
+     * @param int $limit The maximum number of UUIDs.
+     * @param string $prefix The beginning of the UUIDs of the documents, "" for all.
+     * @return string[] UUIDs of the documents.
+     * @throws SearchException
+     */
+    public function referencing(array $uuids, int $limit, string $prefix = ''): array;
 
     /**
      * Searches the documents.

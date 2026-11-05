@@ -160,6 +160,7 @@ final class ShopIndexes
         if (!$search->has('orders')) {
             $search->create(new Definition('orders', Order::class, [
                 new Field('customer', 'customer', searchable: false, filterable: true), // the UUID of the customer
+                new Field('customerName', 'customer.name'),                             // a join: the name of the customer
                 new Field('status', 'status', searchable: false, filterable: true),
                 new Field('total', 'total', FieldType::NUMBER, searchable: false, filterable: true, sortable: true),
                 new Field('placedAt', 'placedAt', FieldType::NUMBER, searchable: false, filterable: true, sortable: true),

@@ -11,6 +11,8 @@ class Product
         public array      $tags = [],
         public ?Category  $category = null,
         public bool       $active = true,
+        /** @var Tag[] */
+        public array      $labels = [],
     )
     {
     }

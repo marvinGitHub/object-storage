@@ -9,14 +9,35 @@
     {% block badges %}{% if hasEntries %}<span class="badge text-bg-secondary">{{ total|number_format(0, '.', ' ') }}</span>{% endif %}{% endblock %}
 {% endembed %}
 
+{% if message %}<div class="alert alert-success"><i class="bi bi-check-circle"></i> {{ message }}</div>{% endif %}
+{% if errors is not empty %}
+<div class="alert alert-danger">
+    <i class="bi bi-exclamation-octagon"></i> Not deleted:
+    <ul class="mb-0">{% for uuid, error in errors %}<li><span class="uuid">{{ uuid }}</span>: {{ error }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
 {% if hasEntries %}
 <form class="card" method="get" id="selection-form">
     <input type="hidden" name="action" value="transfer">
     <input type="hidden" name="storage" value="{{ storage }}">
+    <input type="hidden" name="mode" value="copy">
+    <input type="hidden" name="classname" value="{{ classname }}">
+    <input type="hidden" name="page" value="{{ page }}">
     <div class="card-header d-flex align-items-center gap-2 small fw-normal text-muted">
         <input class="form-check-input mt-0" type="checkbox" id="select-all" title="Select the objects of this page">
         <span class="me-auto">{{ offset|number_format(0, '.', ' ') }} – {{ end|number_format(0, '.', ' ') }} of {{ total|number_format(0, '.', ' ') }}</span>
-        <button class="btn btn-secondary btn-sm" type="submit" id="transfer-selected" disabled><i class="bi bi-box-arrow-right"></i> Copy / Move selected <span class="badge text-bg-light" id="selected-count">0</span></button>
+        <div class="dropdown">
+            <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" id="selection-actions" data-bs-toggle="dropdown" aria-expanded="false" disabled>
+                Selected <span class="badge text-bg-light" id="selected-count">0</span>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><button class="dropdown-item" type="button" onclick="submitSelection('transfer', 'copy')"><i class="bi bi-copy"></i> Copy to another storage…</button></li>
+                <li><button class="dropdown-item" type="button" onclick="submitSelection('transfer', 'move')"><i class="bi bi-arrow-right-square"></i> Move to another storage…</button></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><button class="dropdown-item text-danger" type="button" onclick="submitSelection('delete-records')"><i class="bi bi-trash"></i> Delete</button></li>
+            </ul>
+        </div>
     </div>
     <div class="list-group list-group-flush">
         {% for uuid in uuids %}
@@ -36,14 +57,34 @@
 </form>
 
 <script>
-    // the selection of objects to copy or move
+    // an action for the selected objects: copying and moving open the transfer page, deleting asks first and posts
+    function submitSelection(action, mode = null) {
+        const form = document.getElementById('selection-form');
+        const count = form.querySelectorAll('.select-uuid:checked').length;
+        if (action === 'delete-records') {
+            if (!confirm(`Delete ${count} object(s)? This can't be undone.`)) {
+                return;
+            }
+            // setAttribute: the input named "action" hides the property
+            form.setAttribute('method', 'post');
+            form.setAttribute('action', '?action=delete-records');
+        } else {
+            form.setAttribute('method', 'get');
+            form.removeAttribute('action');
+            form.elements.mode.value = mode;
+        }
+        form.elements.action.value = action;
+        form.submit();
+    }
+
+    // the selection of objects
     (() => {
         const boxes = [...document.querySelectorAll('.select-uuid')];
         const all = document.getElementById('select-all');
         const update = () => {
             const selected = boxes.filter(box => box.checked).length;
             document.getElementById('selected-count').textContent = selected;
-            document.getElementById('transfer-selected').disabled = selected === 0;
+            document.getElementById('selection-actions').disabled = selected === 0;
             all.checked = selected === boxes.length;
             all.indeterminate = selected > 0 && selected < boxes.length;
         };

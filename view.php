@@ -225,9 +225,31 @@ $suggestFields = static function (ObjectStorage $storage, string $className): ar
             continue;
         }
 
+        // also the values of referenced objects, e.g. "category.title"
+        $follow = static function (string $uuid) use ($storage): ?array {
+            try {
+                $object = $storage->readRaw($uuid);
+                $data = json_decode($object->data, true);
+                return is_array($data) ? [$data, $object->metadata->getReservedReferenceName(), $object->metadata->getClassName()] : null;
+            } catch (Throwable) {
+                return null;
+            }
+        };
+
+        // a few objects, as a value may be missing in one of them, e.g. a product without a category
+        $samples = [[$data, $metadata->getReservedReferenceName()]];
+        foreach ($storage->list($className) as $other) {
+            if (count($samples) >= 20) {
+                break;
+            }
+            if ($other !== $uuid && is_array($sample = $follow($other))) {
+                $samples[] = $sample;
+            }
+        }
+
         return array_map(
             static fn(Field $field): array => $field->toArray(),
-            DocumentBuilder::suggestFields($data, $metadata->getReservedReferenceName())
+            DocumentBuilder::suggestFieldsFrom($samples, $follow)
         );
     }
 
@@ -661,6 +683,8 @@ try {
             $total = iterator_count(new IteratorIterator($it));
 
             $pages = $pageSize > 0 ? (int)ceil($total / $pageSize) : 0;
+            // e.g. after deleting the objects of the last page
+            $page = max(1, min($page, $pages));
             $offset = ($page - 1) * $pageSize;
 
             $uuids = [];
@@ -669,6 +693,8 @@ try {
             }
 
             echo $twig->render('list-uuids.html', [
+                'message' => $_GET['message'] ?? null,
+                'errors' => array_map('strval', (array)($_GET['errors'] ?? [])),
                 'storage' => $storageDir,
                 'uuids' => $uuids,
                 'classname' => $className ?? '',
@@ -679,6 +705,48 @@ try {
                 'offset' => $offset,
                 'end' => $offset + count($uuids),
             ]);
+            break;
+        case 'delete-records':
+            // deletes the objects selected in the list, then shows the list again with the result
+            $storageDir = (string)($_POST['storage'] ?? '');
+            $className = (string)($_POST['classname'] ?? '');
+            $uuids = array_values(array_unique(array_filter(array_map('strval', (array)($_POST['uuids'] ?? [])), static fn(string $uuid): bool => '' !== $uuid)));
+            $deleted = 0;
+            $errors = [];
+
+            try {
+                $storage = $buildStorage($storageDir);
+                foreach ($uuids as $uuid) {
+                    try {
+                        $storage->delete($uuid); // the attached search and unique indexes follow the delete
+                        $deleted++;
+                    } catch (Throwable $e) {
+                        $logger->error($e);
+                        $errors[$uuid] = $e->getMessage();
+                    }
+                }
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $errors[''] = $e->getMessage();
+            }
+
+            // a few errors, shortened: they travel in the URL of the redirect
+            $shown = [];
+            foreach (array_slice($errors, 0, 5, true) as $uuid => $error) {
+                $shown[$uuid] = mb_strimwidth($error, 0, 200, '…');
+            }
+            if (count($errors) > 5) {
+                $shown['…'] = sprintf('and %d more, see the log', count($errors) - 5);
+            }
+
+            header('Location: ?' . http_build_query([
+                    'action' => 'list-uuids',
+                    'storage' => $storageDir,
+                    'classname' => $className,
+                    'page' => max(1, (int)($_POST['page'] ?? 1)),
+                    'message' => sprintf('%d object(s) deleted.', $deleted),
+                    'errors' => $shown,
+                ]));
             break;
         case 'delete-record':
             $storageDir = $_GET['storage'] ?? null;
@@ -785,12 +853,15 @@ try {
             $recordIndexes = [];
             if (null !== $classname && null !== ($search = $searchFor($storage))) {
                 try {
-                    foreach ($search->getIndexesForClass($classname) as $name => $index) {
+                    // also those with documents built from objects of the class (paths into referenced objects)
+                    $joining = $search->getIndexesJoiningClass($classname);
+                    foreach ($search->getIndexesForClass($classname) + $joining as $name => $index) {
                         $recordIndexes[] = [
                             'name' => $name,
                             'engine' => $index->getEngineName(),
                             'status' => $index->getStatus(),
                             'pending' => $index->hasPendingChange($uuid),
+                            'joined' => isset($joining[$name]),
                         ];
                     }
                 } catch (Throwable $e) {
@@ -929,7 +1000,7 @@ try {
                             if (null !== $search) {
                                 $chosen = isset($_POST['indexSelection']) ? array_map('strval', (array)($_POST['indexes'] ?? [])) : null;
                                 $updatedIndexes = $search->notifyChanged($uuid, $metadata->getClassName(), $chosen);
-                                $skippedIndexes = array_values(array_diff(array_keys($search->getIndexesForClass($metadata->getClassName())), $updatedIndexes));
+                                $skippedIndexes = array_values(array_diff(array_keys($search->getIndexesForClass($metadata->getClassName()) + $search->getIndexesJoiningClass($metadata->getClassName())), $updatedIndexes));
                             }
                         } catch (Throwable $e) {
                             $logger->error($e);

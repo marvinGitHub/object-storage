@@ -147,6 +147,23 @@ interface IndexInterface
     public function recordChange(string ...$uuids): void;
 
     /**
+     * Records a change of a referenced object: the next sync updates the documents built from it, e.g. the
+     * products of a changed category for a field with the path "category.title".
+     *
+     * @throws SearchException
+     */
+    public function recordReferenceChange(string ...$uuids): void;
+
+    /**
+     * The classes of the referenced objects documents were built from; changes of their objects are to be recorded
+     * with recordReferenceChange().
+     *
+     * @return string[]
+     * @throws SearchException
+     */
+    public function getJoinedClasses(): array;
+
+    /**
      * Applies the recorded changes, and removes the objects that have expired since they were indexed.
      *
      * @param bool $wait Whether to wait if another process is working on the index; otherwise nothing is done.

@@ -740,6 +740,7 @@ class IndexManagerTest extends TestCase
             'quantities' => [1, 2],
             'owner' => $reference,
             'missing' => null,
+            'referencedUuids' => [],
         ], $document);
 
         $suggested = [];

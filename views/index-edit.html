@@ -81,8 +81,10 @@
         <h6>Fields</h6>
         <p class="form-text mt-0">
             The <strong>path</strong> leads to a value in the stored data, e.g. <code>address.city</code>; for lists of
-            structures, <code>lines.title</code> collects the titles of all lines. Referenced objects are indexed as
-            their UUID. Values are converted to the <strong>type</strong>; values that can't be converted are indexed as
+            structures, <code>lines.title</code> collects the titles of all lines. A referenced object is indexed as
+            its UUID, and a path leads into it (a join): <code>category.title</code> indexes the title of the
+            referenced category, <code>tags.title</code> those of all tags; when a referenced object changes, the
+            documents built from it are updated by the next sync. Values are converted to the <strong>type</strong>; values that can't be converted are indexed as
             <code>null</code>. <code>uuid</code> and <code>revision</code> are always part of a document.
             <strong>Unique</strong> makes the value of the path unique among all objects of the class, like a UNIQUE
             constraint: a <a href="?action=unique-indexes&storage={{ storage|url_encode }}">unique index</a> is created

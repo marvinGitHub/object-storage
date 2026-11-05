@@ -36,6 +36,9 @@ final class Manager implements ManagerInterface
     /** the directory of the internal storage, next to those of the engines: no engine may have this name */
     public const string INTERNAL_DIRECTORY = 'internal';
 
+    /** the changes auto sync applies at most after a store, e.g. after a change of a category of many products */
+    public const int AUTO_SYNC_MAX_CHANGES = 1000;
+
     /** @var array<string, EngineInterface> */
     private array $engines = [];
 
@@ -189,6 +192,28 @@ final class Manager implements ManagerInterface
         try {
             foreach ($this->list() as $name => $index) {
                 if ($index->getDefinition()->className === $className) {
+                    $indexes[$name] = $index;
+                }
+            }
+        } catch (Throwable $e) {
+            $this->storage->getLogger()?->log($e);
+        }
+        return $indexes;
+    }
+
+    /**
+     * The indexes with documents built from referenced objects of the class (paths into referenced objects, e.g.
+     * "category.title" for the class of the categories); with a null class, those with any.
+     *
+     * @return Index[]
+     */
+    public function getIndexesJoiningClass(?string $className): array
+    {
+        $indexes = [];
+        try {
+            foreach ($this->list() as $name => $index) {
+                $joined = $index->getJoinedClasses();
+                if (null === $className ? [] !== $joined : in_array($className, $joined, true)) {
                     $indexes[$name] = $index;
                 }
             }
@@ -425,6 +450,7 @@ final class Manager implements ManagerInterface
             $className = null === $uuid ? null : $this->storage->getClassName($uuid);
             if (null !== $className) {
                 $this->record($uuid, $this->getIndexesForClass($className));
+                $this->recordReference($uuid, $this->getIndexesJoiningClass($className));
             }
         };
 
@@ -432,14 +458,17 @@ final class Manager implements ManagerInterface
         $this->listeners[Events::CLASSNAME_CHANGED] = function (?ClassnameChangeContext $context): void {
             if (null !== $context?->getUUID()) {
                 $this->record($context->getUUID(), $this->getIndexesForClass($context->getPreviousClassName()));
+                $this->recordReference($context->getUUID(), $this->getIndexesJoiningClass($context->getPreviousClassName()));
             }
         };
 
-        // the class of a deleted object can't be read anymore: record it for every index, syncing removes it
+        // the class of a deleted object can't be read anymore: record it for every index, syncing removes it, and
+        // for every index joining referenced objects, syncing updates the documents built from it
         $this->listeners[Events::AFTER_DELETE] = function (?Context $context): void {
             if (null !== $context?->getUUID()) {
                 try {
                     $this->record($context->getUUID(), $this->list());
+                    $this->recordReference($context->getUUID(), $this->getIndexesJoiningClass(null));
                 } catch (Throwable $e) {
                     $this->storage->getLogger()?->log($e);
                 }
@@ -457,6 +486,7 @@ final class Manager implements ManagerInterface
             $className = null === $uuid ? null : $this->storage->getClassName($uuid);
             if (null !== $className) {
                 $this->record($uuid, $this->getIndexesForClass($className));
+                $this->recordReference($uuid, $this->getIndexesJoiningClass($className));
                 $this->autoSync();
             }
         };
@@ -479,15 +509,19 @@ final class Manager implements ManagerInterface
     {
         $className ??= $this->storage->getClassName($uuid);
         $candidates = null === $className ? $this->list() : $this->getIndexesForClass($className);
+        // indexes with documents built from the object
+        $joining = $this->getIndexesJoiningClass($className);
 
         if (null !== $indexes) {
             $candidates = array_intersect_key($candidates, array_flip($indexes));
+            $joining = array_intersect_key($joining, array_flip($indexes));
         }
 
         $this->record($uuid, $candidates);
+        $this->recordReference($uuid, $joining);
         $this->autoSync();
 
-        return array_keys($candidates);
+        return array_keys($candidates + $joining);
     }
 
     /**
@@ -539,7 +573,23 @@ final class Manager implements ManagerInterface
     }
 
     /**
-     * Applies the changes recorded by this process; never fails the storage operation.
+     * @param Index[] $indexes
+     */
+    private function recordReference(string $uuid, array $indexes): void
+    {
+        foreach ($indexes as $name => $index) {
+            try {
+                $index->recordReferenceChange($uuid);
+                $this->pending[$name] = true;
+            } catch (Throwable $e) {
+                $this->storage->getLogger()?->log($e);
+            }
+        }
+    }
+
+    /**
+     * Applies the changes recorded by this process; never fails the storage operation. After a change of an object
+     * many documents were built from, at most AUTO_SYNC_MAX_CHANGES are applied, the others by the next sync.
      */
     private function autoSync(): void
     {
@@ -553,7 +603,7 @@ final class Manager implements ManagerInterface
         foreach (array_keys($pending) as $name) {
             try {
                 // don't wait for a build or another sync: the changes stay recorded for the next sync
-                ($this->indexes[$name] ?? null)?->sync(wait: false, purgeExpired: false);
+                ($this->indexes[$name] ?? null)?->sync(wait: false, purgeExpired: false, maxChanges: self::AUTO_SYNC_MAX_CHANGES);
             } catch (Throwable $e) {
                 $this->storage->getLogger()?->log($e);
             }

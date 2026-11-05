@@ -31,7 +31,9 @@ use Throwable;
  * (see Manager), each one record; the sets are UuidTries:
  *
  *   pending       the objects changed since the last sync
- *   build         the objects to index while a build is running
+ *   referenced    the referenced objects changed since the last sync: the documents built from them (see
+ *                 DocumentBuilder::ATTRIBUTE_REFERENCED) become pending changes
+ *   build        the objects to index while a build is running
  *   replay        the changes applied during a build, applied to the new generation at its end
  *
  * The directory of the index holds the data of the engine, one directory per generation (data-<n>/, with the
@@ -44,6 +46,7 @@ final class Index implements IndexInterface
 
     /** the sets of UUIDs of an index */
     public const string TRIE_PENDING = 'pending';
+    public const string TRIE_REFERENCED = 'referenced';
     public const string TRIE_BUILD = 'build';
     public const string TRIE_REPLAY = 'replay';
 
@@ -52,8 +55,17 @@ final class Index implements IndexInterface
     private const int MAX_ERRORS = 20;
     private const int SNAPSHOT_CHUNK = 10000;
 
+    /** the documents asked for at once when looking for those built from changed referenced objects */
+    private const int REFERENCING_LIMIT = 500;
+
+    /** the changed referenced objects looked up at once */
+    private const int REFERENCED_BATCH = 50;
+
     /** @var array<int, EngineIndexInterface> open generations */
     private array $handles = [];
+
+    /** @var array<string, true> classes of referenced objects read since the state was loaded, see withState() */
+    private array $joinedClasses = [];
 
     /**
      * @param ObjectStorage $storage The storage of the indexed objects.
@@ -163,7 +175,7 @@ final class Index implements IndexInterface
 
     public function countPendingChanges(): int
     {
-        return $this->readTrie(self::TRIE_PENDING)->count();
+        return $this->readTrie(self::TRIE_PENDING)->count() + $this->readTrie(self::TRIE_REFERENCED)->count();
     }
 
     public function hasPendingChange(string $uuid): bool
@@ -177,18 +189,42 @@ final class Index implements IndexInterface
     }
 
     /**
+     * Records changes of referenced objects: the next sync updates the documents built from them, e.g. the
+     * products of a changed category for a field "category.title".
+     */
+    public function recordReferenceChange(string ...$uuids): void
+    {
+        $this->changeTrie(self::TRIE_REFERENCED, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
+    }
+
+    /**
+     * The classes of the referenced objects the documents were built from, e.g. the class of the categories for a
+     * field "category.title": changes of their objects are recorded with recordReferenceChange().
+     *
+     * @return string[]
+     */
+    public function getJoinedClasses(): array
+    {
+        return $this->getState()->joinedClasses;
+    }
+
+    /**
      * @param bool $purgeExpired Whether to remove the expired objects as well, see purgeExpired(); auto sync after
      *                           each store doesn't, to stay fast.
+     * @param int|null $maxChanges The number of changes to apply at most, e.g. after a change of an object many
+     *                             documents were built from; the others stay pending. Null for all.
      * @return int The number of applied changes and removed expired objects.
      */
-    public function sync(bool $wait = true, int $batchSize = 500, bool $purgeExpired = true): int
+    public function sync(bool $wait = true, int $batchSize = 500, bool $purgeExpired = true, ?int $maxChanges = null): int
     {
-        return $this->withState(function (State $state) use ($batchSize, $purgeExpired): int {
+        return $this->withState(function (State $state) use ($batchSize, $purgeExpired, $maxChanges): int {
             $applied = 0;
 
+            $this->expandReferenceChanges($state);
+
             // taken out before they are applied: a change recorded meanwhile is recorded again and not lost
-            while ([] !== ($uuids = $this->changeTrie(self::TRIE_PENDING, static function (UuidTrie $trie) use ($batchSize): array {
-                    $uuids = $trie->first($batchSize);
+            while ((null === $maxChanges || $applied < $maxChanges) && [] !== ($uuids = $this->changeTrie(self::TRIE_PENDING, static function (UuidTrie $trie) use ($batchSize, $maxChanges, $applied): array {
+                    $uuids = $trie->first(null === $maxChanges ? $batchSize : max(1, min($batchSize, $maxChanges - $applied)));
                     $trie->remove(...$uuids);
                     return $uuids;
                 }))) {
@@ -218,6 +254,66 @@ final class Index implements IndexInterface
 
             return $applied + $expired;
         }, $wait) ?? 0;
+    }
+
+    /**
+     * Turns the changes of referenced objects into pending changes of the documents built from them, in the active
+     * generation and in the one being built.
+     *
+     * @throws SearchException
+     */
+    private function expandReferenceChanges(State $state): void
+    {
+        $generations = array_values(array_filter([$state->generation, $state->build['generation'] ?? null], static fn(?int $generation): bool => null !== $generation));
+
+        while ([] !== ($uuids = $this->changeTrie(self::TRIE_REFERENCED, static function (UuidTrie $trie): array {
+                $uuids = $trie->first(self::REFERENCED_BATCH);
+                $trie->remove(...$uuids);
+                return $uuids;
+            }))) {
+            $dependents = [];
+            try {
+                foreach ($generations as $generation) {
+                    foreach ($this->findReferencing($this->openGeneration($generation), $uuids) as $uuid) {
+                        $dependents[$uuid] = true;
+                    }
+                }
+            } catch (Throwable $e) {
+                // e.g. a generation built before documents recorded their referenced objects: rebuilding it helps
+                $this->storage->getLogger()?->log($e);
+                $state->errors = array_slice([...$state->errors, 'Referenced objects: ' . $e->getMessage()], -self::MAX_ERRORS);
+                continue;
+            }
+
+            if ([] !== $dependents) {
+                $this->recordChange(...array_map('strval', array_keys($dependents)));
+            }
+        }
+    }
+
+    /**
+     * The documents built from referenced objects. The engine returns a limited number at once: if the limit is
+     * reached, the UUIDs are asked for by longer prefixes, so any number of documents is found.
+     *
+     * @param string[] $uuids UUIDs of referenced objects.
+     * @return string[]
+     * @throws SearchException
+     */
+    private function findReferencing(EngineIndexInterface $handle, array $uuids, string $prefix = ''): array
+    {
+        $found = $handle->referencing($uuids, self::REFERENCING_LIMIT, $prefix);
+        if (count($found) < self::REFERENCING_LIMIT || strlen($prefix) >= 36) {
+            return $found;
+        }
+
+        // the next character of a UUID: the hyphens are at fixed positions
+        $next = in_array(strlen($prefix), [8, 13, 18, 23], true) ? ['-'] : str_split('0123456789abcdefABCDEF');
+        $result = [];
+        foreach ($next as $character) {
+            array_push($result, ...$this->findReferencing($handle, $uuids, $prefix . $character));
+        }
+
+        return $result;
     }
 
     public function purgeExpired(bool $wait = true, int $batchSize = 500): int
@@ -485,6 +581,7 @@ final class Index implements IndexInterface
                 static::definitionUuid($this->getName()),
                 static::stateUuid($this->getName()),
                 static::trieUuid($this->getName(), self::TRIE_PENDING),
+                static::trieUuid($this->getName(), self::TRIE_REFERENCED),
                 static::trieUuid($this->getName(), self::TRIE_BUILD),
                 static::trieUuid($this->getName(), self::TRIE_REPLAY),
             ];
@@ -634,7 +731,15 @@ final class Index implements IndexInterface
                 throw new SearchException(sprintf('Search index "%s" doesn\'t exist.', $this->getName()));
             }
 
+            $this->joinedClasses = [];
             $result = $callback($state);
+
+            // the classes of referenced objects only grow: documents of the active generation may still have been
+            // built from objects of a class the current definition doesn't lead to anymore
+            if ([] !== ($joined = array_diff(array_keys($this->joinedClasses), $state->joinedClasses))) {
+                $state->joinedClasses = [...$state->joinedClasses, ...$joined];
+                sort($state->joinedClasses);
+            }
 
             $this->meta->store($state, $stateUuid);
 
@@ -677,7 +782,11 @@ final class Index implements IndexInterface
     private function applyChanges(int $generation, array $uuids, array $errors): array
     {
         $definition = $this->getGenerationDefinition($generation);
-        $builder = new DocumentBuilder($definition);
+        // paths lead into referenced objects, read like the objects themselves
+        $builder = new DocumentBuilder($definition, function (string $uuid): ?array {
+            $stored = $this->readObject($uuid);
+            return null === $stored ? null : [$stored[1], $stored[0]->getReservedReferenceName(), $stored[0]->getClassName()];
+        });
         $handle = $this->openGeneration($generation);
 
         $documents = [];
@@ -711,6 +820,10 @@ final class Index implements IndexInterface
 
         if ([] !== $remove) {
             $handle->delete(array_values(array_unique($remove)));
+        }
+
+        foreach ($builder->getJoinedClasses() as $className) {
+            $this->joinedClasses[$className] = true;
         }
 
         return ['failed' => $failed, 'errors' => array_slice($errors, -self::MAX_ERRORS)];

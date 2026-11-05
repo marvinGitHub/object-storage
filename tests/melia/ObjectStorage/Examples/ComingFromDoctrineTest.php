@@ -176,6 +176,30 @@ final class ComingFromDoctrineTest extends TestCase
         $this->assertSame('orders', $this->search->explain(Order::class, new Request(filter: "status = 'new'"))->getChosen()?->name);
     }
 
+    public function testOrdersAreFoundByTheNameOfTheirCustomer(): void
+    {
+        $ada = $this->customers->register('ada@example.com', 'Ada');
+        $bob = $this->customers->register('bob@example.com', 'Bob');
+        [$chair] = $this->catalog();
+
+        $adasOrder = new Order($ada);
+        $adasOrder->add($chair, 1);
+        $this->orders->save($adasOrder);
+        $bobsOrder = new Order($bob);
+        $bobsOrder->add($chair, 2);
+        $this->orders->save($bobsOrder);
+
+        // a JOIN: the index holds the name of the customer with each order
+        $byCustomerName = fn(string $name): array => array_keys(iterator_to_array($this->search->searchObjects(Order::class, new Request($name))));
+        $this->assertSame([$adasOrder->getUUID()], $byCustomerName('Ada'));
+
+        // renaming the customer updates their orders
+        $ada->name = 'Ada Lovelace';
+        $this->shop->store($ada);
+        $this->assertSame([$adasOrder->getUUID()], $byCustomerName('Lovelace'));
+        $this->assertSame([$bobsOrder->getUUID()], $byCustomerName('Bob'));
+    }
+
     public function testRemovingAnOrderRemovesItsLinesOnly(): void
     {
         $customer = $this->customers->register('ada@example.com', 'Ada');
