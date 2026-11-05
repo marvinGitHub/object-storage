@@ -18,6 +18,7 @@ use melia\ObjectStorage\Search\Engine\EngineInterface;
 use melia\ObjectStorage\Search\Exception\IndexBuildInProgressException;
 use melia\ObjectStorage\Search\Exception\IndexNotReadyException;
 use melia\ObjectStorage\Search\Exception\SearchException;
+use melia\ObjectStorage\Search\Exception\UnknownPathException;
 use melia\ObjectStorage\Search\Request;
 use melia\ObjectStorage\Search\Result;
 use melia\ObjectStorage\UUID\Helper;
@@ -528,7 +529,83 @@ final class Index implements IndexInterface
             throw new IndexNotReadyException(sprintf('Search index "%s" has not been built yet.', $this->getName()));
         }
 
+        if ($request instanceof Request) {
+            $request = $this->resolvePaths($request, $this->getGenerationDefinition($generation));
+        }
+
         return $this->openGeneration($generation)->search($request);
+    }
+
+    /**
+     * Fields named by their paths: a search may name a field by its path instead of its name, in the filter, the
+     * sort, the facets and the fields searched, e.g. "friend.name = 'Homa'" for a field "friendName" with the path
+     * "friend.name". A path also leads into referenced objects (see "Joins" in docs/search.md), but only to values
+     * indexed: a path that isn't the path of a field fails.
+     *
+     * @param Definition|null $definition The definition searched; the one of the last build by default.
+     * @return Request The request with field names.
+     * @throws UnknownPathException If a path isn't the path of a field.
+     * @throws SearchException If the filter isn't valid.
+     */
+    public function resolvePaths(Request $request, ?Definition $definition = null): Request
+    {
+        $definition ??= $this->getActiveDefinition() ?? $this->getDefinition();
+
+        // names come first: a path that is also the name of a field names that field
+        $fieldNames = array_fill_keys(array_map(static fn($field): string => $field->name, $definition->fields), true);
+        $names = [];
+        foreach ($definition->fields as $field) {
+            if ($field->path !== $field->name && !isset($fieldNames[$field->path])) {
+                $names[$field->path] ??= $field->name;
+            }
+        }
+
+        $unknown = [];
+        $rename = static function (string $attribute) use ($names, &$unknown): string {
+            if (str_contains($attribute, '.') && !isset($names[$attribute])) {
+                $unknown[$attribute] = true;
+            }
+            return $names[$attribute] ?? $attribute;
+        };
+
+        $filter = $request->filter;
+        if (null !== $filter && '' !== trim($filter)) {
+            array_map($rename, $this->engine->filterAttributes($filter));
+            if ([] !== $names) {
+                $filter = $this->engine->renameFilterAttributes($filter, $names);
+            }
+        }
+        $sort = array_map(static function (string $criterion) use ($rename): string {
+            $at = strrpos($criterion, ':');
+            return false === $at ? $rename($criterion) : $rename(substr($criterion, 0, $at)) . substr($criterion, $at);
+        }, $request->sort);
+        $facets = array_map($rename, $request->facets);
+        $searchOn = array_map($rename, $request->searchOn);
+
+        if ([] !== $unknown) {
+            throw new UnknownPathException(sprintf(
+                'Search index "%s" has no field with the path %s: add a field with the path and rebuild the index.',
+                $this->getName(),
+                implode(', ', array_map(static fn(string $path): string => '"' . $path . '"', array_keys($unknown)))
+            ));
+        }
+
+        if ($filter === $request->filter && $sort === $request->sort && $facets === $request->facets && $searchOn === $request->searchOn) {
+            return $request;
+        }
+
+        return new Request(
+            query: $request->query,
+            filter: $filter,
+            sort: $sort,
+            facets: $facets,
+            page: $request->page,
+            hitsPerPage: $request->hitsPerPage,
+            highlight: $request->highlight,
+            highlightStartTag: $request->highlightStartTag,
+            highlightEndTag: $request->highlightEndTag,
+            searchOn: $searchOn,
+        );
     }
 
     public function searchObjects(object $request): Generator

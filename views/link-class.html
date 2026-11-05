@@ -1,0 +1,90 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div class="page-narrow">
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: classname, href: '?action=list-uuids&storage=' ~ storage|url_encode ~ '&classname=' ~ classname|url_encode, code: true},
+        {label: 'Link objects'},
+    ]} %}
+        {% block title %}Link objects{% endblock %}
+    {% endembed %}
+
+    <p class="text-muted">
+        Turns an attribute of every object of <code>{{ classname }}</code> that holds the UUID of a stored object as
+        text, or a list of them, into a reference to that object, e.g. <code>"friend": "3f2a…"</code> becomes
+        <code>"friend": {"__reference": "3f2a…"}</code>. Loading the objects then yields the referenced objects, and
+        search indexes can follow the attribute (paths like <code>friend.name</code>). Other values and UUIDs without an
+        object stay as they are; the attached search and unique indexes follow the changes.
+    </p>
+
+    <form id="link-form" class="card card-body py-2 mb-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <label for="attribute">Attribute</label>
+            <input class="form-control form-control-sm font-monospace" style="width: 14rem" type="text" id="attribute" name="attribute" list="attribute-suggestions" value="{{ attribute }}" required>
+            <datalist id="attribute-suggestions">
+                {% for name, count in suggested %}<option value="{{ name }}">{{ count }} of {{ sampled }}</option>{% endfor %}
+            </datalist>
+            <button id="start" class="btn btn-primary btn-sm" type="submit"><i class="bi bi-link-45deg"></i> Link</button>
+        </div>
+        <div class="form-text">
+            {% if suggested is not empty %}
+            Holding UUIDs as text in the first {{ sampled }} objects:
+            {% for name, count in suggested %}<code>{{ name }}</code> ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}.
+            {% else %}
+            No attribute of the first {{ sampled }} objects holds a UUID as text.
+            {% endif %}
+        </div>
+    </form>
+
+    <div id="progress-section" class="hidden">
+        {% include 'step-progress.html' with {unit: 'Objects', showFailed: true} %}
+        <div class="small text-muted mb-2" id="details"></div>
+        <ul class="small text-danger hidden" id="errors"></ul>
+    </div>
+
+    <a id="back" class="btn btn-outline-secondary btn-sm hidden" href="?action=list-uuids&storage={{ storage|url_encode }}&classname={{ classname|url_encode }}">Back to the objects</a>
+
+    <script>
+        const runner = new StepRunner({
+            params: {storage: '{{ storage|e('js') }}', classname: '{{ classname|e('js') }}', offset: 0, linked: 0, missing: 0, failed: 0},
+            startAction: 'link-class-step',
+            stepAction: 'link-class-step',
+            extra: {label: 'Linked', value: progress => progress.linked},
+            onProgress(progress) {
+                // the step continues where the last one ended, with the counts so far
+                Object.assign(runner.params, {offset: progress.offset, linked: progress.linked, missing: progress.missing, failed: progress.failed});
+                document.getElementById('details').textContent = progress.missing > 0
+                    ? `${progress.missing} UUID(s) without an object stay text.` : '';
+                const errors = document.getElementById('errors');
+                for (const [uuid, message] of Object.entries(progress.errors ?? {})) {
+                    const item = document.createElement('li');
+                    item.textContent = `${uuid}: ${message}`;
+                    errors.appendChild(item);
+                    errors.classList.remove('hidden');
+                }
+            },
+            onDone(progress) {
+                runner.finish(`Done: ${progress.linked} of ${progress.total} object(s) linked${progress.failed ? `, ${progress.failed} failed` : ''}.`, 0 === progress.failed);
+                document.getElementById('back').classList.remove('hidden');
+            },
+        });
+
+        document.getElementById('link-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const attribute = document.getElementById('attribute').value.trim();
+            if (!confirm(`Turn the UUIDs in "${attribute}" of all objects of this class into references?`)) {
+                return;
+            }
+            runner.params.attribute = attribute;
+            document.getElementById('attribute').readOnly = true;
+            document.getElementById('start').classList.add('hidden');
+            document.getElementById('progress-section').classList.remove('hidden');
+            const progress = await runner.run(true, {batchSize: runner.batchSize});
+            if (progress === null) {
+                document.getElementById('back').classList.remove('hidden');
+            }
+        });
+    </script>
+</div>
+{% endblock body %}

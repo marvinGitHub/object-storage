@@ -13,9 +13,15 @@
         {% if status == 'outdated' %}<span class="badge bg-warning text-dark" title="The definition changed; rebuild the index to use it">outdated: searching the previous build</span>{% endif %}
         {% if status == 'building' %}<span class="badge bg-info" title="Searches use the previous build until the build is complete">being rebuilt</span>{% endif %}
         {% endblock %}
+        {% block actions %}
+        {% if name %}
+        <a class="btn btn-warning btn-sm" href="?action=index-edit&storage={{ storage|url_encode }}&name={{ name|url_encode }}" title="Fields, engine and options of the index{% if classname %} chosen for this search{% endif %}"><i class="bi bi-pencil"></i> Edit{% if classname %} <code class="text-reset">{{ name }}</code>{% endif %}</a>
+        {% endif %}
+        <a class="btn btn-outline-secondary btn-sm" href="?action=indexes&storage={{ storage|url_encode }}"><i class="bi bi-list-ul"></i> All indexes</a>
+        {% endblock %}
     {% endembed %}
 
-    <form method="get" class="card card-body mb-3">
+    <form method="get" class="card card-body mb-3" id="search-form">
         {% if classname %}
         <input type="hidden" name="action" value="class-search">
         <input type="hidden" name="classname" value="{{ classname }}">
@@ -55,9 +61,19 @@
                 <input class="form-control form-control-sm" id="hitsPerPage" name="hitsPerPage" type="number" min="1" max="1000" value="{{ form.hitsPerPage }}" style="width: 7rem">
             </div>
             <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-search"></i> Search</button>
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#builder" aria-expanded="false"><i class="bi bi-ui-checks"></i> Builder</button>
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Queries saved in this browser">
+                    <i class="bi bi-bookmark"></i> Saved <span class="badge text-bg-light" id="saved-count">0</span>
+                </button>
+                <ul class="dropdown-menu" id="saved-queries"></ul>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#php-code" aria-expanded="false" title="This search as PHP code"><i class="bi bi-code-slash"></i> PHP</button>
             <button class="btn btn-link btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#help">Syntax</button>
         </div>
     </form>
+
+    {% include 'search-builder.html' %}
 
     {% if plan is not null %}
     <div class="card mb-3">
@@ -92,6 +108,7 @@
                     <table class="table table-sm mb-0">
                         <tr><td><code>uuid</code></td><td>string</td><td><i class="bi bi-funnel" title="filterable"></i></td></tr>
                         <tr><td><code>revision</code></td><td>number</td><td></td></tr>
+                        <tr><td><code>referencedUuids</code> <small class="text-muted">the objects the document was built from</small></td><td>array&lt;string&gt;</td><td><i class="bi bi-funnel" title="filterable"></i></td></tr>
                         {% for field in fields %}
                         <tr>
                             <td><code>{{ field.name }}</code> <small class="text-muted">{{ field.path }}</small></td>

@@ -60,20 +60,64 @@ final class LoupeEngine implements EngineInterface
 
     public function filterAttributes(string $filter): array
     {
-        // the tokens of Loupe's own filter lexer: attribute names are told apart from keywords and quoted strings
+        return array_values(array_unique(array_column(static::attributesOf($filter), 0)));
+    }
+
+    public function renameFilterAttributes(string $filter, array $names): string
+    {
+        // from the end, so the positions of the attributes before stay valid
+        foreach (array_reverse(static::attributesOf($filter)) as [$attribute, $position]) {
+            if (isset($names[$attribute])) {
+                $filter = substr_replace($filter, $names[$attribute], $position, strlen($attribute));
+            }
+        }
+        return $filter;
+    }
+
+    /**
+     * The attributes of a filter with their positions, told apart from keywords and quoted strings by Loupe's own
+     * filter lexer. A path ("friend.name") is one attribute: the lexer returns its names and dots as tokens.
+     *
+     * @return list<array{0: string, 1: int}>
+     */
+    private static function attributesOf(string $filter): array
+    {
         $lexer = new Lexer();
         $lexer->setInput($filter);
         $lexer->moveNext();
 
         $attributes = [];
+        $last = null; // the attribute being read: [name, position, end], ending with a dot while a path continues
         while (null !== $lexer->lookahead) {
             $lexer->moveNext();
-            if (Lexer::T_ATTRIBUTE_NAME === $lexer->token?->type) {
-                $attributes[(string)$lexer->token->value] = true;
+            $token = $lexer->token;
+            $value = (string)$token?->value;
+            $position = (int)$token?->position;
+
+            // LIKE and CONTAINS are operators of this engine, which the lexer of Loupe reads as attribute names
+            if (Lexer::T_ATTRIBUTE_NAME === $token?->type && !in_array($value, LoupeEngineIndex::PATTERN_OPERATORS, true)) {
+                if (null !== $last && str_ends_with($last[0], '.') && $last[2] === $position) {
+                    $last[0] .= $value;
+                    $last[2] = $position + strlen($value);
+                } else {
+                    if (null !== $last) {
+                        $attributes[] = [rtrim($last[0], '.'), $last[1]];
+                    }
+                    $last = [$value, $position, $position + strlen($value)];
+                }
+            } elseif ('.' === $value && null !== $last && $last[2] === $position && !str_ends_with($last[0], '.')) {
+                $last[0] .= '.';
+                $last[2] = $position + 1;
+            } elseif (null !== $last) {
+                $attributes[] = [rtrim($last[0], '.'), $last[1]];
+                $last = null;
             }
         }
+        if (null !== $last) {
+            $attributes[] = [rtrim($last[0], '.'), $last[1]];
+        }
 
-        return array_keys($attributes);
+        return $attributes;
     }
 
     public function open(string $directory, Definition $definition): EngineIndexInterface

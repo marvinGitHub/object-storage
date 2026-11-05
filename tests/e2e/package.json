@@ -1,0 +1,11 @@
+{
+  "name": "object-storage-viewer-e2e",
+  "private": true,
+  "description": "End-to-end tests of the viewer, run with tests/e2e/run.sh",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1"
+  }
+}

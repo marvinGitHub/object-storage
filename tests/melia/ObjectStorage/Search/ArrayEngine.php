@@ -44,10 +44,16 @@ final class ArrayEngine implements EngineInterface
     public function filterAttributes(string $filter): array
     {
         // the only filter of this engine: "field = 'value'"
-        if (!preg_match('/^(\w+)\s*=\s*\'.*\'$/', trim($filter), $match)) {
+        if (!preg_match('/^([\w.]+)\s*=\s*\'.*\'$/', trim($filter), $match)) {
             throw new \melia\ObjectStorage\Search\Exception\SearchException('Invalid filter: ' . $filter);
         }
         return [$match[1]];
+    }
+
+    public function renameFilterAttributes(string $filter, array $names): string
+    {
+        $attribute = $this->filterAttributes($filter)[0];
+        return isset($names[$attribute]) ? preg_replace('/^\s*[\w.]+/', $names[$attribute], $filter) : $filter;
     }
 
     public function open(string $directory, Definition $definition): EngineIndexInterface

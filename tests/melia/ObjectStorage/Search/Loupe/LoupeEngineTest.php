@@ -7,6 +7,7 @@ use Loupe\Loupe\SearchResult as LoupeSearchResult;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
 use melia\ObjectStorage\Search\Exception\SearchException;
+use melia\ObjectStorage\Search\Exception\UnknownPathException;
 use melia\ObjectStorage\Search\Exception\UnsupportedQueryException;
 use melia\ObjectStorage\Search\Field;
 use melia\ObjectStorage\Search\FieldType;
@@ -183,6 +184,152 @@ class LoupeEngineTest extends TestCase
             $engine->filterAttributes("price < 10 AND (tags IN ('price', 'name') OR name = 'O''Neill') AND active = true")
         );
         $this->assertSame(['price'], $engine->filterAttributes('price BETWEEN 1 AND 2'));
+        $this->assertSame(['friend.friend.name', 'price'], $engine->filterAttributes("friend.friend.name = 'a.b' AND price > 1.5"), 'a path is one attribute');
+    }
+
+    public function testLikeAndContains(): void
+    {
+        $chair = $this->storage->store(new Product('Chair', 'Oak furniture', 49, ['wood', 'Living room']));
+        $apple = $this->storage->store(new Product('Apple', 'Fresh fruit', 1, ['fruit', 'red']));
+        $pine = $this->storage->store(new Product("O'Pine 50%", 'Pine', 20, ['wood']));
+        $index = $this->search->create(new Definition('products', Product::class, [
+            new Field('name', 'name', filterable: true),
+            new Field('price', 'price', FieldType::NUMBER, searchable: false, filterable: true),
+            new Field('tags', 'tags', FieldType::STRING_ARRAY, filterable: true),
+            new Field('description', 'description'),
+        ]));
+        $index->build();
+
+        $this->assertSame([$chair], $this->find($index, '', "name LIKE 'ch%'"), 'ignoring case');
+        $this->assertSame([$apple], $this->find($index, '', "name LIKE '_pple'"));
+        $this->assertEqualsCanonicalizing([$chair, $pine], $this->find($index, '', "name NOT LIKE 'A%'"));
+        $this->assertSame([$pine], $this->find($index, '', "name LIKE 'o''pine 50\\%'"), 'a quote and an escaped %');
+        $this->assertSame([$pine], $this->find($index, '', "name CONTAINS '50%'"), 'CONTAINS takes the text as it is');
+        $this->assertSame([$chair], $this->find($index, '', "tags CONTAINS 'room' AND price > 10"), 'any value of a list');
+        $this->assertEqualsCanonicalizing([$apple, $pine], $this->find($index, '', "tags NOT CONTAINS 'room'"));
+        $this->assertSame([], $this->find($index, '', "name CONTAINS 'xyz'"), 'nothing matches');
+        $this->assertCount(3, $this->find($index, '', "name NOT CONTAINS 'xyz'"));
+        $this->assertSame(['name', 'price'], (new LoupeEngine())->filterAttributes("name LIKE 'a%' AND price > 1"), 'operators aren\'t attributes');
+
+        // NOT, which Loupe lacks: rewritten into the negated conditions
+        $this->assertEqualsCanonicalizing([$apple, $pine], $this->find($index, '', "NOT (name LIKE 'ch%')"));
+        $this->assertSame([$apple], $this->find($index, '', "price < 30 AND NOT (tags IN ('wood') OR price > 10)"));
+        $this->assertEqualsCanonicalizing([$chair, $apple], $this->find($index, '', "NOT (name CONTAINS 'pine' AND price BETWEEN 10 AND 30)"));
+
+        $this->expectException(SearchException::class);
+        $this->expectExceptionMessage('field of strings');
+        $index->search(new Request(filter: "price LIKE '1%'"));
+    }
+
+    /**
+     * What Loupe's filters don't do as expected (loupe/loupe 1.1), done by the engine: negative numbers, BETWEEN,
+     * NOT, patterns over values with commas and the empty string, and filters after a failed one.
+     */
+    public function testFiltersBeyondWhatLoupeTakes(): void
+    {
+        $objects = [
+            'neg' => ['n' => -7.5, 's' => 'x, y'],
+            'one' => ['n' => 1, 's' => ''],
+            'big' => ['n' => 100, 's' => 'Homa'],
+            'none' => [],
+        ];
+        $uuids = [];
+        foreach ($objects as $id => $values) {
+            $object = (object)$values;
+            $uuids[$id] = $this->storage->store($object);
+        }
+        $index = $this->search->create(new Definition('values', stdClass::class, [
+            new Field('n', 'n', FieldType::NUMBER, searchable: false, filterable: true),
+            new Field('s', 's', filterable: true),
+        ]));
+        $index->build();
+        $find = function (string $filter) use ($index, $uuids): array {
+            $found = array_map(static fn(string $uuid): string => array_search($uuid, $uuids, true), $this->find($index, '', $filter));
+            sort($found);
+            return $found;
+        };
+
+        // negative numbers
+        $this->assertSame(['neg'], $find('n = -7.5'));
+        $this->assertSame(['neg'], $find('n < -1'));
+        $this->assertSame(['neg', 'one'], $find('n IN (-7.5, 1)'));
+        $this->assertSame(['big', 'none', 'one'], $find('n NOT IN (-7.5)'));
+        // BETWEEN as in SQL: in order, nothing for bounds in the wrong order; NOT BETWEEN includes missing values
+        $this->assertSame(['neg', 'one'], $find('n BETWEEN -8 AND 1'));
+        $this->assertSame([], $find('n BETWEEN 100 AND 1'));
+        $this->assertSame(['big', 'none'], $find('n NOT BETWEEN -8 AND 1'));
+        // NOT is the complement, also of comparisons, which are false for missing values
+        $this->assertSame(['neg', 'none', 'one'], $find('NOT (n > 1)'));
+        $this->assertSame(['big', 'none'], $find('NOT (n BETWEEN -8 AND 1)'));
+        $this->assertSame(['none'], $find('NOT (n IS NOT NULL)'));
+        // patterns: a value with a comma (which Loupe's facets split), the empty string
+        $this->assertSame(['neg'], $find("s CONTAINS ', '"));
+        $this->assertSame(['neg'], $find("s LIKE 'x%'"));
+        $this->assertSame(['big', 'neg', 'one'], $find("s LIKE '%'"), "'' is LIKE '%', as in SQL");
+        $this->assertSame(['none'], $find("s NOT LIKE '%'"));
+        $this->assertSame(['big', 'none', 'one'], $find("s NOT CONTAINS ','"));
+
+        // a filter Loupe fails on inside parentheses doesn't break the next ones
+        try {
+            $this->find($index, '', "(s = 'x' OR n = )");
+            $this->fail('an invalid filter');
+        } catch (SearchException) {
+        }
+        $this->assertSame(['big'], $find("(s = 'Homa' OR n = 1000)"));
+        $this->assertSame(['big'], $find("s = 'Homa'"));
+    }
+
+    public function testFilterAttributesAreRenamed(): void
+    {
+        $engine = new LoupeEngine();
+
+        $this->assertSame(
+            "friendName = 'friend.name' AND (tags IN ('a') OR friend.friend.name IS NULL) AND friendName != 'x'",
+            $engine->renameFilterAttributes(
+                "friend.name = 'friend.name' AND (tags IN ('a') OR friend.friend.name IS NULL) AND friend.name != 'x'",
+                ['friend.name' => 'friendName']
+            ),
+            'quoted values and other paths stay'
+        );
+    }
+
+    public function testFieldsAreNamedByTheirPaths(): void
+    {
+        $friend = new stdClass();
+        $friend->name = 'Homa';
+        $other = new stdClass();
+        $other->name = 'Bob';
+        $friend->friend = $other;
+        $anna = new stdClass();
+        $anna->name = 'Anna';
+        $anna->friend = $friend;
+        $annaUuid = $this->storage->store($anna);
+        $this->storage->store($other);
+
+        $index = $this->search->create(new Definition('people', stdClass::class, [
+            new Field('name', 'name', filterable: true),
+            new Field('friendName', 'friend.name', filterable: true, sortable: true),
+            new Field('friendOfFriend', 'friend.friend.name', filterable: true),
+        ]));
+        $index->build();
+
+        $this->assertSame([$annaUuid], $this->find($index, '', "friend.name = 'Homa'"));
+        $this->assertSame([$annaUuid], $this->find($index, '', "friend.friend.name = 'Bob' AND name = 'Anna'"), 'nested further');
+        $result = $index->search(new Request(filter: "friend.name IS NOT NULL", sort: ['friend.name:asc'], facets: ['friend.name']));
+        $this->assertEqualsCanonicalizing(['Homa' => 1, 'Bob' => 1], $result->facets['friendName'], 'counted under the name of the field; the friend of Homa is Bob');
+
+        try {
+            $index->search(new Request(filter: "friend.friend.friend.name = 'x'"));
+            $this->fail('a path without a field');
+        } catch (UnknownPathException $e) {
+            $this->assertStringContainsString('"friend.friend.friend.name"', $e->getMessage());
+        }
+
+        $plan = $this->search->explain(stdClass::class, new Request(filter: "friend.name = 'Homa'"));
+        $this->assertSame('people', $plan->getChosen()?->name);
+        $plan = $this->search->explain(stdClass::class, new Request(sort: ['friend.age:asc']));
+        $this->assertNull($plan->getChosen());
+        $this->assertStringContainsString('no field with the path "friend.age"', $plan->candidates[0]->reasons[0]);
     }
 
     public function testClassSearchChoosesAnIndexWithLoupe(): void

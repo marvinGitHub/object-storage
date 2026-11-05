@@ -21,6 +21,7 @@
     {% else %}
 
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    {% if addedPath|default(null) %}<div class="alert alert-info"><i class="bi bi-plus-circle"></i> A filterable field with the path <code>{{ addedPath }}</code> is added at the end of the fields: check its name and type, then save; the index is rebuilt.</div>{% endif %}
     {% if index is defined and index is not null %}{% include 'index-size.html' %}{% endif %}
     {% if not isNew %}
     <div class="alert alert-info py-2">

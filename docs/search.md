@@ -97,6 +97,7 @@ $search->create(new Definition('products', Product::class, [
 $search->get('products')->search(new Request('oak', filter: "category = 'Chairs'"));
 ```
 
+- **Searching by paths**: in the filter, the sort, the facets and `searchOn`, a field can be named by its path in dot notation instead of its name: `new Request(filter: "category.parent.title = 'Food'", sort: ['category.title:asc'])` searches the fields with these paths (`Index::resolvePaths()`; facets are counted under the field names). There is no join at search time: a path that isn't the path of a field fails with an `UnknownPathException`, and searching a class doesn't choose an index without it. Engines rename the attributes of their filters with `EngineInterface::renameFilterAttributes()`.
 - A path follows at most three references (`DocumentBuilder::MAX_REFERENCES_PER_PATH`), e.g. `order.customer.address.city`. A referenced object that doesn't exist (anymore) or has expired gives `null`.
 - **Changes of referenced objects** update the documents built from them: every document records the UUIDs of the referenced objects it was read from (the attribute `referencedUuids`), and the index the classes of those objects (`IndexInterface::getJoinedClasses()`). With the manager attached, storing or deleting such an object records it as a change of a referenced object (`recordReferenceChange()`); the sync finds the documents built from it and applies them as pending changes. Renaming a category updates all its products.
 - **Many documents** built from one object, e.g. a category of 50,000 products: auto sync applies at most `Manager::AUTO_SYNC_MAX_CHANGES` (1,000) changes after a `store()`, so storing the category stays fast; the others stay pending for the next sync (e.g. a cron job, or **Sync** in the viewer). Until then, searches find some products by the previous title.
@@ -104,6 +105,17 @@ $search->get('products')->search(new Request('oak', filter: "category = 'Chairs'
 - The referenced objects are read when indexing, so each costs a read: products sharing a category read it once per build or sync step.
 - Indexes built before joins were supported have to be rebuilt: their documents don't record referenced objects.
 - In the [viewer](#the-viewer), **Suggest fields** suggests paths into referenced objects, and saving a record offers the indexes with documents built from it (marked *joined*), e.g. the products index when saving a category.
+- Only references are followed, `{"__reference": "<uuid>"}` in the stored data, as written when an attribute holds the object itself (`$anna->friend = $bob`). A UUID stored as text (`$anna->friend = $bobUuid`) is just a string. To link such objects afterwards, `Migration\AttributeToReference` turns the UUIDs of an attribute into references, without reading or writing the referenced objects:
+
+  ```php
+  $link = new AttributeToReference('friend');   // a UUID, or a list of them
+  $link->setStorage($storage);
+  foreach ($storage->list(Person::class) as $uuid) {
+      $link->apply($storage->load($uuid), $uuid); // true if linked; getMissing(): UUIDs without an object
+  }
+  ```
+
+  The attribute must accept an object (untyped like the properties of a `stdClass`, a list, `object`, `mixed`); with the manager attached, the indexes follow. In the viewer: **Link** on a record, or **Link objects** in the list of a class for all of its objects.
 
 ### Types
 
@@ -332,7 +344,16 @@ The filter language of Loupe ([documentation](https://github.com/loupe-php/loupe
 | ranges | `price BETWEEN 10 AND 20` |
 | lists | `tags IN ('a', 'b')`, `tags NOT IN ('a')` |
 | empty values | `city IS NULL`, `city IS NOT NULL`, `tags IS EMPTY`, `tags IS NOT EMPTY` |
-| combinations | `AND`, `OR`, `NOT` and parentheses |
+| combinations | `AND`, `OR`, `NOT` and parentheses: `a = 1 AND NOT (b = 2 OR c IS NULL)` |
+| patterns (added by this library) | `name CONTAINS 'om'`, `name LIKE 'Ho%'`, `name LIKE 'H_ma'`, `NOT CONTAINS`, `NOT LIKE` |
+
+**NOT**: Loupe itself has no `NOT` before a condition or a group; the engine rewrites it into the negated conditions following De Morgan's laws (`Loupe\FilterNegation`): `NOT (a = 1 OR b IN ('x'))` is searched as `a != 1 AND b NOT IN ('x')`, `NOT (x > 1)` as `(x <= 1 OR x IS NULL)`. So `NOT` always finds exactly the documents the condition doesn't: in Loupe, `=`, `IN`, comparisons and `BETWEEN` are false for missing values, `!=` and `NOT IN` true. The geo filters can't be negated.
+
+**Numbers**: Loupe's filters take no negative numbers (except in geo filters), and `BETWEEN` swaps bounds in the wrong order; the engine writes negative numbers as strings, which Loupe compares as numbers (`price > '-7.5'`), and `BETWEEN` as comparisons, as in SQL (`Loupe\FilterNumbers`): `x BETWEEN -5 AND 5` is searched as `(x >= '-5' AND x <= 5)`, `BETWEEN 5 AND 1` finds nothing.
+
+`=` and `IN` compare strings exactly, with case; `LIKE` and `CONTAINS` ignore it. A filter Loupe fails on doesn't affect the next ones (Loupe 1.1 kept the parentheses of a failed filter open, failing every filter after it; the engine resets its parser).
+
+**Patterns**: Loupe's filters have no `LIKE`; the engine adds `LIKE` (`%` any characters, `_` one, `\%` and `\_` the characters themselves) and `CONTAINS` (a part of the value, taken as it is), both ignoring case, written in capitals. A pattern is matched against the distinct values of the field, read from the documents (Loupe's facets split values at commas), and becomes an `IN` condition with the matching ones (and `= ''` if the pattern matches the empty string, as `LIKE '%'` does): it needs a filterable field of strings or lists of strings (a list matches if one of its values does) with at most `LoupeEngineIndex::MAX_PATTERN_VALUES` (10,000) distinct values, e.g. names or categories; for long texts, search the full text instead.
 
 Strings go in single quotes, with `'` doubled. Full-text queries are typo-tolerant, `"exact phrase"` searches a phrase, `-word` excludes a word, and words of three or more letters also match as prefixes. `_relevance:desc` sorts by relevance explicitly.
 
@@ -373,6 +394,9 @@ final class MyEngine implements EngineInterface
     // the field names a filter uses, so the manager can choose an index for a search of a class
     public function filterAttributes(string $filter): array { /* … */ }
 
+    // renames attributes in a filter, e.g. paths ("friend.name") into the names of their fields
+    public function renameFilterAttributes(string $filter, array $names): string { /* … */ }
+
     // the documents of a generation; $directory is unique per index and generation
     public function open(string $directory, Definition $definition): EngineIndexInterface { /* … */ }
 
@@ -406,7 +430,25 @@ The [viewer](maintenance.md#the-web-viewer) manages the indexes of a storage und
 - **New index** / **Edit**: choose the class and the engine; **Suggest fields** fills in the fields from a stored object of the class, with types and options guessed from the values. Saving builds the index.
 - **Rebuild** builds the index again, **Sync** applies the pending changes and removes expired objects, **Drop** removes it.
 - The build page shows the progress (indexed objects, failed ones, elapsed and remaining time) while it indexes the objects step by step; it can be left and continued.
-- **Search** runs a query with filter, sort and facets, showing the matches highlighted, the ranking score and links to the objects.
+- **Search** runs a query with filter, sort and facets, showing the matches highlighted, the ranking score and links to the objects. **Syntax** explains the query language of the engine, also for fields joined from referenced objects.
+  - **Builder** composes the filter (in the syntax of Loupe) from conditions and groups of conditions — nested to any depth, each combined with `AND` or `OR` and optionally negated, reordered and moved between groups by drag and drop — on the filterable fields, named by name or path (`friend.name`; a path that isn't indexed can be added to the index from there): operators by type, `IN` and `BETWEEN` from comma-separated values (`BETWEEN` with the smaller number first), values counted by the facets of the last search as suggestions; plus sort, facets and the fields searched.
+  - The builder never changes what is searched: values are written exactly as typed (strings aren't trimmed); a condition it can't write (no value, no number for a number field, an operator the type hasn't, a field that isn't filterable) is listed as an error, and searching, using and saving refuse it instead of leaving it out.
+  - **Saved** keeps queries by name in the browser (`localStorage`), per storage and index or class; a saved query is run again with one click, or opened in the builder (<i>Open in the builder</i>) to change it. Saving suggests the name of the loaded query, replacing it; another name saves a new one. Changes in the open builder are saved and searched also before *Use in the form*.
+  - Opening the builder reads the filter of the form back into groups and conditions, whether it was saved, linked or typed (e.g. `LIKE 'Ho%'` becomes *starts with*, `name = ''` *is empty*). A filter it can't show exactly (geo filters, fields the index hasn't, values of `IN` with a comma or spaces around them, a value of the wrong type) is kept as it is, shown above the conditions and combined with them by `AND`, until it is removed. Sort, facets and *Search on* named by paths are shown by the names of their fields; unknown ones are kept and marked.
+  - **PHP** shows the search as code (`new Request(...)`), to copy into an application.
+
+### Tests of the query builder
+
+The query builder decides what the viewer searches, so it is tested on three levels:
+
+- **Its logic** (`assets/query-builder.js`: writing conditions and groups, reading filters back) with Node, without packages: fixed cases for every operator and every filter it refuses, and thousands of random trees written, read and written again (`tests/js`):
+
+  ```bash
+  docker run --rm -v "$PWD:/app" -w /app node:22-alpine node --test 'tests/js/*.test.js'
+  ```
+
+- **What its filters find**: `QueryBuilderFiltersTest` searches 600 random filters written by the builder (`tests/fixtures/query-builder.json`, from `tests/js/generate-fixtures.js`) with Loupe and compares the hits with an evaluation of their trees in PHP, independent of the engine. After changing the builder, write the fixture again (the JS tests fail while it is outdated); `QUERY_BUILDER_FIXTURE` runs a larger one, e.g. `node tests/js/generate-fixtures.js /tmp/large.json 7 200 5000`.
+- **The page** in a browser with Playwright (`tests/e2e`): building, nesting, moving with the mouse, errors, reading filters back, the form and the builder together, saved queries. `sh tests/e2e/run.sh` starts the viewer with a seeded storage in one container and the tests in another (images `object-storage-php85-intl` and `mcr.microsoft.com/playwright:v1.49.1-noble`).
 
 Duplicates and deletes made in the viewer are applied to all indexes of the class. When **editing** a record, the viewer lists the indexes of its class (with engine, status and whether a change of the record is pending) and updates the chosen ones, all by default; the page after saving names the updated indexes and those left with the previous state.
 

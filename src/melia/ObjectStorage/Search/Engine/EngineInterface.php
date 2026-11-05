@@ -38,6 +38,16 @@ interface EngineInterface
     public function filterAttributes(string $filter): array;
 
     /**
+     * Renames attributes in a filter in the language of the engine, e.g. paths into the names of their fields:
+     * ['friend.name' => 'friendName'] turns "friend.name = 'Homa'" into "friendName = 'Homa'". Quoted values stay as
+     * they are; attributes not in $names too.
+     *
+     * @param array<string, string> $names Attribute => new name.
+     * @throws SearchException If the filter isn't valid in the language of the engine.
+     */
+    public function renameFilterAttributes(string $filter, array $names): string;
+
+    /**
      * Opens (and creates if needed) the documents of a generation of an index. A generation is built once with
      * one definition; a changed definition is built into a new generation.
      *

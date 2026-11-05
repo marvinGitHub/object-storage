@@ -3,3 +3,4 @@
 <br><strong>Filter</strong>: a condition over the filterable fields, in the language of the engine <code>{{ engine }}</code>; see its documentation.
 <br><strong>Sort</strong>: comma-separated <code>field:asc</code> / <code>field:desc</code> of sortable fields.
 <br><strong>Facets</strong>: comma-separated filterable fields, counts their values among the hits.
+<br><strong>Joins</strong>: a field with a path into a referenced object (e.g. <code>friend.name</code>) holds the value read when indexing, filtered like any field; the reserved attribute <code>referencedUuids</code> lists the objects a document was built from.

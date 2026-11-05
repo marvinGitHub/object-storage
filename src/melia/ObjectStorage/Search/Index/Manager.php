@@ -16,6 +16,7 @@ use melia\ObjectStorage\Search\Exception\IndexNotFoundException;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
 use melia\ObjectStorage\Search\Exception\NoSuitableIndexException;
 use melia\ObjectStorage\Search\Exception\SearchException;
+use melia\ObjectStorage\Search\Exception\UnknownPathException;
 use melia\ObjectStorage\Search\Field;
 use melia\ObjectStorage\Search\Request;
 use melia\ObjectStorage\Search\Result;
@@ -315,6 +316,17 @@ final class Manager implements ManagerInterface
             }
         } catch (Throwable $e) {
             $reasons[] = 'unavailable: ' . $e->getMessage();
+        }
+
+        // fields named by their paths, e.g. "friend.name", are the fields of this index with these paths
+        if ([] === $reasons && isset($definition)) {
+            try {
+                $request = $index->resolvePaths($request, $definition);
+            } catch (UnknownPathException $e) {
+                $reasons[] = $e->getMessage();
+            } catch (Throwable) {
+                // e.g. a filter the engine doesn't understand, reported below
+            }
         }
 
         if ([] === $reasons) {

@@ -6,6 +6,18 @@ Words of three or more letters also match as prefixes.
 <code>price BETWEEN 10 AND 20</code>, <code>tags IN ('a', 'b')</code>, <code>tags NOT IN ('a')</code>,
 <code>IS NULL</code>, <code>IS NOT NULL</code>, <code>IS EMPTY</code>, <code>IS NOT EMPTY</code>, booleans as <code>true</code>/<code>false</code>, combined with <code>AND</code>, <code>OR</code>,
 <code>NOT</code> and parentheses. Strings in single quotes, <code>'</code> doubled. Only filterable fields.
+<br><strong>Patterns</strong> (added to Loupe): <code>name CONTAINS 'om'</code>, <code>name LIKE 'Ho%'</code> (<code>%</code> any characters, <code>_</code> one, <code>\%</code> a %), also with <code>NOT</code>, ignoring case;
+for filterable string fields (and lists) with at most 10,000 distinct values, e.g. names, not long texts: search those in the full text.
 <br><strong>Sort</strong>: comma-separated <code>field:asc</code> / <code>field:desc</code> of sortable fields,
 <code>_relevance:desc</code> for the ranking.
 <br><strong>Facets</strong>: comma-separated filterable fields, counts their values among the hits.
+{% set joined = fields|filter(f => '.' in f.path)|first %}
+<br><strong>Joins</strong>: a field with a path into a referenced object holds its value, read when indexing, so it is filtered like any field:
+{% if joined %}
+<code>{{ joined.name }}{{ joined.type starts with 'array' ? " IN ('…')" : (joined.type == 'number' ? ' > 10' : " = '…'") }}</code>, or by its path <code>{{ joined.path }}{{ joined.type starts with 'array' ? " IN ('…')" : (joined.type == 'number' ? ' > 10' : " = '…'") }}</code>{% if not joined.filterable %} (needs to be filterable){% endif %}.
+{% else %}
+e.g. a field <code>friendName</code> with the path <code>friend.name</code>: <code>friendName = 'Anna'</code>, or by its path <code>friend.name = 'Anna'</code>; through a list of references (<code>labels.title</code>) a list: <code>labels IN ('red')</code>.
+{% endif %}
+The reference itself is the UUID of the object: <code>friend = '&lt;uuid&gt;'</code> finds all objects referring to it.
+<code>referencedUuids IN ('&lt;uuid&gt;')</code> finds the documents built from an object, also several references away.
+<br><strong>Paths</strong>: in filter, sort, facets and <em>Search on</em>, every field can be named by its path in dot notation, also nested further (<code>friend.friend.name</code>). There is no join at search time: a path needs a field of the index with this path; the builder offers to add one (the index is rebuilt).

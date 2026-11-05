@@ -51,7 +51,7 @@ final readonly class Request
             }
         }
         foreach ($sort as $criterion) {
-            if (!is_string($criterion) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$/', $criterion)) {
+            if (!is_string($criterion) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_.]*:(asc|desc)$/', $criterion)) {
                 throw new InvalidArgumentException(sprintf('Invalid sort criterion "%s": use "field:asc" or "field:desc".', $criterion));
             }
         }

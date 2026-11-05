@@ -15,6 +15,9 @@ use melia\ObjectStorage\Unique\Manager as UniqueManager;
 use melia\ObjectStorage\Unique\PathIndexes as UniquePathIndexes;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Graph\GraphVisitor;
+use melia\ObjectStorage\Migration\AttributeToReference;
+use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
@@ -767,6 +770,153 @@ try {
                 'uuid' => $uuid,
             ]);
             break;
+        case 'link-attribute':
+            // linking afterwards: an attribute of a record becomes a reference, to a chosen object or to the objects
+            // whose UUIDs it holds as text
+            $storageDir = $_POST['storage'] ?? null;
+            $uuid = (string)($_POST['uuid'] ?? '');
+            $attribute = trim((string)($_POST['attribute'] ?? ''));
+            $target = trim((string)($_POST['target'] ?? ''));
+            $result = [];
+
+            try {
+                $requirePost();
+                $storage = $buildStorage($storageDir);
+                if ('' === $attribute) {
+                    throw new RuntimeException('Name the attribute.');
+                }
+                $object = $storage->load($uuid) ?? throw new RuntimeException('Record not found.');
+                // the attached search and unique indexes follow the change
+                $migration = new AttributeToReference($attribute);
+                $migration->setStorage($storage);
+
+                if ('' !== $target) {
+                    if (!UuidValidator::validate($target)) {
+                        throw new RuntimeException(sprintf('"%s" is not a UUID.', $target));
+                    }
+                    if ($target === $uuid) {
+                        throw new RuntimeException('A record can\'t refer to itself.');
+                    }
+                    if (!$storage->exists($target)) {
+                        throw new RuntimeException(sprintf('There is no object %s.', $target));
+                    }
+                    // the UUID as text first, which then becomes the reference
+                    (new Reflection($object))->set($attribute, $target);
+                    $migration->apply($object, $uuid);
+                    $result['message'] = sprintf('"%s" refers to %s now.', $attribute, $target);
+                } else {
+                    $linked = $migration->apply($object, $uuid);
+                    $missing = $migration->getMissing();
+                    if ($linked) {
+                        $result['message'] = sprintf('The UUIDs in "%s" are references now.', $attribute)
+                            . ([] === $missing ? '' : sprintf(' No object found for: %s.', implode(', ', $missing)));
+                    } else {
+                        $result['error'] = [] === $missing
+                            ? sprintf('"%s" holds no UUID as text.', $attribute)
+                            : sprintf('Nothing linked, no object found for: %s.', implode(', ', $missing));
+                    }
+                }
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $result['error'] = 'The objects couldn\'t be linked: ' . $e->getMessage();
+            }
+
+            header('Location: ?' . http_build_query(['action' => 'view-record', 'storage' => $storageDir, 'uuid' => $uuid] + $result));
+            break;
+        case 'link-class':
+            // linking afterwards for all objects of a class, step by step via link-class-step
+            $storageDir = $_GET['storage'] ?? null;
+            $classname = (string)($_GET['classname'] ?? '');
+            $storage = $buildStorage($storageDir);
+
+            // suggestions: attributes holding UUIDs as text in the first objects, with how many of them do
+            $suggested = [];
+            $sampled = 0;
+            foreach (new LimitIterator(new IteratorIterator($storage->list($classname)), 0, 100) as $sampleUuid) {
+                $sampled++;
+                try {
+                    $sample = json_decode((string)file_get_contents($storage->getFilePathData($sampleUuid)), true);
+                } catch (Throwable) {
+                    continue;
+                }
+                foreach (is_array($sample) ? $sample : [] as $attribute => $value) {
+                    foreach (is_array($value) && array_is_list($value) ? $value : [$value] as $element) {
+                        if (is_string($element) && UuidValidator::validate($element)) {
+                            $suggested[(string)$attribute] = ($suggested[(string)$attribute] ?? 0) + 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            arsort($suggested);
+
+            echo $twig->render('link-class.html', [
+                'storage' => $storageDir,
+                'classname' => $classname,
+                'suggested' => $suggested,
+                'sampled' => $sampled,
+                'attribute' => (string)($_GET['attribute'] ?? array_key_first($suggested) ?? ''),
+            ]);
+            break;
+        case 'link-class-step':
+            try {
+                $requirePost();
+                $storage = $buildStorage($_POST['storage'] ?? null);
+                $classname = (string)($_POST['classname'] ?? '');
+                $attribute = trim((string)($_POST['attribute'] ?? ''));
+                if ('' === $attribute) {
+                    throw new RuntimeException('Name the attribute.');
+                }
+                $offset = max(0, (int)($_POST['offset'] ?? 0));
+                $batchSize = max(1, min(2000, (int)($_POST['batchSize'] ?? 100)));
+                // the counts so far, sent back by the page
+                $linked = max(0, (int)($_POST['linked'] ?? 0));
+                $missing = max(0, (int)($_POST['missing'] ?? 0));
+                $failed = max(0, (int)($_POST['failed'] ?? 0));
+
+                $migration = new AttributeToReference($attribute);
+                $migration->setStorage($storage);
+                $total = iterator_count(new IteratorIterator($storage->list($classname)));
+
+                // linking doesn't change the class, so the objects keep their positions in the list
+                $processed = 0;
+                $errors = [];
+                foreach (new LimitIterator(new IteratorIterator($storage->list($classname)), $offset, $batchSize) as $objectUuid) {
+                    $processed++;
+                    try {
+                        $object = $storage->load($objectUuid);
+                        if (null !== $object && $migration->apply($object, $objectUuid)) {
+                            $linked++;
+                        }
+                        $missing += count($migration->getMissing());
+                    } catch (Throwable $e) {
+                        $failed++;
+                        $logger->error($e);
+                        if (count($errors) < 5) {
+                            $errors[$objectUuid] = mb_strimwidth($e->getMessage(), 0, 200, '…');
+                        }
+                    }
+                }
+                $storage->clearCache();
+
+                $position = $offset + $processed;
+                $done = 0 === $processed || $position >= $total;
+                $jsonResponse(['ok' => true, 'result' => [
+                    'offset' => $position,
+                    'processed' => min($position, $total),
+                    'total' => $total,
+                    'percent' => $total > 0 ? (int)floor(100 * min($position, $total) / $total) : 100,
+                    'done' => $done,
+                    'linked' => $linked,
+                    'missing' => $missing,
+                    'failed' => $failed,
+                    'errors' => $errors,
+                ]]);
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+            }
+            break;
         case 'duplicate-record':
             $uuid = $_GET['uuid'] ?? null;
             $storageDir = $_GET['storage'] ?? null;
@@ -840,6 +990,28 @@ try {
                 $json = file_get_contents($storage->getFilePathData($uuid));
             }
 
+            // the metadata as stored, pretty-printed
+            $metadataPath = $exists ? $storage->getFilePathMetadata($uuid) : null;
+            $metadataJson = null;
+            if (null !== $metadataPath && is_file($metadataPath)) {
+                $rawMetadata = (string)file_get_contents($metadataPath);
+                $decodedMetadata = json_decode($rawMetadata, true);
+                $metadataJson = null === $decodedMetadata ? $rawMetadata : json_encode($decodedMetadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+
+            // attributes holding UUIDs as text: they can become references (linking afterwards)
+            $linkCandidates = [];
+            foreach (json_decode($json ?? '{}', true) ?: [] as $attribute => $value) {
+                $uuids = array_values(array_filter(is_array($value) && array_is_list($value) ? $value : [$value],
+                    static fn(mixed $v): bool => is_string($v) && UuidValidator::validate($v)));
+                if ([] !== $uuids) {
+                    $linkCandidates[] = [
+                        'attribute' => (string)$attribute,
+                        'uuids' => array_map(static fn(string $v): array => ['uuid' => $v, 'exists' => $storage->exists($v)], $uuids),
+                    ];
+                }
+            }
+
             $size = 0;
             if ($exists) {
                 try {
@@ -878,6 +1050,9 @@ try {
                 'exists' => $exists,
                 'uuid' => $uuid,
                 'classname' => $classname ?? '',
+                'metadataJson' => $metadataJson,
+                'metadataPath' => $metadataPath,
+                'linkCandidates' => $linkCandidates,
                 'checksum' => $metadata?->getChecksum() ?? '',
                 'algorithm' => $metadata?->getChecksumAlgorithm() ?? '',
                 'isLocked' => $isLocked,
@@ -1149,6 +1324,35 @@ try {
             if (isset($_GET['suggest']) && '' !== $classname) {
                 $fields = $suggestFields($storage, $classname);
             }
+
+            // a path to add, e.g. from the query builder: a filterable field named after it ("friend.name" → friendName)
+            $addPath = trim((string)($_GET['addPath'] ?? ''));
+            $addedPath = null;
+            if ('' !== $addPath && !in_array($addPath, array_column($fields, 'path'), true)) {
+                $addedPath = $addPath;
+                $fieldName = lcfirst(str_replace(' ', '', ucwords(preg_replace('/[^a-zA-Z0-9]+/', ' ', $addPath))));
+                $fieldName = preg_match(Field::NAME_PATTERN, $fieldName) ? $fieldName : 'field' . count($fields);
+                $suggestedField = null;
+                if ('' !== $classname) {
+                    try {
+                        foreach ($suggestFields($storage, $classname) as $candidate) {
+                            if (($candidate['path'] ?? null) === $addPath) {
+                                $suggestedField = $candidate;
+                            }
+                        }
+                    } catch (Throwable $e) {
+                        $logger->error($e);
+                    }
+                }
+                $fields[] = [
+                    'name' => $fieldName,
+                    'path' => $addPath,
+                    'type' => $suggestedField['type'] ?? FieldType::STRING->value,
+                    'searchable' => $suggestedField['searchable'] ?? true,
+                    'filterable' => true,
+                    'sortable' => $suggestedField['sortable'] ?? false,
+                ];
+            }
             $fields = $withUniqueFlags($fields, (string)$classname, $storage);
 
             echo $twig->render('index-edit.html', [
@@ -1165,6 +1369,7 @@ try {
                 'engine' => $definition['engine'] ?? null,
                 'index' => $described,
                 'error' => null,
+                'addedPath' => $addedPath,
             ]);
             break;
         case 'index-save':

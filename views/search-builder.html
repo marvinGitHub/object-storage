@@ -1,0 +1,704 @@
+{#
+    Tools of the search form: a builder for filter, sort, facets and the fields searched (Loupe syntax), queries saved
+    in the browser (localStorage) and the search as PHP code. The logic of the builder is in assets/query-builder.js
+    (tested in tests/js); this is the page around it.
+    Variables: storage, name, classname, engine, fields, form, result.
+#}
+{% set builderFields = [
+    {name: 'uuid', path: 'uuid', type: 'string', searchable: false, filterable: true, sortable: false, reserved: true},
+    {name: 'expiresAt', path: 'when the object expires (seconds since 1970)', type: 'number', searchable: false, filterable: true, sortable: false, reserved: true},
+    {name: 'referencedUuids', path: 'the objects the document was built from', type: 'array<string>', searchable: false, filterable: true, sortable: false, reserved: true},
+]|merge(fields) %}
+
+<style>
+    #builder .builder-children { display: flex; flex-direction: column; gap: .25rem; min-height: 1.75rem; }
+    #builder .builder-group:not(.builder-root) {
+        border: 1px solid var(--bs-border-color); border-left: 3px solid var(--bs-primary-border-subtle);
+        border-radius: var(--bs-border-radius); padding: .4rem .5rem; background: var(--bs-tertiary-bg);
+    }
+    #builder .builder-group .builder-group:not(.builder-root) { background: var(--bs-body-bg); }
+    /* an empty group shows where to drop */
+    #builder .builder-children:empty { border: 1px dashed var(--bs-border-color); border-radius: var(--bs-border-radius); }
+    #builder .builder-handle { cursor: grab; color: var(--bs-secondary-color); padding: 0 .1rem; touch-action: none; }
+    #builder .builder-handle:active { cursor: grabbing; }
+    #builder .builder-dragging { opacity: .4; }
+    body.builder-drag-active, body.builder-drag-active * { cursor: grabbing !important; user-select: none; }
+    #builder .builder-drop-indicator { height: 3px; border-radius: 2px; background: var(--bs-primary); margin: -1px 0; }
+</style>
+
+<div class="collapse mb-3" id="builder">
+    <div class="card">
+        <div class="card-header py-1 small d-flex align-items-center gap-2">
+            <strong>Query builder</strong>
+            <span class="text-muted me-auto">— composes filter, sort, facets and the fields searched from the fields of the index</span>
+        </div>
+        <div class="card-body small">
+            {% if engine != 'loupe' %}
+            <div class="alert alert-warning py-1 small">The filter is written in the syntax of Loupe; the engine <code>{{ engine }}</code> may expect another.</div>
+            {% endif %}
+
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <strong>Filter</strong>
+                <span class="text-muted">groups nest conditions; drag <i class="bi bi-grip-vertical"></i> to reorder or to move into another group</span>
+            </div>
+            <!-- hidden on a wrapper: d-flex would show it (!important) -->
+            <div id="builder-kept" class="hidden">
+                <div class="alert alert-warning py-1 small d-flex align-items-start gap-2">
+                    <div class="me-auto">
+                        <span id="builder-kept-reason"></span>
+                        It is kept as it is and combined with the conditions below by AND: <code id="builder-kept-filter"></code>
+                    </div>
+                    <button class="btn btn-link btn-sm p-0 text-danger" type="button" id="builder-kept-remove" title="Search without it">Remove it</button>
+                </div>
+            </div>
+            <div id="builder-conditions" class="mb-3"></div>
+
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <strong>Sort</strong>
+                    <div id="builder-sort" class="d-flex flex-column gap-1 my-1"></div>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" id="builder-add-sort"><i class="bi bi-plus-lg"></i> Sort</button>
+                </div>
+                <div class="col-md-4">
+                    <strong>Facets</strong> <span class="text-muted">count the values of</span>
+                    <div id="builder-facets" class="my-1"></div>
+                </div>
+                <div class="col-md-4">
+                    <strong>Search on</strong> <span class="text-muted">the query covers (none: all)</span>
+                    <div id="builder-search-on" class="my-1"></div>
+                </div>
+            </div>
+
+            <div class="mt-3">
+                <div class="text-muted mb-1">Filter</div>
+                <pre class="bg-body-tertiary rounded p-2 mb-1 text-wrap" id="builder-preview"></pre>
+                <ul class="text-danger small mb-2 hidden" id="builder-errors"></ul>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary btn-sm" type="button" id="builder-search"><i class="bi bi-search"></i> Use and search</button>
+                    <button class="btn btn-outline-primary btn-sm" type="button" id="builder-use">Use in the form</button>
+                    <button class="btn btn-link btn-sm" type="button" id="builder-reset" title="Read the form again">Reset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="collapse mb-3" id="php-code">
+    <div class="card">
+        <div class="card-header py-1 small d-flex align-items-center">
+            <strong class="me-auto">This search in PHP</strong>
+            <button type="button" class="btn btn-link btn-sm p-0" title="Copy" onclick="copyToClipboard(document.getElementById('php-code-text').textContent)"><i class="bi bi-clipboard"></i> Copy</button>
+        </div>
+        <pre class="card-body small mb-0" id="php-code-text"></pre>
+    </div>
+</div>
+
+<datalist id="builder-values"></datalist>
+<datalist id="builder-field-list">
+    {% for field in builderFields|filter(f => f.filterable) %}
+    {% if '.' in field.path and field.reserved is not defined %}<option value="{{ field.path }}">{{ field.name }}</option>{% endif %}
+    <option value="{{ field.name }}">{{ field.reserved is defined ? field.path : (field.path != field.name ? field.path : field.type) }}</option>
+    {% endfor %}
+</datalist>
+
+<script src="assets/query-builder.js"></script>
+<script>
+(() => {
+    const QB = window.QueryBuilder;
+    const fields = QB.createFields({{ builderFields|json_encode|raw }});
+    // the values counted by the facets of the last search, suggested as values
+    const facetValues = {{ (result.facets ?? [])|json_encode|raw }};
+    const context = {
+        storage: {{ storage|json_encode|raw }},
+        target: {{ (classname ? 'class:' ~ classname : 'index:' ~ name)|json_encode|raw }},
+        classname: {{ classname|json_encode|raw }},
+        name: {{ name|json_encode|raw }},
+    };
+    const form = document.getElementById('search-form');
+    const placeholders = {'IN': 'a, b', 'NOT IN': 'a, b', 'BETWEEN': '10, 20', 'LIKE': 'Ho% (% any, _ one character)', 'NOT LIKE': 'Ho% (% any, _ one character)', 'CONTAINS': 'part of the value', 'NOT CONTAINS': 'part of the value'};
+    const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    const split = value => value.split(',').map(v => v.trim()).filter(v => v !== '');
+
+    // ---- the filter: groups and conditions on the page ----
+    const conditions = document.getElementById('builder-conditions');
+    const filterable = fields.all.filter(f => f.filterable);
+    // a filter of the form the builder can't show: kept as it is and combined by AND
+    let kept = '';
+
+    const childrenOf = group => group.querySelector(':scope > .builder-children');
+    const rootGroup = () => conditions.querySelector('.builder-root');
+
+    // a group: conditions and groups combined with AND or OR, optionally negated; the root group has no handle
+    function createGroup(parent = null, combinator = 'AND', negated = false) {
+        const group = document.createElement('div');
+        const root = null === parent;
+        group.className = 'builder-group' + (root ? ' builder-root' : '');
+        group.innerHTML = `
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-1 builder-group-head">
+                ${root ? '' : '<span class="builder-handle" title="Drag to move the group"><i class="bi bi-grip-vertical"></i></span>'}
+                <div class="form-check form-check-inline mb-0 me-0" title="Negate the group: NOT (…)">
+                    <input class="form-check-input builder-negate" type="checkbox" aria-label="Negate">
+                    <label class="form-check-label">NOT</label>
+                </div>
+                <select class="form-select form-select-sm w-auto builder-combinator" aria-label="Combine">
+                    <option value="AND">all of (AND)</option>
+                    <option value="OR">any of (OR)</option>
+                </select>
+                ${root ? '' : '<button class="btn btn-link btn-sm text-danger p-0 ms-auto builder-remove-group" type="button" title="Remove the group with its conditions"><i class="bi bi-x-lg"></i></button>'}
+            </div>
+            <div class="builder-children"></div>
+            <div class="d-flex gap-1 mt-1">
+                <button class="btn btn-outline-secondary btn-sm py-0 builder-add-condition" type="button"><i class="bi bi-plus-lg"></i> Condition</button>
+                <button class="btn btn-outline-secondary btn-sm py-0 builder-add-group" type="button"><i class="bi bi-plus-lg"></i> Group</button>
+            </div>`;
+        const head = group.querySelector(':scope > .builder-group-head');
+        head.querySelector('.builder-combinator').value = combinator;
+        head.querySelector('.builder-negate').checked = negated;
+        head.querySelector('.builder-combinator').addEventListener('change', render);
+        head.querySelector('.builder-negate').addEventListener('change', render);
+        // the buttons of this group, not of the groups inside
+        group.querySelector(':scope > div > .builder-add-condition').addEventListener('click', () => addCondition({}, childrenOf(group)));
+        group.querySelector(':scope > div > .builder-add-group').addEventListener('click', () => {
+            // a new group starts with a condition, combined the other way than its parent
+            const inner = createGroup(childrenOf(group), head.querySelector('.builder-combinator').value === 'AND' ? 'OR' : 'AND');
+            addCondition({}, childrenOf(inner));
+        });
+        head.querySelector('.builder-remove-group')?.addEventListener('click', () => {
+            group.remove();
+            render();
+        });
+        if (!root) {
+            makeDraggable(group);
+        }
+        (parent ?? conditions).appendChild(group);
+        render();
+        return group;
+    }
+
+    // a condition: {field, op, value}, e.g. read from a filter
+    function addCondition(condition = {}, container = null) {
+        const row = document.createElement('div');
+        row.className = 'd-flex flex-wrap gap-1 align-items-center builder-condition';
+        row.innerHTML = `
+            <span class="builder-handle" title="Drag to move the condition"><i class="bi bi-grip-vertical"></i></span>
+            <input class="form-control form-control-sm font-monospace builder-field" style="width: 14rem" list="builder-field-list" aria-label="Field or path" placeholder="field or path, e.g. friend.name" title="The name of a field or its path in the stored data; a path leads into referenced objects">
+            <select class="form-select form-select-sm w-auto builder-operator" aria-label="Operator"></select>
+            <input class="form-control form-control-sm font-monospace builder-value" style="width: 16rem" list="builder-values" aria-label="Value">
+            <select class="form-select form-select-sm w-auto builder-boolean hidden" aria-label="Value"><option>true</option><option>false</option></select>
+            <button class="btn btn-link btn-sm text-danger p-0 ms-1 builder-remove" type="button" title="Remove"><i class="bi bi-x-lg"></i></button>
+            <span class="builder-field-status text-muted"></span>`;
+        (container ?? childrenOf(rootGroup())).appendChild(row);
+        makeDraggable(row);
+        const field = row.querySelector('.builder-field');
+        const operator = row.querySelector('.builder-operator');
+        const value = row.querySelector('.builder-value');
+        const boolean = row.querySelector('.builder-boolean');
+        field.value = condition.field ?? '';
+
+        // the operators of the type of the field; an unknown field gets those of strings
+        const updateOperators = () => {
+            showFieldStatus(row);
+            const type = fields.find(field.value.trim())?.type ?? 'string';
+            const previous = operator.value;
+            operator.innerHTML = QB.OPERATORS[type].map(op => `<option>${op}</option>`).join('');
+            if (QB.OPERATORS[type].includes(previous)) {
+                operator.value = previous;
+            }
+            updateValue();
+        };
+        const updateValue = () => {
+            const type = fields.find(field.value.trim())?.type ?? 'string';
+            const op = operator.value;
+            boolean.classList.toggle('hidden', type !== 'boolean' || QB.withoutValue(op));
+            value.classList.toggle('hidden', type === 'boolean' || QB.withoutValue(op));
+            value.placeholder = placeholders[op] ?? (QB.isNumberType(type) ? 'number' : 'value');
+            render();
+        };
+        field.addEventListener('input', updateOperators);
+        operator.addEventListener('change', updateValue);
+        value.addEventListener('input', render);
+        boolean.addEventListener('change', render);
+        // suggestions: the values counted by a facet of the field
+        value.addEventListener('focus', () => {
+            const values = Object.keys(facetValues[fields.find(field.value.trim())?.name] ?? {});
+            document.getElementById('builder-values').innerHTML = values.map(v => `<option value="${escapeHtml(v)}">`).join('');
+        });
+        row.querySelector('.builder-remove').addEventListener('click', () => {
+            row.remove();
+            render();
+        });
+
+        updateOperators();
+        if (condition.op) {
+            // an operator the type doesn't offer stays visible, reported as an error
+            if (![...operator.options].some(option => option.value === condition.op)) {
+                operator.add(new Option(condition.op));
+            }
+            operator.value = condition.op;
+            value.value = condition.value ?? '';
+            boolean.value = condition.value === 'false' ? 'false' : 'true';
+            updateValue();
+        }
+        return row;
+    }
+
+    // whether the field or path typed is a filterable field of the index; a path that isn't can be added to it
+    function showFieldStatus(row) {
+        const text = row.querySelector('.builder-field').value.trim();
+        const status = row.querySelector('.builder-field-status');
+        const field = fields.find(text);
+        status.className = 'builder-field-status small';
+        if (text === '') {
+            status.textContent = '';
+        } else if (field && field.filterable) {
+            status.classList.add('text-muted');
+            status.innerHTML = field.name === text
+                ? (field.path.includes('.') && !field.reserved ? `path <code>${escapeHtml(field.path)}</code>` : '')
+                : `field <code>${escapeHtml(field.name)}</code>`;
+        } else {
+            status.classList.add('text-danger');
+            const edit = context.name
+                ? ` <a href="?action=index-edit&storage=${encodeURIComponent(context.storage)}&name=${encodeURIComponent(context.name)}&addPath=${encodeURIComponent(field ? field.path : text)}">${field ? 'make it filterable' : 'add it to the index'}</a>`
+                : '';
+            status.innerHTML = (field ? 'not filterable' : 'no field of the index') + edit;
+        }
+    }
+
+    // the groups and conditions on the page as a tree of the builder logic
+    function treeOf(group) {
+        const head = group.querySelector(':scope > .builder-group-head');
+        return {
+            kind: 'group',
+            combinator: head.querySelector('.builder-combinator').value,
+            negated: head.querySelector('.builder-negate').checked,
+            children: [...childrenOf(group).children].filter(child => !child.classList.contains('builder-drop-indicator')).map(child => {
+                if (child.classList.contains('builder-group')) {
+                    return treeOf(child);
+                }
+                const name = child.querySelector('.builder-field').value;
+                const type = fields.find(name.trim())?.type;
+                return {
+                    kind: 'condition',
+                    field: name,
+                    op: child.querySelector('.builder-operator').value,
+                    value: type === 'boolean' ? child.querySelector('.builder-boolean').value : child.querySelector('.builder-value').value,
+                };
+            }),
+        };
+    }
+
+    // builds the groups and conditions of a tree; the root group is the outermost one
+    function showTree(tree, parent = null) {
+        const group = createGroup(parent, tree.combinator, tree.negated);
+        for (const child of tree.children) {
+            if (child.kind === 'group') {
+                showTree(child, childrenOf(group));
+            } else {
+                addCondition(child, childrenOf(group));
+            }
+        }
+        return group;
+    }
+
+    /** the filter of the builder and why it can't be written: {filter, errors} */
+    function built() {
+        const root = rootGroup();
+        return root ? QB.buildFilter(treeOf(root), fields, kept) : {filter: kept, errors: []};
+    }
+
+    // ---- drag and drop: conditions and groups are moved by their handles, also into other groups ----
+    // with pointer events, so it works with a mouse, a pen and on touch screens; Escape cancels
+    let dragged = null;
+    const indicator = document.createElement('div');
+    indicator.className = 'builder-drop-indicator';
+
+    // the child of a container before which the dragged element goes, by the position of the pointer
+    function dropBefore(container, y) {
+        return [...container.children]
+            .filter(child => child !== dragged && child !== indicator)
+            .find(child => {
+                const box = child.getBoundingClientRect();
+                return y < box.top + box.height / 2;
+            }) ?? null;
+    }
+
+    function showDropTarget(x, y) {
+        const container = document.elementFromPoint(x, y)?.closest('#builder-conditions .builder-children');
+        // not into the dragged group itself or a group inside it
+        if (!container || dragged.contains(container)) {
+            indicator.remove();
+            return;
+        }
+        const before = dropBefore(container, y);
+        if (indicator.parentElement !== container || indicator.nextElementSibling !== before) {
+            container.insertBefore(indicator, before);
+        }
+    }
+
+    function endDrag(drop) {
+        if (!dragged) {
+            return;
+        }
+        if (drop && indicator.parentElement) {
+            indicator.parentElement.insertBefore(dragged, indicator);
+        }
+        dragged.classList.remove('builder-dragging');
+        indicator.remove();
+        dragged = null;
+        document.body.classList.remove('builder-drag-active');
+        render();
+    }
+
+    function makeDraggable(element) {
+        const handle = element.querySelector(':scope > .builder-handle, :scope > .builder-group-head > .builder-handle');
+        handle.addEventListener('pointerdown', event => {
+            if (event.button !== 0) {
+                return;
+            }
+            event.preventDefault();
+            handle.setPointerCapture(event.pointerId);
+            dragged = element;
+            element.classList.add('builder-dragging');
+            document.body.classList.add('builder-drag-active');
+        });
+        handle.addEventListener('pointermove', event => {
+            if (dragged === element) {
+                showDropTarget(event.clientX, event.clientY);
+            }
+        });
+        handle.addEventListener('pointerup', () => endDrag(true));
+        handle.addEventListener('pointercancel', () => endDrag(false));
+    }
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && dragged) {
+            endDrag(false);
+        }
+    });
+
+    // ---- sort, facets, search on ----
+    const sortList = document.getElementById('builder-sort');
+    const sortable = fields.all.filter(f => f.sortable);
+
+    // a sort by a field that isn't sortable (or unknown) stays visible, reported as an error
+    function addSort(name = '_relevance', direction = 'asc') {
+        const row = document.createElement('div');
+        row.className = 'd-flex gap-1 align-items-center builder-sort-row';
+        const resolved = name === '_relevance' ? name : (fields.find(name)?.sortable ? fields.find(name).name : name);
+        const known = resolved === '_relevance' || sortable.some(f => f.name === resolved);
+        row.innerHTML = `
+            <select class="form-select form-select-sm w-auto" aria-label="Field">
+                <option value="_relevance">relevance</option>
+                ${sortable.map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.name)}</option>`).join('')}
+                ${known ? '' : `<option value="${escapeHtml(resolved)}" class="text-danger">${escapeHtml(resolved)} (not sortable)</option>`}
+            </select>
+            <select class="form-select form-select-sm w-auto" aria-label="Direction"><option value="asc">ascending</option><option value="desc">descending</option></select>
+            <button class="btn btn-link btn-sm text-danger p-0" type="button" title="Remove"><i class="bi bi-x-lg"></i></button>`;
+        const [field, dir] = row.querySelectorAll('select');
+        field.value = resolved;
+        dir.value = direction;
+        row.querySelectorAll('select').forEach(s => s.addEventListener('change', render));
+        row.querySelector('button').addEventListener('click', () => {
+            row.remove();
+            render();
+        });
+        sortList.appendChild(row);
+        render();
+    }
+
+    // checkboxes of fields; chosen ones the list doesn't have (unknown, or named by a path) are resolved or kept
+    const chosenOrder = {};
+    const checkboxes = (container, candidates, chosen, cls) => {
+        const names = candidates.map(f => f.name);
+        const resolved = chosen.map(c => names.includes(c) ? c : (fields.find(c) && names.includes(fields.find(c).name) ? fields.find(c).name : c));
+        // the order of the form is kept; boxes checked later come after
+        chosenOrder[cls] = resolved;
+        const extra = resolved.filter(c => !names.includes(c));
+        const box = (value, checked, label) => `
+            <div class="form-check form-check-inline mb-0">
+                <input class="form-check-input ${cls}" type="checkbox" value="${escapeHtml(value)}" id="${cls}-${escapeHtml(value)}" ${checked ? 'checked' : ''}>
+                <label class="form-check-label font-monospace" for="${cls}-${escapeHtml(value)}">${label}</label>
+            </div>`;
+        document.getElementById(container).innerHTML =
+            candidates.map(f => box(f.name, resolved.includes(f.name), escapeHtml(f.name))).join('')
+            + extra.map(c => box(c, true, `<span class="text-danger" title="no such field of the index">${escapeHtml(c)}</span>`)).join('')
+            || '<span class="text-muted">no such field</span>';
+        document.querySelectorAll('.' + cls).forEach(input => input.addEventListener('change', render));
+    };
+    const checked = cls => {
+        const values = [...document.querySelectorAll('.' + cls + ':checked')].map(box => box.value);
+        const order = chosenOrder[cls] ?? [];
+        const position = value => order.includes(value) ? order.indexOf(value) : order.length;
+        return values.map((value, i) => [position(value), i, value]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(entry => entry[2]);
+    };
+    const builtSort = () => [...sortList.querySelectorAll('.builder-sort-row')].map(row => {
+        const [field, dir] = row.querySelectorAll('select');
+        return `${field.value}:${dir.value}`;
+    });
+
+    // ---- reading the form into the builder ----
+    // each part on its own: a field changed in the form changes only its part of the builder
+    const readFromForm = {
+        sort() {
+            sortList.innerHTML = '';
+            split(form.elements.sort.value).forEach(entry => {
+                const at = entry.lastIndexOf(':');
+                const [name, dir] = at < 0 ? [entry, 'asc'] : [entry.slice(0, at), entry.slice(at + 1)];
+                addSort(name, dir === 'desc' ? 'desc' : 'asc');
+            });
+        },
+        facets() {
+            checkboxes('builder-facets', filterable.filter(f => !f.reserved), split(form.elements.facets.value), 'builder-facet');
+        },
+        searchOn() {
+            checkboxes('builder-search-on', fields.all.filter(f => f.searchable), split(form.elements.searchOn.value), 'builder-search-field');
+        },
+        filter() {
+            conditions.innerHTML = '';
+            kept = '';
+            document.getElementById('builder-kept').classList.add('hidden');
+            const filter = form.elements.filter.value.trim();
+            if (filter !== '') {
+                try {
+                    showTree(QB.parse(filter, fields));
+                    render();
+                    return;
+                } catch (e) {
+                    // the builder can't show it exactly: kept as it is
+                    kept = filter;
+                    document.getElementById('builder-kept-reason').textContent = `The filter of the form can't be shown here (${e.message}).`;
+                    document.getElementById('builder-kept-filter').textContent = filter;
+                    document.getElementById('builder-kept').classList.remove('hidden');
+                }
+            }
+            // start with an empty condition
+            createGroup();
+            addCondition({});
+        },
+    };
+
+    function initFromForm() {
+        readFromForm.sort();
+        readFromForm.facets();
+        readFromForm.searchOn();
+        readFromForm.filter();
+    }
+
+    function render() {
+        const {filter, errors} = built();
+        document.getElementById('builder-preview').textContent = filter || '(no filter)';
+        const list = document.getElementById('builder-errors');
+        list.innerHTML = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
+        list.classList.toggle('hidden', !errors.length);
+    }
+
+    const builderOpen = () => document.getElementById('builder').classList.contains('show');
+
+    /**
+     * The builder into the form; then the builder is read from the form again. Returns false (and changes nothing)
+     * if the builder has errors: a filter with them left out would search something else.
+     */
+    function use() {
+        const {filter, errors} = built();
+        if (errors.length) {
+            alert('The filter of the builder isn\'t complete:\n- ' + errors.join('\n- '));
+            return false;
+        }
+        form.elements.filter.value = filter;
+        form.elements.sort.value = builtSort().join(', ');
+        form.elements.facets.value = checked('builder-facet').join(', ');
+        form.elements.searchOn.value = checked('builder-search-field').join(', ');
+        initFromForm();
+        renderPhp();
+        return true;
+    }
+
+    // before searching or saving: what the open builder shows is what is searched or saved
+    const applyOpenBuilder = () => !builderOpen() || use();
+
+    document.getElementById('builder-add-sort').addEventListener('click', () => addSort());
+    document.getElementById('builder-use').addEventListener('click', use);
+    document.getElementById('builder-search').addEventListener('click', () => {
+        if (use()) {
+            form.submit();
+        }
+    });
+    document.getElementById('builder-kept-remove').addEventListener('click', () => {
+        kept = '';
+        document.getElementById('builder-kept').classList.add('hidden');
+        render();
+    });
+    // the Search button and Enter in the form
+    form.addEventListener('submit', event => {
+        if (!applyOpenBuilder()) {
+            event.preventDefault();
+        }
+    });
+    // typed into the form while the builder is open: that part of the builder follows (on change, when leaving the
+    // field); the other parts keep their changes
+    ['filter', 'sort', 'facets', 'searchOn'].forEach(name => form.elements[name].addEventListener('change', () => {
+        if (builderOpen()) {
+            readFromForm[name]();
+            render();
+        }
+    }));
+    document.getElementById('builder-reset').addEventListener('click', initFromForm);
+    document.getElementById('builder').addEventListener('show.bs.collapse', initFromForm);
+
+    // ---- the search as PHP code ----
+    const phpList = values => '[' + values.map(QB.phpString).join(', ') + ']';
+
+    function renderPhp() {
+        const args = [];
+        const q = form.elements.q.value;
+        const filter = form.elements.filter.value.trim();
+        if (q !== '') args.push(`query: ${QB.phpString(q)}`);
+        if (filter !== '') args.push(`filter: ${QB.phpString(filter)}`);
+        if (split(form.elements.sort.value).length) args.push(`sort: ${phpList(split(form.elements.sort.value))}`);
+        if (split(form.elements.facets.value).length) args.push(`facets: ${phpList(split(form.elements.facets.value))}`);
+        if (split(form.elements.searchOn.value).length) args.push(`searchOn: ${phpList(split(form.elements.searchOn.value))}`);
+        if (form.elements.hitsPerPage.value !== '20') args.push(`hitsPerPage: ${parseInt(form.elements.hitsPerPage.value, 10) || 20}`);
+        const request = args.length ? `new Request(\n    ${args.join(',\n    ')},\n)` : 'new Request()';
+        const call = context.classname
+            ? `// the manager chooses the index of the class\n$result = $search->search(\\${context.classname}::class, ${request});`
+            : `$result = $search->get(${QB.phpString(context.name)})->search(${request});`;
+        document.getElementById('php-code-text').textContent =
+            `use melia\\ObjectStorage\\Search\\Request;\n\n${call}\n\nforeach ($result->hits as $hit) {\n    $hit->uuid;      // load the object with $storage->load($hit->uuid)\n    $hit->document;  // the indexed values\n}`;
+    }
+    form.addEventListener('input', renderPhp);
+    document.getElementById('php-code').addEventListener('show.bs.collapse', renderPhp);
+
+    // ---- queries saved in the browser ----
+    const saved = {
+        key: 'object-storage-viewer:saved-queries',
+        all() {
+            try {
+                const entries = JSON.parse(localStorage.getItem(this.key) ?? '[]');
+                return Array.isArray(entries) ? entries.filter(e => e && typeof e.name === 'string' && e.params) : [];
+            } catch (e) {
+                return [];
+            }
+        },
+        write(entries) {
+            try {
+                localStorage.setItem(this.key, JSON.stringify(entries));
+                return true;
+            } catch (e) {
+                alert('The query couldn\'t be saved: the storage of the browser isn\'t available.');
+                return false;
+            }
+        },
+        mine() {
+            return this.all().filter(e => e.storage === context.storage && e.target === context.target);
+        },
+    };
+
+    // the saved query loaded, kept in the URL ("saved"), so saving again suggests its name to replace it
+    let currentName = new URLSearchParams(location.search).get('saved');
+    function rememberName(name) {
+        currentName = name || null;
+        let input = form.elements.saved;
+        if (!input) {
+            input = Object.assign(document.createElement('input'), {type: 'hidden', name: 'saved'});
+            form.appendChild(input);
+        }
+        input.value = name ?? '';
+        input.disabled = !name;
+    }
+    rememberName(currentName);
+
+    const params = () => ({
+        q: form.elements.q.value,
+        filter: form.elements.filter.value,
+        sort: form.elements.sort.value,
+        facets: form.elements.facets.value,
+        searchOn: form.elements.searchOn.value,
+        hitsPerPage: form.elements.hitsPerPage.value,
+    });
+
+    // the saved values replace those of the form; missing ones (saved before they existed) are emptied
+    function fill(entry) {
+        ['q', 'filter', 'sort', 'facets', 'searchOn'].forEach(key => form.elements[key].value = entry.params[key] ?? '');
+        form.elements.hitsPerPage.value = entry.params.hitsPerPage || 20;
+        rememberName(entry.name);
+    }
+
+    function renderSaved() {
+        const menu = document.getElementById('saved-queries');
+        const entries = saved.mine();
+        document.getElementById('saved-count').textContent = entries.length;
+        const items = entries.map((entry, i) => `
+            <li class="d-flex align-items-center">
+                <button class="dropdown-item saved-load ${entry.name === currentName ? 'fw-semibold' : ''}" type="button" data-index="${i}" title="${escapeHtml([entry.params.q && 'query: ' + entry.params.q, entry.params.filter && 'filter: ' + entry.params.filter, entry.params.sort && 'sort: ' + entry.params.sort].filter(Boolean).join('\n') || 'all objects')}">
+                    ${entry.name === currentName ? '<i class="bi bi-check2" title="loaded"></i> ' : ''}${escapeHtml(entry.name)}
+                    <small class="d-block text-muted font-monospace text-truncate" style="max-width: 22rem">${escapeHtml(entry.params.filter || entry.params.q || 'all objects')}</small>
+                </button>
+                <button class="btn btn-link btn-sm saved-edit" type="button" data-index="${i}" title="Open in the builder, to change it"><i class="bi bi-ui-checks"></i></button>
+                <button class="btn btn-link btn-sm text-danger saved-delete" type="button" data-index="${i}" title="Delete"><i class="bi bi-trash"></i></button>
+            </li>`).join('');
+        menu.innerHTML = `
+            <li><button class="dropdown-item" type="button" id="saved-save"><i class="bi bi-bookmark-plus"></i> Save this query…</button></li>
+            <li><hr class="dropdown-divider"></li>
+            ${items || '<li><span class="dropdown-item-text text-muted small">No saved queries for this ' + (context.classname ? 'class' : 'index') + '.</span></li>'}
+            <li><hr class="dropdown-divider"></li>
+            <li><span class="dropdown-item-text text-muted small">Kept in this browser only.</span></li>`;
+
+        document.getElementById('saved-save').addEventListener('click', () => {
+            // changes in the open builder not used in the form yet are saved too; not with errors
+            if (!applyOpenBuilder()) {
+                return;
+            }
+            const current = params();
+            // the loaded query by default, to replace it; another name saves a new one
+            const name = prompt('Name of the query (the name of a saved query replaces it)', currentName ?? (current.q || current.filter || 'Query'))?.trim();
+            if (!name) {
+                return;
+            }
+            const entries = saved.all();
+            const existing = entries.findIndex(e => e.storage === context.storage && e.target === context.target && e.name === name);
+            if (existing >= 0 && !confirm(`Replace the saved query "${name}"?`)) {
+                return;
+            }
+            const entry = {name, storage: context.storage, target: context.target, params: current, savedAt: new Date().toISOString()};
+            existing >= 0 ? entries.splice(existing, 1, entry) : entries.unshift(entry);
+            if (saved.write(entries)) {
+                rememberName(name);
+                renderSaved();
+            }
+        });
+        menu.querySelectorAll('.saved-load').forEach(button => button.addEventListener('click', () => {
+            fill(saved.mine()[button.dataset.index]);
+            // without the builder: it would apply its state instead of the saved one
+            form.submit();
+        }));
+        // into the form and the builder, without searching
+        menu.querySelectorAll('.saved-edit').forEach(button => button.addEventListener('click', () => {
+            fill(saved.mine()[button.dataset.index]);
+            renderSaved();
+            renderPhp();
+            const builder = document.getElementById('builder');
+            if (builderOpen()) {
+                initFromForm();
+            } else {
+                bootstrap.Collapse.getOrCreateInstance(builder).show(); // reads the form when shown
+            }
+            builder.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }));
+        menu.querySelectorAll('.saved-delete').forEach(button => button.addEventListener('click', event => {
+            event.stopPropagation();
+            const entry = saved.mine()[button.dataset.index];
+            if (!confirm(`Delete the saved query "${entry.name}"?`)) {
+                return;
+            }
+            if (saved.write(saved.all().filter(e => !(e.storage === entry.storage && e.target === entry.target && e.name === entry.name)))) {
+                if (entry.name === currentName) {
+                    rememberName(null);
+                }
+                renderSaved();
+            }
+        }));
+    }
+
+    renderSaved();
+    renderPhp();
+})();
+</script>
