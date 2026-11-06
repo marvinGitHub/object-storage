@@ -9,7 +9,9 @@ use Psr\SimpleCache\CacheInterface;
 /**
  * Simple in-memory PSR-16 cache with TTL support.
  *
- * Stores values alongside absolute expiration timestamps and evicts on read/has.
+ * Stores values alongside absolute expiration timestamps and evicts on read/has. With a maximum of entries, the least
+ * recently used entry is evicted when another is added: reading many objects, e.g. a query over all objects of a
+ * class, doesn't keep all of them (and their metadata) in memory.
  */
 class InMemoryCache implements CacheInterface
 {
@@ -21,14 +23,35 @@ class InMemoryCache implements CacheInterface
      */
     protected array $data = [];
 
+    /** the default maximum of entries of the caches a storage creates for itself */
+    public const int DEFAULT_MAX_ENTRIES = 10000;
+
     /**
      * @param array $initial Optional initial values (stored without expiry)
+     * @param int|null $maxEntries The most entries kept, the least recently used evicted first; null: no limit.
      */
-    public function __construct(protected array $initial = [])
+    public function __construct(protected array $initial = [], protected ?int $maxEntries = null)
     {
         foreach ($initial as $k => $v) {
             $this->data[$k] = ['v' => $v, 'e' => null];
         }
+        $this->evict();
+    }
+
+    /** the least recently used entries beyond the maximum: the first ones of the array (used ones move to its end) */
+    private function evict(): void
+    {
+        if (null === $this->maxEntries) {
+            return;
+        }
+        while (count($this->data) > $this->maxEntries) {
+            unset($this->data[array_key_first($this->data)]);
+        }
+    }
+
+    public function getMaxEntries(): ?int
+    {
+        return $this->maxEntries;
     }
 
     /**
@@ -65,6 +88,11 @@ class InMemoryCache implements CacheInterface
             unset($this->data[$key]);
             return $default;
         }
+        if (null !== $this->maxEntries) {
+            // used: the most recent
+            unset($this->data[$key]);
+            $this->data[$key] = $entry;
+        }
         return $entry['v'];
     }
 
@@ -98,7 +126,9 @@ class InMemoryCache implements CacheInterface
             unset($this->data[$key]);
             return true;
         }
+        unset($this->data[$key]);
         $this->data[$key] = ['v' => $value, 'e' => $expiresAt];
+        $this->evict();
         return true;
     }
 

@@ -102,3 +102,37 @@ test('writing: asked before, a dry run, and never by a link', async ({page}) => 
     await page.getByRole('button', {name: 'Run'}).click();
     await expect(page.locator('#query-written')).toContainText('4 object(s) updated.');
 });
+
+test('syntax highlighting, the error marked, scrolling together', async ({page}) => {
+    await page.goto(consoleUrl());
+    const area = page.locator('#q');
+    const layer = page.locator('#q-highlighted');
+
+    await area.fill("SELECT UUID, LOWER(name) FROM stdClass WHERE age > :min -- old\nAND city = 'Bonn'");
+    await expect(layer.locator('.oql-keyword')).toHaveText(['SELECT', 'FROM', 'WHERE', 'AND']);
+    await expect(layer.locator('.oql-uuid')).toHaveText(['UUID']);
+    await expect(layer.locator('.oql-function')).toHaveText(['LOWER']);
+    await expect(layer.locator('.oql-parameter')).toHaveText([':min']);
+    await expect(layer.locator('.oql-comment')).toHaveText(['-- old']);
+    await expect(layer.locator('.oql-string')).toHaveText(["'Bonn'"]);
+    // the text of the layer is the query: the characters are where the textarea has them
+    expect((await layer.textContent()).trimEnd()).toBe(await area.inputValue());
+    // the text of the textarea is transparent, the caret isn't
+    expect(await area.evaluate(el => getComputedStyle(el).color)).toBe('rgba(0, 0, 0, 0)');
+
+    // an error is marked where it is, until the query is edited
+    await page.goto(consoleUrl('SELECT name, age\nFROM stdClass WHERE age = = 1'));
+    await expect(page.locator('#query-error')).toContainText('line 2, column 27');
+    await expect(layer.locator('.oql-error')).toHaveText(['=']);
+    await area.press('End');
+    await area.type('0');
+    await expect(layer.locator('.oql-error')).toHaveCount(0);
+
+    // a long query: the layer scrolls with the textarea
+    await area.fill(Array.from({length: 40}, (_, i) => `-- line ${i}`).join('\n') + '\nSELECT 1 FROM stdClass');
+    await area.evaluate(el => el.scrollTop = el.scrollHeight);
+    await area.dispatchEvent('scroll');
+    const [top, layerTop] = await page.evaluate(() => [document.getElementById('q').scrollTop, document.getElementById('q-highlighted').scrollTop]);
+    expect(top).toBeGreaterThan(0);
+    expect(layerTop).toBe(top);
+});

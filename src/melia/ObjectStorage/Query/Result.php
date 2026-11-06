@@ -21,12 +21,14 @@ final readonly class Result implements IteratorAggregate, Countable
      * @param string|null $statement INSERT, UPDATE or DELETE: the rows are the UUIDs of the objects written (null in
      *        a dry run of INSERT); null for SELECT
      * @param bool $dryRun Whether nothing was written: the rows are the objects that would be.
+     * @param bool $truncated Whether there were more rows than asked for (Oql::query() with $maxRows).
      */
     public function __construct(
         public array   $columns,
         public array   $rows,
         public ?string $statement = null,
         public bool    $dryRun = false,
+        public bool    $truncated = false,
     )
     {
     }

@@ -115,4 +115,48 @@ class InMemoryCacheTest extends TestCase
         $this->assertTrue($cache->has('x'));
         $this->assertTrue($cache->has('y'));
     }
+
+    public function testUnboundedByDefault(): void
+    {
+        $cache = new InMemoryCache();
+        for ($i = 0; $i < 20000; $i++) {
+            $cache->set('k' . $i, $i);
+        }
+        $this->assertNull($cache->getMaxEntries());
+        $this->assertTrue($cache->has('k0'));
+        $this->assertTrue($cache->has('k19999'));
+    }
+
+    public function testBoundedCacheDropsTheLeastRecentlyUsed(): void
+    {
+        $cache = new InMemoryCache(maxEntries: 3);
+        $cache->set('a', 1);
+        $cache->set('b', 2);
+        $cache->set('c', 3);
+        $this->assertSame(1, $cache->get('a'), 'reading a makes it the most recently used');
+        $cache->set('d', 4);
+
+        $this->assertFalse($cache->has('b'), 'b was used least recently');
+        $this->assertTrue($cache->has('a'));
+        $this->assertTrue($cache->has('c'));
+        $this->assertTrue($cache->has('d'));
+
+        $cache->set('c', 33); // written again: the most recently used
+        $cache->set('e', 5);
+        $this->assertFalse($cache->has('a'));
+        $this->assertSame(33, $cache->get('c'));
+        $this->assertSame(3, $cache->getMaxEntries());
+    }
+
+    public function testBoundedCacheKeepsAtMostMaxEntries(): void
+    {
+        $cache = new InMemoryCache(['x' => 1, 'y' => 2, 'z' => 3], 2);
+        $this->assertFalse($cache->has('x'), 'initial values are bounded too');
+        for ($i = 0; $i < 1000; $i++) {
+            $cache->set('k' . $i, str_repeat('v', 100));
+        }
+        $this->assertFalse($cache->has('k997'));
+        $this->assertTrue($cache->has('k998'));
+        $this->assertTrue($cache->has('k999'));
+    }
 }

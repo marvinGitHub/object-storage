@@ -1,6 +1,37 @@
 {% extends 'index.html' %}
 
 {% block body %}
+<style>
+    .oql-editor { position: relative; }
+    /* the same box and text for both, without wrapping: lines and scrolling match */
+    .oql-editor pre, .oql-editor textarea {
+        font-size: .875rem; line-height: 1.5; white-space: pre; overflow-wrap: normal; tab-size: 4; margin: 0;
+    }
+    .oql-editor pre {
+        position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--bs-body-color);
+        border-color: transparent; background: var(--bs-body-bg);
+    }
+    .oql-editor textarea {
+        position: relative; overflow: auto; resize: vertical;
+    }
+    /* also when focused: .form-control:focus sets the color */
+    .oql-editor textarea.form-control, .oql-editor textarea.form-control:focus {
+        background: transparent; color: transparent; caret-color: var(--bs-body-color);
+    }
+    .oql-editor textarea::placeholder { color: var(--bs-secondary-color); }
+    .oql-editor textarea::selection { color: transparent; background: rgba(var(--bs-primary-rgb), .25); }
+    .oql-keyword { color: var(--bs-primary); font-weight: 600; }
+    .oql-uuid { color: var(--bs-primary); font-weight: 600; font-style: italic; }
+    .oql-literal { color: var(--bs-pink); font-weight: 600; }
+    .oql-function { color: var(--bs-purple); }
+    .oql-string { color: var(--bs-success); }
+    .oql-number { color: var(--bs-danger); }
+    .oql-parameter { color: var(--bs-orange); font-weight: 600; }
+    .oql-quoted { color: var(--bs-body-color); text-decoration: underline dotted var(--bs-secondary-color); }
+    .oql-comment { color: var(--bs-secondary-color); font-style: italic; }
+    .oql-operator, .oql-punctuation { color: var(--bs-secondary-color); }
+    .oql-error { text-decoration: underline wavy var(--bs-danger); text-decoration-skip-ink: none; background: var(--bs-danger-bg-subtle); }
+</style>
 {% embed 'page-header.html' with {crumbs: [
     {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
     {label: 'Query'},
@@ -13,8 +44,12 @@
     <input type="hidden" name="action" value="query">
     <input type="hidden" name="storage" value="{{ storage }}">
     <label class="form-label small mb-1" for="q">Query <span class="text-muted">— Ctrl+Enter runs it</span></label>
-    <textarea class="form-control font-monospace" id="q" name="q" rows="6" spellcheck="false" autofocus
-              placeholder="SELECT p.name, c.title AS category, COUNT(*) AS n&#10;FROM Product p JOIN Category c ON c = p.category&#10;GROUP BY p.name, c.title&#10;ORDER BY n DESC LIMIT 20">{{ query }}</textarea>
+    <!-- the query highlighted behind the textarea, whose text is transparent: editing stays that of a textarea -->
+    <div class="oql-editor">
+        <pre class="form-control font-monospace oql-highlighted" id="q-highlighted" aria-hidden="true"></pre>
+        <textarea class="form-control font-monospace" id="q" name="q" rows="6" spellcheck="false" autofocus wrap="off"
+                  placeholder="SELECT p.name, c.title AS category, COUNT(*) AS n&#10;FROM Product p JOIN Category c ON c = p.category&#10;GROUP BY p.name, c.title&#10;ORDER BY n DESC LIMIT 20">{{ query }}</textarea>
+    </div>
     <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
         <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-play-fill"></i> Run</button>
         <div class="form-check mb-0" title="INSERT, UPDATE, DELETE: check and list the objects that would be written, write nothing">
@@ -71,7 +106,7 @@
 </div>
 {% endif %}
 <p class="text-muted small mb-2" id="query-summary">
-    {{ rows|length|number_format(0, '.', ' ') }} row(s), {{ milliseconds|number_format(0) }} ms{% if rows|length > shown %} — showing the first {{ shown }}, use LIMIT{% endif %}
+    {% if truncated %}More than {{ rows|length|number_format(0, '.', ' ') }} row(s), {{ milliseconds|number_format(0) }} ms — showing the first {{ rows|length|number_format(0, '.', ' ') }}, use LIMIT{% else %}{{ rows|length|number_format(0, '.', ' ') }} row(s), {{ milliseconds|number_format(0) }} ms{% if rows|length > shown %} — showing the first {{ shown }}, use LIMIT{% endif %}{% endif %}
 </p>
 {% if columns is not empty %}
 <div class="table-responsive card">
@@ -95,10 +130,30 @@
 {% endif %}
 {% endif %}
 
+<script src="assets/oql-highlight.js"></script>
 <script>
 (() => {
     const form = document.getElementById('query-form');
     const area = document.getElementById('q');
+
+    // syntax highlighting: rendered behind the textarea, scrolled with it; the error of the query run marked until
+    // it is edited
+    const highlighted = document.getElementById('q-highlighted');
+    const ranQuery = area.value;
+    const errorPosition = {{ errorPosition is null ? 'null' : errorPosition }};
+    const render = () => {
+        const errorAt = null !== errorPosition && area.value === ranQuery ? OqlHighlight.indexOfByte(area.value, errorPosition) : null;
+        // a last empty line keeps its height
+        highlighted.innerHTML = OqlHighlight.highlight(area.value, errorAt) + '\n ';
+        highlighted.scrollTop = area.scrollTop;
+        highlighted.scrollLeft = area.scrollLeft;
+    };
+    area.addEventListener('input', render);
+    area.addEventListener('scroll', () => {
+        highlighted.scrollTop = area.scrollTop;
+        highlighted.scrollLeft = area.scrollLeft;
+    });
+    render();
 
     // INSERT, UPDATE, DELETE: asked before, sent by POST (the server runs them from the form only)
     const writing = text => /^(\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(INSERT|UPDATE|DELETE)\b/i.test(text);
@@ -127,6 +182,7 @@
         const name = '`' + button.dataset.class + '`';
         const start = area.selectionStart;
         area.setRangeText(name, start, area.selectionEnd, 'end');
+        area.dispatchEvent(new Event('input'));
         area.focus();
     }));
 
@@ -164,6 +220,7 @@
         button.textContent = entry.replace(/\s+/g, ' ');
         button.addEventListener('click', () => {
             area.value = entry;
+            area.dispatchEvent(new Event('input'));
             area.focus();
         });
         item.appendChild(button);

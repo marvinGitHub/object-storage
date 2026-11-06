@@ -646,9 +646,12 @@ try {
                     if (Oql::writes($query) && 'POST' !== ($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
                         throw new QueryException('INSERT, UPDATE and DELETE run from the form only: check the statement and press Run.');
                     }
-                    $result = (new Oql($storage))->query($query, [], $dryRun);
+                    // indexes find the objects where they can; at most 1,000 rows are kept to show
+                    $result = (new Oql($storage, $searchFor($storage), $uniqueFor($storage)))->query($query, [], $dryRun, 1000);
                 } catch (QueryException $e) {
                     $error = $e->getMessage();
+                    // marked in the query (a byte offset)
+                    $errorPosition = $e->position;
                 } catch (Throwable $e) {
                     $logger->error($e);
                     $error = 'The query failed: ' . $e->getMessage();
@@ -677,6 +680,7 @@ try {
                 'query' => $query,
                 'classnames' => $classnames,
                 'error' => $error,
+                'errorPosition' => $errorPosition ?? null,
                 'columns' => $result?->columns ?? [],
                 // the rows; of a dry run of INSERT, the objects have no UUIDs yet
                 'rows' => null === $result ? null : array_map(
@@ -684,6 +688,7 @@ try {
                     null === $result->statement ? $result->rows : array_values(array_filter($result->rows, static fn(array $row): bool => null !== $row[0]))
                 ),
                 'statement' => $result?->statement,
+                'truncated' => $result?->truncated ?? false,
                 'affected' => $result?->affected() ?? 0,
                 'dryRun' => $dryRun,
                 'milliseconds' => $milliseconds,

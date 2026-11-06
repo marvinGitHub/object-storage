@@ -73,7 +73,7 @@ $unique->list();                 // all indexes, name => Definition
 $unique->getIndexesForClass(Product::class);
 ```
 
-`create()` claims the values of the objects stored before. If some of them share values, the index isn't created — resolve the duplicates first, like with a database. `rebuild()` leaves the claims as they were in that case.
+`create()` claims the values of the objects stored before. If some of them share values, the index isn't created — resolve the duplicates first, like with a database. `rebuild()` leaves the claims as they were in that case. While `create()` or `rebuild()` claims the values, `isComplete($name)` is false (also after an interruption, until the next `rebuild()`): [OQL](query.md) uses only complete indexes to find objects.
 
 A long-running process sees indexes created or dropped by another process after `refresh()`.
 

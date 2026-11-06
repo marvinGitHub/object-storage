@@ -123,11 +123,44 @@ echo "SELECT COUNT(*) FROM Product" | object-storage query --dir ./data
 
 `--param name=value` sets `:name`, `--param value` the next `?`; numbers, `true`, `false` and `null` are taken as such, `"quoted"` as text. `INSERT`, `UPDATE` and `DELETE` print the UUIDs written and their number (`--json`: `{"statement", "dryRun", "affected", "uuids"}`); `--dry-run` writes nothing.
 
-In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: Ctrl+Enter runs a query, the result links UUIDs to the records, errors name their line and column, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE` and `DELETE` ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing.
+In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE` and `DELETE` ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing.
 
-## Performance
+## Performance and memory
 
-A query reads all objects of the classes it names (and the objects its paths lead to, each once per query), as stored. That suits up to some ten thousand objects; for searching many objects by their values, use a [search index](search.md). Grouping and sorting keep the rows in memory.
+**Streaming.** Objects are read one after another and dropped once they've been checked: memory depends on the result, not on the number of objects. `WHERE`, `COUNT(*)` and other aggregates over 100,000 objects run within PHP's default `memory_limit` of 128 MB.
+- `LIMIT` without `ORDER BY` stops reading once it has enough rows.
+- `ORDER BY … LIMIT n` keeps only the first `offset + n` rows while reading (a heap).
+- `GROUP BY` keeps, per group, one row and the running values of its aggregates.
+- Of joined objects and rows, only the properties the query uses are kept.
+- Referenced objects that paths lead to are cached per query, at most 10,000 of them.
+
+What has to stay in memory is the result itself: sorting without `LIMIT`, `DISTINCT`, and the objects on the right side of a `JOIN` (only their used properties). `query(…, maxRows: 1000)` keeps at most 1,000 rows; `$result->truncated` tells whether there were more (the viewer does this).
+
+The caches of the storage are bounded: `ObjectStorage` and configurations of type `memory` keep at most `InMemoryCache::DEFAULT_MAX_ENTRIES` (10,000) objects and metadata, dropping the least recently used (`new InMemoryCache(maxEntries: …)`; without `maxEntries`, unbounded as before).
+
+**Indexes.** Without an index, a query reads all objects of its class (the condition is checked on each). Indexes are used for conditions joined by `AND` at the top level of `WHERE`, so that only the objects they name are read:
+
+| Condition | Index |
+|---|---|
+| `UUID = ?`, `UUID IN (…)` | none needed |
+| `path = 'text'`, `path IN ('text', …)` | a [unique index](unique.md) on exactly this path |
+| the same, on a filterable `string` field | a Loupe [search index](search.md) of the class that is built and has no pending changes, passed as `new Oql($storage, $searchManager)` |
+
+```php
+$oql = new Oql($storage, $searchManager);          // the unique indexes of the storage are found by themselves
+$oql->query("SELECT * FROM User WHERE name = ?", ['Homa']);
+$oql->query("EXPLAIN SELECT * FROM User WHERE name = ?", ['Homa']);
+// source | class | access       | details
+// User   | User  | search index | users: name IN ('Homa'), 1 object(s)
+```
+
+An index is only used when it names *every* object the condition can be true for; the whole condition is still checked on each object it names, so results are the same with or without indexes (`new Oql($storage, useIndexes: false)` to compare). That's why these aren't looked up and read all objects:
+- `OR`, `NOT`, `!=`, `LIKE`, `<`, `>`;
+- number fields;
+- texts that look like numbers (`'12'` equals the number 12 in OQL, the index keeps them apart);
+- search indexes with pending changes, or naming more than 999 objects.
+
+A search index only knows the writes made while its manager was attached (the viewer attaches it). `EXPLAIN SELECT …` returns, per source, how its objects are found. In the viewer, the console uses the search and unique indexes of the storage.
 
 ## Tests
 

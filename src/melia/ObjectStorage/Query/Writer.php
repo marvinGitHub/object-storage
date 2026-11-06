@@ -143,20 +143,20 @@ final class Writer
     private function update(WritePlan $plan, string $class, bool $dryRun): array
     {
         $alias = $plan->source->alias;
-        $rows = $this->executor->matching($plan->source, $plan->where);
 
-        // computed and checked first: an error writes nothing
-        foreach ($rows as $row) {
+        // computed and checked first: an error writes nothing; only the UUIDs are kept, the objects are read again
+        $uuids = [];
+        foreach ($this->executor->matching($plan->source, $plan->where) as $row) {
             $this->updated($plan, $class, $row[$alias]);
+            $uuids[] = $row[$alias]['uuid'];
         }
         if ($dryRun) {
-            return array_map(static fn(array $row): string => $row[$alias]['uuid'], $rows);
+            return $uuids;
         }
 
         $changed = [];
         $lockAdapter = $this->storage->getLockAdapter();
-        foreach ($rows as $row) {
-            $uuid = $row[$alias]['uuid'];
+        foreach ($uuids as $uuid) {
             $lockedHere = false;
             try {
                 if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
@@ -181,7 +181,7 @@ final class Writer
                 $this->storage->writeRaw(new RawObject($uuid, $json, $metadata), true);
                 $changed[] = $uuid;
             } catch (Throwable $e) {
-                throw $this->stopped('updated', $changed, count($rows), $e);
+                throw $this->stopped('updated', $changed, count($uuids), $e);
             } finally {
                 if ($lockedHere && $lockAdapter->isLockedByThisProcess($uuid)) {
                     $lockAdapter->releaseLock($uuid);
@@ -213,15 +213,17 @@ final class Writer
     private function delete(WritePlan $plan, bool $dryRun): array
     {
         $alias = $plan->source->alias;
-        $rows = $this->executor->matching($plan->source, $plan->where);
+        $uuids = [];
+        foreach ($this->executor->matching($plan->source, $plan->where) as $row) {
+            $uuids[] = $row[$alias]['uuid'];
+        }
         if ($dryRun) {
-            return array_map(static fn(array $row): string => $row[$alias]['uuid'], $rows);
+            return $uuids;
         }
 
         $deleted = [];
         $lockAdapter = $this->storage->getLockAdapter();
-        foreach ($rows as $row) {
-            $uuid = $row[$alias]['uuid'];
+        foreach ($uuids as $uuid) {
             $lockedHere = false;
             try {
                 if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
@@ -237,7 +239,7 @@ final class Writer
                 $this->storage->delete($uuid);
                 $deleted[] = $uuid;
             } catch (Throwable $e) {
-                throw $this->stopped('deleted', $deleted, count($rows), $e);
+                throw $this->stopped('deleted', $deleted, count($uuids), $e);
             } finally {
                 if ($lockedHere && $lockAdapter->isLockedByThisProcess($uuid)) {
                     $lockAdapter->releaseLock($uuid);

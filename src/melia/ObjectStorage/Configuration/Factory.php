@@ -77,7 +77,7 @@ final class Factory
         try {
             return match ($settings->type) {
                 CacheSettings::TYPE_NONE => null,
-                CacheSettings::TYPE_MEMORY => new InMemoryCache(),
+                CacheSettings::TYPE_MEMORY => new InMemoryCache(maxEntries: InMemoryCache::DEFAULT_MAX_ENTRIES),
                 CacheSettings::TYPE_APCU => ApcuAdapter::isSupported()
                     ? new Psr16Cache(new ApcuAdapter($namespace, $settings->defaultLifetime))
                     : throw new ConfigurationException('An APCu cache needs ext-apcu, enabled (apc.enable_cli=1 on the command line).'),

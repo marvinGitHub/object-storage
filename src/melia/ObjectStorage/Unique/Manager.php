@@ -81,6 +81,8 @@ final class Manager implements ConstraintInterface
             if ($internal->exists($uuid)) {
                 throw new UniqueIndexAlreadyExistsException(sprintf('A unique index "%s" exists already.', $definition->name));
             }
+            // marked as incomplete until the keys are claimed
+            $internal->store(new Building($definition->name, time()), self::buildingUuid($definition->name));
             // the definition first: objects written meanwhile by this process are checked against it
             $internal->store($definition, $uuid);
             $this->definitions = null;
@@ -92,6 +94,7 @@ final class Manager implements ConstraintInterface
 
         try {
             $this->writeClaims($definition, $this->collectKeys($definition));
+            $this->completed($definition->name);
         } catch (Throwable $e) {
             $this->drop($definition->name);
             throw $e instanceof UniqueIndexException ? $e : new UniqueIndexException(message: sprintf('Unable to create unique index "%s".', $definition->name), previous: $e);
@@ -109,9 +112,26 @@ final class Manager implements ConstraintInterface
     {
         $definition = $this->get($name);
         $keys = $this->collectKeys($definition); // before anything is removed: duplicates leave the claims as they are
+        $this->getInternalStorage()->store(new Building($name, time()), self::buildingUuid($name));
         $this->removeClaims($name);
         $this->writeClaims($definition, $keys);
+        $this->completed($name);
         return count($keys);
+    }
+
+    /**
+     * Whether an index has the keys of all objects stored before it (and since, by attached managers): not while it
+     * is created or rebuilt, nor after that was interrupted (until the next rebuild()). Lookups that must find every
+     * object, like those of queries, rely on it.
+     */
+    public function isComplete(string $name): bool
+    {
+        return $this->has($name) && !$this->getInternalStorage()->exists(self::buildingUuid($name));
+    }
+
+    private function completed(string $name): void
+    {
+        $this->getInternalStorage()->delete(self::buildingUuid($name));
     }
 
     /**
@@ -127,6 +147,9 @@ final class Manager implements ConstraintInterface
         $this->getInternalStorage()->delete(self::definitionUuid($name));
         $this->definitions = null;
         $this->removeClaims($name);
+        if ($this->getInternalStorage()->exists(self::buildingUuid($name))) {
+            $this->completed($name);
+        }
         return true;
     }
 
@@ -397,6 +420,11 @@ final class Manager implements ConstraintInterface
     public static function ownedKeyUuid(string $name, string $owner): string
     {
         return Helper::createFixedUuidV4('melia/object-storage:unique:owned:' . $name . ':' . $owner);
+    }
+
+    private static function buildingUuid(string $name): string
+    {
+        return Helper::createFixedUuidV4('melia/object-storage:unique:building:' . $name);
     }
 
     private static function lockUuid(string $kind, string $subject): string

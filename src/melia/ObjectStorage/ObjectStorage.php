@@ -268,12 +268,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->setStrategy($strategy);
 
         if (null === $cache) {
-            $cache = null === $configuration ? new InMemoryCache() : $factory->createCache($configuration->cache, $this->getStorageDir(), ConfigurationFactory::CACHE_OBJECTS);
+            $cache = null === $configuration ? new InMemoryCache(maxEntries: InMemoryCache::DEFAULT_MAX_ENTRIES) : $factory->createCache($configuration->cache, $this->getStorageDir(), ConfigurationFactory::CACHE_OBJECTS);
         }
         $this->setCache($cache);
 
         if (null === $metadataCache) {
-            $metadataCache = null === $configuration ? new InMemoryCache() : $factory->createCache($configuration->cache, $this->getStorageDir(), ConfigurationFactory::CACHE_METADATA);
+            $metadataCache = null === $configuration ? new InMemoryCache(maxEntries: InMemoryCache::DEFAULT_MAX_ENTRIES) : $factory->createCache($configuration->cache, $this->getStorageDir(), ConfigurationFactory::CACHE_METADATA);
         }
         $this->setMetadataCache($metadataCache);
 

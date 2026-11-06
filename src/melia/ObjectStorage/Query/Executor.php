@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\Query;
 
+use Generator;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
@@ -18,135 +19,187 @@ use melia\ObjectStorage\Query\Ast\Source;
 use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Exception\QueryException;
 use melia\ObjectStorage\Search\DocumentBuilder;
+use melia\ObjectStorage\Search\Index\ManagerInterface;
 use melia\ObjectStorage\Transfer\RawObject;
+use melia\ObjectStorage\Unique\Manager as UniqueManager;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
+use SplHeap;
 use Throwable;
 
 /**
- * Runs a plan on the objects of a storage, as stored (their data, not loaded objects: the classes aren't needed):
- * reads the objects of the sources, joins them (by hashing for equalities, otherwise by trying every pair), filters,
- * groups, computes aggregates, sorts and limits. Rows are the objects of the sources by alias; a path follows
- * references (at most DocumentBuilder::MAX_REFERENCES_PER_PATH), a referenced object that doesn't exist or has
- * expired gives NULL; expired objects aren't read.
+ * Runs a plan on the objects of a storage, as stored (their data, not loaded objects: the classes aren't needed).
+ *
+ * Memory stays bounded by what the result needs, not by the number of objects: the objects of the source are read
+ * one after another and dropped; WHERE filters them as they come; without ORDER BY, reading stops at LIMIT; ORDER BY
+ * with LIMIT keeps only the rows that may be in the result; GROUP BY keeps per group its first row and the running
+ * values of the aggregates, not its rows. What is kept: the joined sources (of their properties only those the query
+ * reads), the groups, the rows of the result, and a bounded number of referenced objects.
+ *
+ * The objects of the source are found by an index where one fits the condition (see Access), otherwise all objects
+ * of the class are read. A path follows references (at most DocumentBuilder::MAX_REFERENCES_PER_PATH), a referenced
+ * object that doesn't exist or has expired gives NULL; expired objects aren't read.
  */
 final class Executor
 {
-    /** @var array<string, ?array{uuid: string, data: array, reserved: string}> objects read, by UUID */
-    private array $objects = [];
+    /** the most referenced objects kept while a query runs, for paths into them */
+    public const int MAX_REFERENCED = 10000;
+
+    /** @var array<string, ?array{uuid: string, data: array, reserved: string}> referenced objects read, by UUID */
+    private array $referenced = [];
 
     /** @var list<string>|null */
     private ?array $classNames = null;
 
     private \Closure $follow;
 
-    public function __construct(private readonly ObjectStorage $storage)
+    private Access $access;
+
+    public function __construct(
+        private readonly ObjectStorage $storage,
+        ?ManagerInterface              $search = null,
+        ?UniqueManager                 $unique = null,
+        bool                           $useIndexes = true,
+    )
     {
+        $this->access = new Access($storage, $useIndexes ? $search : null, $useIndexes ? $unique : null, $useIndexes);
         $this->follow = function (string $uuid): ?array {
-            $object = $this->read($uuid);
+            if (!array_key_exists($uuid, $this->referenced)) {
+                if (count($this->referenced) >= self::MAX_REFERENCED) {
+                    // the older half goes
+                    $this->referenced = array_slice($this->referenced, intdiv(self::MAX_REFERENCED, 2), null, true);
+                }
+                $this->referenced[$uuid] = $this->read($uuid);
+            }
+            $object = $this->referenced[$uuid];
             return null === $object ? null : [$object['data'], $object['reserved']];
         };
     }
 
     /**
+     * @param int|null $maxRows At most this many rows (e.g. to show); the result tells whether there were more.
      * @throws QueryException
      */
-    public function run(Plan $plan): Result
+    public function run(Plan $plan, ?int $maxRows = null): Result
     {
-        $this->objects = [];
+        $this->referenced = [];
+        $keep = self::keysUsed($plan);
+        $rows = $this->rows($plan, $keep);
 
-        $rows = array_map(static fn(array $object): array => [$plan->from->alias => $object], $this->scan($plan->from));
-        foreach ($plan->joins as $join) {
-            $rows = $this->join($rows, $join);
+        // at most offset + limit rows are needed, one more to tell whether the result has more than $maxRows
+        $limit = $plan->limit;
+        if (null !== $maxRows) {
+            $limit = min($limit ?? PHP_INT_MAX, $maxRows + 1);
         }
-        if (null !== $plan->where) {
-            $rows = array_values(array_filter($rows, fn(array $row): bool => true === Values::truth($this->evaluate($plan->where, $row))));
-        }
+        $needed = null === $limit ? null : $plan->offset + $limit;
 
-        $items = $this->expandStars($plan, $rows);
-        $names = array_map(static fn(array $item): string => $item['name'], $items);
-
-        // what each row of the result is made of: a row, or a group of rows
-        if ($plan->grouped) {
-            $contexts = [];
-            foreach ($this->groups($plan, $rows) as $group) {
-                $context = [$group[0] ?? $this->emptyRow($plan), $group];
-                if (null === $plan->having || true === Values::truth($this->evaluate($plan->having, ...$context))) {
-                    $contexts[] = $context;
-                }
-            }
-        } else {
-            $contexts = array_map(static fn(array $row): array => [$row, null], $rows);
-        }
-
-        $results = [];
-        foreach ($contexts as [$row, $group]) {
-            $values = array_map(fn(array $item): mixed => $this->evaluate($item['expression'], $row, $group), $items);
-            $keys = array_map(fn(array $order): mixed => $order[0] instanceof OutputColumn
-                ? $values[$order[0]->index]
-                : $this->evaluate($order[0], $row, $group), $plan->orderBy);
-            $results[] = [$values, $keys];
-        }
-
-        if ($plan->distinct) {
-            $seen = [];
-            $results = array_values(array_filter($results, static function (array $result) use (&$seen): bool {
-                $key = implode("\0", array_map([Values::class, 'key'], $result[0]));
-                if (isset($seen[$key])) {
-                    return false;
-                }
-                return $seen[$key] = true;
-            }));
-        }
+        $results = $plan->grouped
+            ? $this->grouped($plan, $rows, $keep)
+            : $this->ungrouped($plan, $rows, $needed);
 
         if ([] !== $plan->orderBy) {
-            // stable: equal rows keep their order
-            $positions = array_keys($results);
-            usort($positions, static function (int $a, int $b) use ($results, $plan): int {
-                foreach ($plan->orderBy as $i => [, $descending]) {
-                    $order = Values::sortOrder($results[$a][1][$i], $results[$b][1][$i]);
-                    if (0 !== $order) {
-                        return $descending ? -$order : $order;
-                    }
-                }
-                return $a <=> $b;
-            });
-            $results = array_map(static fn(int $position): array => $results[$position], $positions);
+            usort($results, fn(array $a, array $b): int => $this->compareResults($plan, $a, $b));
+        }
+        $results = array_slice($results, $plan->offset, $limit);
+        $truncated = null !== $maxRows && count($results) > $maxRows;
+        if ($truncated) {
+            $results = array_slice($results, 0, $maxRows);
         }
 
-        $results = array_slice($results, $plan->offset, $plan->limit);
-        return new Result($names, array_map(static fn(array $result): array => $result[0], $results));
+        // * and alias.*: the properties of the objects of the result, in the order they come first
+        [$names, $values] = $this->project($plan, $results);
+        return new Result($names, $values, null, false, $truncated);
     }
 
-    // ---- reading ----
+    /**
+     * How the objects of the source of a plan are found: [source, access, details], e.g. ['p', 'search index', …].
+     */
+    public function explain(Plan $plan): Result
+    {
+        $rows = [];
+        $access = $this->access->choose($plan->from, $this->classOf($plan->from), $plan->where, true);
+        $rows[] = [$plan->from->alias, $this->classOf($plan->from), $access->kind, $access->details];
+        foreach ($plan->joins as $join) {
+            $rows[] = [$join['source']->alias, $this->classOf($join['source']), 'all objects (joined)', null === $join['hash']
+                ? 'every pair is tried'
+                : 'by hashing: ' . Printer::print($join['hash'][1]) . ' = ' . Printer::print($join['hash'][0])];
+        }
+        return new Result(['source', 'class', 'access', 'details'], $rows);
+    }
+
+    // ---- rows ----
 
     /**
-     * @return list<array{uuid: string, data: array, reserved: string}>
+     * The rows of a plan, one after another: the objects of the source (by an index or all), joined, filtered.
+     *
+     * @param array<string, ?array<string, true>> $keep The properties to keep per alias of joined objects (null: all).
+     * @return Generator<array<string, ?array>>
      */
-    private function scan(Source $source): array
+    private function rows(Plan $plan, array $keep): Generator
     {
-        $objects = [];
-        foreach ($this->storage->list($this->classOf($source)) as $uuid) {
-            $object = $this->read((string)$uuid);
-            if (null !== $object) {
-                $objects[] = $object;
+        $rows = $this->objectsOf($plan->from, $plan->where);
+        $rows = (static function () use ($rows, $plan): Generator {
+            foreach ($rows as $object) {
+                yield [$plan->from->alias => $object];
+            }
+        })();
+        foreach ($plan->joins as $join) {
+            $alias = $join['source']->alias;
+            $rows = $this->join($rows, $join, array_key_exists($alias, $keep) ? $keep[$alias] : []);
+        }
+        foreach ($rows as $row) {
+            if (null === $plan->where || true === Values::truth($this->evaluate($plan->where, $row))) {
+                yield $row;
             }
         }
-        return $objects;
     }
 
     /**
-     * An object as stored; null if it doesn't exist, has expired or can't be read.
+     * The objects of a source, one after another: those an index finds for the condition (checked by the caller
+     * anyway), or all of the class.
+     *
+     * @return Generator<array{uuid: string, data: array, reserved: string}>
+     */
+    private function objectsOf(Source $source, ?Expr $where): Generator
+    {
+        $class = $this->classOf($source);
+        $access = $this->access->choose($source, $class, $where);
+        $uuids = $access->uuids ?? $this->storage->list($class);
+        foreach ($uuids as $uuid) {
+            $object = $this->read((string)$uuid);
+            // an index may name an object of another class (a unique index of a parent class, a UUID)
+            if (null !== $object && (null === $access->uuids || $this->storage->getClassName($object['uuid']) === $class)) {
+                yield $object;
+            }
+        }
+    }
+
+    /**
+     * The rows of the objects of a source a condition is true for, one after another (for UPDATE and DELETE).
+     *
+     * @return Generator<array<string, array>>
+     */
+    public function matching(Source $source, ?Expr $where): Generator
+    {
+        $this->referenced = [];
+        foreach ($this->objectsOf($source, $where) as $object) {
+            $row = [$source->alias => $object];
+            if (null === $where || true === Values::truth($this->evaluate($where, $row))) {
+                yield $row;
+            }
+        }
+    }
+
+    /**
+     * An object as stored; null if it doesn't exist, has expired or can't be read. Not kept: reading many objects
+     * leaves nothing behind (the caches of the storage are bounded too).
      */
     private function read(string $uuid): ?array
     {
-        if (!array_key_exists($uuid, $this->objects)) {
-            try {
-                $this->objects[$uuid] = self::objectOf($this->storage->readRaw($uuid));
-            } catch (Throwable) {
-                $this->objects[$uuid] = null;
-            }
+        try {
+            return self::objectOf($this->storage->readRaw($uuid));
+        } catch (Throwable) {
+            return null;
         }
-        return $this->objects[$uuid];
     }
 
     /**
@@ -158,18 +211,6 @@ final class Executor
     {
         $data = $raw->isExpired() ? null : json_decode($raw->data, true);
         return is_array($data) ? ['uuid' => $raw->uuid, 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName()] : null;
-    }
-
-    /**
-     * The rows of the objects of a source a condition is true for.
-     *
-     * @return list<array<string, array>>
-     */
-    public function matching(Source $source, ?Expr $where): array
-    {
-        $this->objects = [];
-        $rows = array_map(static fn(array $object): array => [$source->alias => $object], $this->scan($source));
-        return null === $where ? $rows : array_values(array_filter($rows, fn(array $row): bool => true === Values::truth($this->evaluate($where, $row))));
     }
 
     /**
@@ -196,31 +237,87 @@ final class Executor
         throw new QueryException(sprintf('Unknown class "%s": no objects of it are stored', $name), $source->position);
     }
 
-    // ---- joining and grouping ----
+    // ---- what is kept ----
 
     /**
-     * @param list<array<string, ?array>> $rows
-     * @param array{type: string, source: Source, on: Expr, hash: ?array{0: Expr, 1: Expr}} $join
-     * @return list<array<string, ?array>>
+     * The properties a plan reads of each alias: the first names of its paths; null for all (alias.*, *).
+     *
+     * @return array<string, ?array<string, true>>
      */
-    private function join(array $rows, array $join): array
+    private static function keysUsed(Plan $plan): array
+    {
+        $keys = array_fill_keys($plan->aliases(), []);
+        $collect = static function (?Expr $expression) use (&$collect, &$keys): void {
+            if (null === $expression) {
+                return;
+            }
+            if ($expression instanceof BoundColumn && [] !== $expression->path && is_array($keys[$expression->alias] ?? null)) {
+                $keys[$expression->alias][$expression->path[0]] = true;
+            }
+            foreach ($expression->children() as $child) {
+                $collect($child);
+            }
+        };
+        foreach ($plan->items as $item) {
+            if (null === $item['expression']) {
+                foreach ('*' === $item['starOf'] ? $plan->aliases() : [$item['starOf']] as $alias) {
+                    $keys[$alias] = null;
+                }
+            }
+            $collect($item['expression']);
+        }
+        foreach ($plan->joins as $join) {
+            $collect($join['on']);
+        }
+        foreach ([$plan->where, $plan->having, ...$plan->groupBy, ...array_column($plan->orderBy, 0)] as $expression) {
+            $collect($expression);
+        }
+        return $keys;
+    }
+
+    /**
+     * An object with only the properties a query reads (references among them still lead to their objects).
+     *
+     * @param ?array<string, true> $keys null: all
+     */
+    private static function stripped(?array $object, ?array $keys): ?array
+    {
+        if (null === $object || null === $keys) {
+            return $object;
+        }
+        $object['data'] = array_intersect_key($object['data'], $keys);
+        return $object;
+    }
+
+    // ---- joining ----
+
+    /**
+     * Joins the rows with the objects of a source, which are kept (only the properties the query reads): by
+     * hashing for an equality of ON, otherwise trying every pair.
+     *
+     * @param iterable<array<string, ?array>> $rows
+     * @param array{type: string, source: Source, on: Expr, hash: ?array{0: Expr, 1: Expr}} $join
+     * @param ?array<string, true> $keep
+     * @return Generator<array<string, ?array>>
+     */
+    private function join(iterable $rows, array $join, ?array $keep): Generator
     {
         $alias = $join['source']->alias;
-        $objects = $this->scan($join['source']);
-
-        $buckets = null;
-        if (null !== $join['hash']) {
+        $objects = [];
+        $buckets = null === $join['hash'] ? null : [];
+        foreach ($this->objectsOf($join['source'], null) as $object) {
+            $object = self::stripped($object, $keep);
+            if (null === $buckets) {
+                $objects[] = $object;
+                continue;
+            }
             // the joined objects by the value they are compared with; NULL and arrays never equal anything
-            $buckets = [];
-            foreach ($objects as $object) {
-                $value = Values::normalize($this->evaluate($join['hash'][1], [$alias => $object]));
-                if (null !== $value && !is_array($value)) {
-                    $buckets[Values::equalityKey($value)][] = $object;
-                }
+            $value = Values::normalize($this->evaluate($join['hash'][1], [$alias => $object]));
+            if (null !== $value && !is_array($value)) {
+                $buckets[Values::equalityKey($value)][] = $object;
             }
         }
 
-        $joined = [];
         foreach ($rows as $row) {
             if (null === $buckets) {
                 $candidates = $objects;
@@ -232,77 +329,212 @@ final class Executor
             foreach ($candidates as $object) {
                 $candidate = $row + [$alias => $object];
                 if (true === Values::truth($this->evaluate($join['on'], $candidate))) {
-                    $joined[] = $candidate;
                     $matched = true;
+                    yield $candidate;
                 }
             }
             if (!$matched && Join::LEFT === $join['type']) {
-                $joined[] = $row + [$alias => null];
+                yield $row + [$alias => null];
             }
         }
-        return $joined;
+    }
+
+    // ---- results: [values of the selection, values to sort by, objects for *, position] ----
+
+    /**
+     * The results of rows without grouping: all of them, or with LIMIT and without ORDER BY and DISTINCT only the
+     * first needed; with ORDER BY and LIMIT only the needed ones that sort first.
+     */
+    private function ungrouped(Plan $plan, iterable $rows, ?int $needed): array
+    {
+        $heap = null;
+        if (null !== $needed && [] !== $plan->orderBy) {
+            // the needed rows that sort first: the greatest is dropped when there are more
+            $compare = fn(array $a, array $b): int => $this->compareResults($plan, $a, $b);
+            $heap = new class($compare) extends SplHeap {
+                public function __construct(private readonly \Closure $compare)
+                {
+                }
+
+                protected function compare(mixed $value1, mixed $value2): int
+                {
+                    return ($this->compare)($value1, $value2);
+                }
+            };
+        }
+
+        $results = [];
+        $seen = [];
+        $position = 0;
+        if (0 === $needed) {
+            return [];
+        }
+        foreach ($rows as $row) {
+            $result = $this->result($plan, $row, null, $position++);
+            if ($plan->distinct) {
+                $key = implode("\0", array_map([Values::class, 'key'], $result[0])) . "\0" . json_encode($result[2]);
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+            }
+            if (null !== $heap) {
+                $heap->insert($result);
+                if ($heap->count() > $needed) {
+                    $heap->extract();
+                }
+                continue;
+            }
+            $results[] = $result;
+            if (null !== $needed && [] === $plan->orderBy && count($results) >= $needed) {
+                break; // enough
+            }
+        }
+        return null === $heap ? $results : iterator_to_array($heap, false);
     }
 
     /**
-     * @return list<list<array<string, ?array>>> the rows by the values of GROUP BY, in the order they come first;
-     *         without GROUP BY, all rows in one group (also none)
+     * The results of groups: per group (in the order the groups come first) its first row and the running values
+     * of its aggregates, not its rows. Without GROUP BY, one group, also of no rows.
      */
-    private function groups(Plan $plan, array $rows): array
+    private function grouped(Plan $plan, iterable $rows, array $keep): array
     {
-        if ([] === $plan->groupBy) {
-            return [$rows];
+        $aggregates = [];
+        $collect = static function (?Expr $expression) use (&$collect, &$aggregates): void {
+            if (null === $expression) {
+                return;
+            }
+            if ($expression instanceof FunctionCall && $expression->isAggregate()) {
+                $aggregates[spl_object_id($expression)] = $expression;
+                return;
+            }
+            foreach ($expression->children() as $child) {
+                $collect($child);
+            }
+        };
+        foreach ([...array_column($plan->items, 'expression'), $plan->having, ...array_column($plan->orderBy, 0)] as $expression) {
+            $collect($expression);
         }
+
         $groups = [];
         foreach ($rows as $row) {
             $key = implode("\0", array_map(fn(Expr $expression): string => Values::key($this->evaluate($expression, $row)), $plan->groupBy));
-            $groups[$key][] = $row;
+            if (!isset($groups[$key])) {
+                $first = [];
+                foreach ($row as $alias => $object) {
+                    $first[$alias] = self::stripped($object, array_key_exists($alias, $keep) ? $keep[$alias] : []);
+                }
+                $groups[$key] = ['row' => $first, 'states' => array_map(static fn() => self::newState(), $aggregates)];
+            }
+            foreach ($aggregates as $id => $aggregate) {
+                $this->accumulate($aggregate, $groups[$key]['states'][$id], $row);
+            }
         }
-        return array_values($groups);
-    }
+        if ([] === $plan->groupBy && [] === $groups) {
+            $groups[] = ['row' => array_fill_keys($plan->aliases(), null), 'states' => array_map(static fn() => self::newState(), $aggregates)];
+        }
 
-    /** a row of no objects: for aggregates over no rows */
-    private function emptyRow(Plan $plan): array
-    {
-        return array_fill_keys($plan->aliases(), null);
+        $results = [];
+        $position = 0;
+        foreach ($groups as $group) {
+            if (null === $plan->having || true === Values::truth($this->evaluate($plan->having, $group['row'], $group['states']))) {
+                $results[] = $this->result($plan, $group['row'], $group['states'], $position++);
+            }
+        }
+        return $results;
     }
 
     /**
-     * * and alias.*: the properties of the objects of the rows, in the order they come first.
-     *
-     * @return list<array{name: string, expression: Expr}>
+     * The result of a row or group: the values of the selection (without *), the values to sort by, the objects
+     * of the aliases of * and alias.*, the position (equal rows keep their order).
      */
-    private function expandStars(Plan $plan, array $rows): array
+    private function result(Plan $plan, array $row, ?array $states, int $position): array
+    {
+        $values = [];
+        $stars = [];
+        foreach ($plan->items as $i => $item) {
+            if (null === $item['expression']) {
+                foreach ('*' === $item['starOf'] ? $plan->aliases() : [$item['starOf']] as $alias) {
+                    $stars[$alias] = $row[$alias]['data'] ?? null;
+                }
+                continue;
+            }
+            $values[$i] = $this->evaluate($item['expression'], $row, $states);
+        }
+        $keys = array_map(fn(array $order): mixed => $order[0] instanceof OutputColumn
+            ? $values[$order[0]->index] ?? null
+            : $this->evaluate($order[0], $row, $states), $plan->orderBy);
+        // the references of * are read with the row
+        foreach ($stars as $alias => $data) {
+            if (null !== $data) {
+                $stars[$alias] = ['data' => $data, 'reserved' => $row[$alias]['reserved'], 'uuid' => $row[$alias]['uuid']];
+            }
+        }
+        return [$values, $keys, $stars, $position];
+    }
+
+    private function compareResults(Plan $plan, array $a, array $b): int
+    {
+        foreach ($plan->orderBy as $i => [, $descending]) {
+            $order = Values::sortOrder($a[1][$i], $b[1][$i]);
+            if (0 !== $order) {
+                return $descending ? -$order : $order;
+            }
+        }
+        return $a[3] <=> $b[3];
+    }
+
+    /**
+     * The names and rows of the result; * and alias.* as the properties of the objects of the result, in the order
+     * they come first.
+     *
+     * @return array{0: list<string>, 1: list<list<mixed>>}
+     */
+    private function project(Plan $plan, array $results): array
     {
         $aliases = $plan->aliases();
-        $items = [];
-        foreach ($plan->items as $item) {
+        $columns = []; // [name, item index, alias or null, property or null]
+        foreach ($plan->items as $i => $item) {
             if (null !== $item['expression']) {
-                $items[] = $item;
+                $columns[] = [$item['name'], $i, null, null];
                 continue;
             }
             foreach ('*' === $item['starOf'] ? $aliases : [$item['starOf']] as $alias) {
                 $properties = [];
-                foreach ($rows as $row) {
-                    foreach (array_keys($row[$alias]['data'] ?? []) as $property) {
+                foreach ($results as $result) {
+                    foreach (array_keys($result[2][$alias]['data'] ?? []) as $property) {
                         $properties[(string)$property] = true;
                     }
                 }
                 foreach (array_keys($properties) as $property) {
-                    $items[] = [
-                        'name' => 1 === count($aliases) ? (string)$property : $alias . '.' . $property,
-                        'expression' => new BoundColumn($alias, [(string)$property]),
-                    ];
+                    $columns[] = [1 === count($aliases) ? (string)$property : $alias . '.' . $property, $i, $alias, (string)$property];
                 }
             }
         }
-        return $items;
+
+        $rows = [];
+        foreach ($results as $result) {
+            $row = [];
+            foreach ($columns as [, $i, $alias, $property]) {
+                if (null === $alias) {
+                    $row[] = $result[0][$i];
+                    continue;
+                }
+                $object = $result[2][$alias] ?? null;
+                $row[] = null === $object || !array_key_exists($property, $object['data'])
+                    ? null
+                    : DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow);
+            }
+            $rows[] = $row;
+        }
+        return [array_column($columns, 0), $rows];
     }
 
     // ---- expressions ----
 
     /**
-     * The value of an expression for a row; for a group of rows (grouped queries), aggregates are computed over the
-     * group and columns are read from its first row.
+     * The value of an expression for a row; for a group (grouped queries), $group holds the running values of its
+     * aggregates (by the id of the aggregate) and the row is its first.
      */
     public function evaluate(Expr $expression, array $row, ?array $group = null): mixed
     {
@@ -476,60 +708,66 @@ final class Executor
         throw new QueryException('Unknown function ' . $name);
     }
 
+    /** the running values of an aggregate of a group */
+    private static function newState(): array
+    {
+        return ['count' => 0, 'sum' => 0, 'value' => null, 'seen' => []];
+    }
+
     /**
-     * COUNT, SUM, AVG, MIN, MAX over a group: NULLs aren't counted; SUM of integers is an integer, AVG a float;
-     * SUM, AVG, MIN and MAX of no values are NULL.
+     * Adds a row of a group to the running values of an aggregate: NULLs aren't counted; with DISTINCT, a value
+     * only once.
      */
-    private function aggregate(FunctionCall $call, array $rows): mixed
+    private function accumulate(FunctionCall $call, array &$state, array $row): void
     {
         if ($call->star) {
-            return count($rows);
+            $state['count']++;
+            return;
         }
-        $values = [];
-        $seen = [];
-        foreach ($rows as $row) {
-            $value = $this->evaluate($call->arguments[0], $row);
-            if (null === $value) {
-                continue;
-            }
-            if ($call->distinct) {
-                $key = Values::key($value);
-                if (isset($seen[$key])) {
-                    continue;
-                }
-                $seen[$key] = true;
-            }
-            $values[] = $value;
+        $value = $this->evaluate($call->arguments[0], $row);
+        if (null === $value) {
+            return;
         }
-
+        if ($call->distinct) {
+            $key = Values::key($value);
+            if (isset($state['seen'][$key])) {
+                return;
+            }
+            $state['seen'][$key] = true;
+        }
+        $state['count']++;
         switch ($call->name) {
-            case 'COUNT':
-                return count($values);
             case 'SUM':
             case 'AVG':
-                if ([] === $values) {
-                    return null;
-                }
-                $sum = 0;
-                foreach ($values as $value) {
-                    $sum += Values::number($value) ?? 0;
-                }
-                return 'SUM' === $call->name ? $sum : (float)$sum / count($values);
+                $state['sum'] += Values::number($value) ?? 0;
+                break;
             case 'MIN':
             case 'MAX':
-                $result = null;
-                foreach ($values as $value) {
-                    if (null === $result) {
-                        $result = $value;
-                        continue;
-                    }
-                    $order = Values::sortOrder($value, $result);
-                    if (('MIN' === $call->name && $order < 0) || ('MAX' === $call->name && $order > 0)) {
-                        $result = $value;
-                    }
+                if (null === $state['value']) {
+                    $state['value'] = $value;
+                    break;
                 }
-                return $result;
+                $order = Values::sortOrder($value, $state['value']);
+                if (('MIN' === $call->name && $order < 0) || ('MAX' === $call->name && $order > 0)) {
+                    $state['value'] = $value;
+                }
+                break;
         }
-        throw new QueryException('Unknown aggregate ' . $call->name);
+    }
+
+    /**
+     * COUNT, SUM, AVG, MIN, MAX of a group, from their running values: SUM of integers is an integer, AVG a float;
+     * SUM, AVG, MIN and MAX of no values are NULL.
+     */
+    private function aggregate(FunctionCall $call, array $states): mixed
+    {
+        $state = $states[spl_object_id($call)] ?? self::newState();
+        return match ($call->name) {
+            'COUNT' => $state['count'],
+            'SUM' => 0 === $state['count'] ? null : $state['sum'],
+            'AVG' => 0 === $state['count'] ? null : (float)$state['sum'] / $state['count'],
+            'MIN', 'MAX' => $state['value'],
+            default => throw new QueryException('Unknown aggregate ' . $call->name),
+        };
     }
 }
