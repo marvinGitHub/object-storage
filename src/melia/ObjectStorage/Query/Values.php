@@ -8,6 +8,8 @@ namespace melia\ObjectStorage\Query;
  * and numbers sort before strings. A number and a string that is a number ('97.65') are compared as numbers, as in
  * MySQL: objects have no schema, a property may hold numbers as text. Lists and objects (arrays) can't be compared,
  * only sorted (after strings).
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Values
 {

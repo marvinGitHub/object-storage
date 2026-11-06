@@ -2,7 +2,11 @@
 
 namespace melia\ObjectStorage\Query\Ast;
 
-/** x [NOT] IN (a, b, ...) */
+/**
+ * x [NOT] IN (a, b, ...)
+ *
+ * @internal Not part of the public API; may change in any release.
+ */
 final readonly class InList implements Expr
 {
     /**

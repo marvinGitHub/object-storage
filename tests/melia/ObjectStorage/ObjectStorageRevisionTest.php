@@ -104,7 +104,7 @@ class ObjectStorageRevisionTest extends TestCase
 
         $this->assertSame(0, $this->storage->getRevision($uuid));
 
-        $this->storage->getStrategy()->enableOptimisticLocking();
+        $this->strategy()->enableOptimisticLocking();
         $loaded = $this->storage->load($uuid);
         $loaded->value = 2;
         $this->storage->store($loaded);
@@ -133,7 +133,7 @@ class ObjectStorageRevisionTest extends TestCase
 
     public function testConcurrentUpdateFailsWithOptimisticLocking(): void
     {
-        $this->storage->getStrategy()->enableOptimisticLocking();
+        $this->strategy()->enableOptimisticLocking();
 
         $uuid = $this->storage->store(new ChildObject('Child', 1));
         $other = $this->createSecondStorage();
@@ -168,7 +168,7 @@ class ObjectStorageRevisionTest extends TestCase
 
     public function testStoreSucceedsAfterReloading(): void
     {
-        $this->storage->getStrategy()->enableOptimisticLocking();
+        $this->strategy()->enableOptimisticLocking();
 
         $uuid = $this->storage->store(new ChildObject('Child', 1));
         $other = $this->createSecondStorage();
@@ -188,7 +188,7 @@ class ObjectStorageRevisionTest extends TestCase
 
     public function testOwnSuccessiveStoresDontConflict(): void
     {
-        $this->storage->getStrategy()->enableOptimisticLocking();
+        $this->strategy()->enableOptimisticLocking();
 
         $object = new ChildObject('Child', 1);
         $uuid = $this->storage->store($object);
@@ -203,7 +203,7 @@ class ObjectStorageRevisionTest extends TestCase
 
     public function testObjectDeletedInTheMeantimeIsCreatedAgain(): void
     {
-        $this->storage->getStrategy()->enableOptimisticLocking();
+        $this->strategy()->enableOptimisticLocking();
 
         $uuid = $this->storage->store(new ChildObject('Child', 1));
         $other = $this->createSecondStorage();
@@ -219,8 +219,8 @@ class ObjectStorageRevisionTest extends TestCase
 
     public function testConflictOfReferencedObjectIsReported(): void
     {
-        $this->storage->getStrategy()->enableOptimisticLocking();
-        $this->storage->getStrategy()->setPolicyChildPersistence(\melia\ObjectStorage\Strategy\Policy\ChildPersistence::ALWAYS);
+        $this->strategy()->enableOptimisticLocking();
+        $this->strategy()->setPolicyChildPersistence(\melia\ObjectStorage\Strategy\Policy\ChildPersistence::ALWAYS);
 
         $child = new ChildObject('Child', 1);
         $parent = new ParentObject('Parent', $child);

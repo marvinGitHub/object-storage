@@ -29,6 +29,8 @@ use Throwable;
  *   have changed it), then written. If writing an object fails (e.g. a unique value), the objects written before
  *   stay written, and the error says how many.
  * - A dry run computes and checks everything and returns the objects that would be written, writing nothing.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Writer
 {

@@ -1,0 +1,2 @@
+# the storage written by 0.0.10 is compared by checksums: keep its files byte for byte
+tests/fixtures/upgrade/storage-0.0.10/** -text

@@ -8,6 +8,8 @@ use Throwable;
 /**
  * A query that can't be run: invalid syntax, an unknown class or alias, a column outside of GROUP BY, …
  * The position is the offset in the query (bytes), if known.
+ *
+ * @experimental OQL is experimental in 1.x: its syntax, semantics and this API may change in a minor release (see docs/query.md).
  */
 class QueryException extends RuntimeException
 {

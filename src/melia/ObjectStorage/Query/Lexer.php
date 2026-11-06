@@ -8,6 +8,8 @@ use melia\ObjectStorage\Query\Exception\QueryException;
  * Splits a query into tokens: keywords (case-insensitive), identifiers (letters, digits, _ and \ for class names;
  * `quoted` or "quoted" for any other), strings ('…', '' for a quote), numbers, parameters (? and :name), operators
  * and punctuation. Comments (-- to the end of the line, and block comments) and whitespace are skipped.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Lexer
 {

@@ -4,6 +4,7 @@ namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Strategy\Standard;
 use PHPUnit\Framework\MockObject\MockObject;
 
 class TestCase extends \PHPUnit\Framework\TestCase
@@ -75,6 +76,18 @@ class TestCase extends \PHPUnit\Framework\TestCase
             mkdir(dirname($filename), 0777, true);
         }
         file_put_contents($filename, $content);
+    }
+
+    /**
+     * The strategy of the storage, typed as the default Standard strategy, whose setters aren't part of
+     * StrategyInterface.
+     */
+    protected function strategy(?ObjectStorage $storage = null): Standard
+    {
+        $strategy = ($storage ?? $this->storage)->getStrategy();
+        $this->assertInstanceOf(Standard::class, $strategy);
+
+        return $strategy;
     }
 
     protected function createStorage(): ObjectStorage

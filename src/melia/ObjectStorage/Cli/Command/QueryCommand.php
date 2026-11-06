@@ -27,7 +27,7 @@ final class QueryCommand extends BaseCommand
     {
         parent::configure();
         $this
-            ->setDescription('Run an OQL query (SELECT … FROM Class …) and print the result')
+            ->setDescription('Run an OQL query (SELECT … FROM Class …) and print the result [experimental]')
             ->addArgument('query', InputArgument::OPTIONAL, 'The query; read from --file or STDIN if missing')
             ->addOption('file', 'f', InputOption::VALUE_REQUIRED, 'Read the query from a file')
             ->addOption('param', 'p', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'A parameter: name=value for :name, value for ? (in order); numbers, true, false and null as such, "quoted" as text')

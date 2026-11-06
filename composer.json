@@ -1,6 +1,6 @@
 {
   "name": "melia/object-storage",
-  "description": "Lightweight PHP file-based object store with UUID persistence, lazy-loading references, in-memory cache, file locking, safe mode, and a simple viewer UI.",
+  "description": "File-based object store for PHP: whole object graphs by UUID in plain files, lazy loading, crash-safe writes, locking, unique and search indexes, an SQL-like query language (OQL, experimental), a CLI and a viewer.",
   "license": "Apache-2.0",
   "type": "library",
   "keywords": [
@@ -28,6 +28,11 @@
     "data-store",
     "snapshot",
     "event-driven",
+    "index",
+    "unique-index",
+    "full-text-search",
+    "query-language",
+    "oql",
     "php8"
   ],
   "authors": [
@@ -53,7 +58,7 @@
     ],
     "analyze": [
       "@composer install",
-      "vendor/bin/phpstan analyse --level 3 src tests"
+      "vendor/bin/phpstan analyse"
     ],
     "profile": [
       "@composer install",
@@ -69,7 +74,7 @@
     ]
   },
   "require": {
-    "php": ">=8.5",
+    "php": "^8.5",
     "ext-json": "*",
     "symfony/console": "^8.0",
     "psr/simple-cache": "^3.0",

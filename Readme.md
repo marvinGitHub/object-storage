@@ -19,7 +19,7 @@ ObjectStorage is a file-based object store for PHP. It persists your objects inc
 - **Tools, CLI applications and background jobs** that need durable state without running a database server.
 - **Document-like data** (configurations, drafts, workflow state) that is mostly loaded and stored as a whole.
 
-It is not a replacement for a database when you need indexes, joins or ad-hoc queries over large amounts of data: queries are PHP callbacks that scan the stored objects of a class.
+It is not a replacement for a database server when you run large ad-hoc queries over many objects: unique and search indexes speed up lookups, and [OQL](docs/query.md) (experimental) answers ad-hoc questions with joins and aggregates. Queries that no index serves scan the stored objects of a class.
 
 ## Features
 
@@ -28,6 +28,8 @@ It is not a replacement for a database when you need indexes, joins or ad-hoc qu
 | **Object graphs** | Stores an object and everything it references; every object gets its own UUID, shared and circular references are kept. |
 | **Lazy loading** | Referenced objects are loaded on first access and then replace their placeholder transparently. |
 | **Querying** | List and count objects per class, filter them with PHP callbacks, refine results step by step. |
+| **Indexes** | Unique indexes (like a UNIQUE constraint) and search indexes with full text, filters, facets and joins (Loupe included). |
+| **OQL** *(experimental)* | An SQL-like query language with joins, paths into referenced objects, `GROUP BY` and `INSERT`/`UPDATE`/`DELETE`, in code, the CLI and the viewer. |
 | **Lifetime** | Optional time-to-live per object, e.g. for caches. |
 | **Concurrency** | Shared and exclusive locks per object, based on [symfony/lock](https://symfony.com/doc/current/components/lock.html) (files, Redis, Memcached, databases, …). |
 | **Durability** | Crash-safe writes with checksums; interrupted writes are recovered, corrupted data puts the storage into a read-only safe mode. |
@@ -127,6 +129,16 @@ Complete scenarios, each runnable as is:
 - [Coming from Doctrine ORM](docs/examples/coming-from-doctrine.md) — a shop with entities, repositories, cascades, unique keys, queries and full-text search, compared with Doctrine
 - [Renaming classes](docs/examples/renaming-classes.md) — keeping stored data loadable after a refactoring
 
+## Versioning and stability
+
+ObjectStorage follows [Semantic Versioning](https://semver.org) from 1.0 on:
+
+- **Covered by the backward compatibility promise:** public classes, interfaces and methods, the protected methods of `ObjectStorage` and of classes meant to be extended (e.g. `Strategy\Standard`), the CLI commands and their options, and the storage format on disk. A breaking change of these only comes with a new major version.
+- **Not covered:** everything marked `@internal` (e.g. the OQL parser, planner and executor, `Query\Ast`), the web viewer, and the files under `tests/` and `profiling/`. These may change in any release.
+- **Experimental:** [OQL](docs/query.md) (`melia\ObjectStorage\Query\Oql` and the classes it returns, the CLI command `query`, the query console of the viewer) is marked `@experimental`. Its syntax, semantics and API may still change in a minor release; such changes are listed in the Changelog under **Breaking (experimental)**.
+- **Interfaces you implement** (`StrategyInterface`, `WriterInterface`, `File\IO\AdapterInterface`, `LockAdapterInterface`, search engine interfaces) may only get new methods in a major version.
+- **Storage format:** data written by a 1.x version can be read by every later 1.x version. Where a release changes the format, older data is still read or a migration is shipped (see [Upgrading](UPGRADE.md)). This includes the data of unique and search indexes and of maintenance tasks, which is stored as objects in internal storages: the class names and properties of these records (e.g. `Unique\Claim`, `Search\Index\Definition`, `Util\UuidTrie`, `Util\Maintenance\TaskState`) are part of the format, even where the classes are `@internal`. Search indexes can always be rebuilt from the stored objects.
+
 ## Changelog and license
 
-Changes are documented in the [Changelog](Changelog.md). The library is licensed under the Apache License 2.0.
+Changes are documented in the [Changelog](Changelog.md), upgrade steps in [UPGRADE.md](UPGRADE.md). The library is licensed under the Apache License 2.0.

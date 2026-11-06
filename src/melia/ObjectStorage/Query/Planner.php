@@ -30,6 +30,8 @@ use melia\ObjectStorage\Query\Exception\QueryException;
  * - parameters are replaced by their values;
  * - functions are checked; aggregates are allowed in the selection, HAVING and ORDER BY only, not nested;
  * - in a grouped query, columns outside of aggregates must be expressions of GROUP BY.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Planner
 {

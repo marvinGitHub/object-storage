@@ -38,6 +38,8 @@ use Throwable;
  * The objects of the source are found by an index where one fits the condition (see Access), otherwise all objects
  * of the class are read. A path follows references (at most DocumentBuilder::MAX_REFERENCES_PER_PATH), a referenced
  * object that doesn't exist or has expired gives NULL; expired objects aren't read.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Executor
 {

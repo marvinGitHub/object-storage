@@ -2,7 +2,11 @@
 
 namespace melia\ObjectStorage\Query\Ast;
 
-/** UPDATE Class [alias] SET property = value, ... [WHERE condition] */
+/**
+ * UPDATE Class [alias] SET property = value, ... [WHERE condition]
+ *
+ * @internal Not part of the public API; may change in any release.
+ */
 final readonly class Update
 {
     /**

@@ -21,6 +21,8 @@ use Throwable;
  * Its state (a TaskState) and its snapshots (UuidTries of the UUIDs still to process) are objects in an internal
  * object storage in <storage dir>/maintenance/internal, one record each, under UUIDs derived from the name of the
  * task. Steps of all processes run one after the other, under a lock of the internal storage.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 abstract class SteppedMaintenance
 {

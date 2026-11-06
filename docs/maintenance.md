@@ -94,7 +94,7 @@ A task keeps its state and its snapshots as objects of an internal object storag
 
 ## Upgrading
 
-Some releases change the storage format and ship a migration script in `migrations/`; the [Changelog](../Changelog.md) states when one has to be run and how. Stop all processes using the storage before upgrading.
+Some releases change the storage format and ship a migration script in `migrations/`; the [Changelog](../Changelog.md) states when one has to be run and how. Stop all processes using the storage before upgrading. The steps from 0.0.x to 1.0 are in [UPGRADE.md](../UPGRADE.md).
 
 ## The web viewer
 

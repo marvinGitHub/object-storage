@@ -12,6 +12,8 @@ use Traversable;
  * objects as arrays.
  *
  * @implements IteratorAggregate<int, array<string, mixed>>
+ *
+ * @experimental OQL is experimental in 1.x: its syntax, semantics and this API may change in a minor release (see docs/query.md).
  */
 final readonly class Result implements IteratorAggregate, Countable
 {

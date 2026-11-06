@@ -5,7 +5,6 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\Event\Context\ContextInterface;
 use melia\ObjectStorage\Event\Context\LifetimeContext;
 use melia\ObjectStorage\Event\Dispatcher;
-use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
 
 final class ObjectStorageEventDispatcherTest extends TestCase
@@ -13,17 +12,11 @@ final class ObjectStorageEventDispatcherTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $dispatcher = new class extends Dispatcher {
-            public array $events = [];
-
-            public function dispatch(string $event, ?callable $contextBuilder = null): void
-            {
-                $this->events[] = $event;
-                parent::dispatch($event, $contextBuilder);
-            }
-        };
-        $this->storage->setEventDispatcher($dispatcher);
+        $this->dispatcher = new RecordingDispatcher();
+        $this->storage->setEventDispatcher($this->dispatcher);
     }
+
+    private RecordingDispatcher $dispatcher;
 
     public function testStoreFiresExpectedEvents(): void
     {
@@ -36,18 +29,18 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         $this->assertNotEmpty($uuid);
 
         // Order-sensitive subset: BEFORE_STORE -> OBJECT_SAVED -> METADATA_SAVED -> STUB_CREATED -> AFTER_STORE
-        $this->assertContains(Events::BEFORE_STORE, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::OBJECT_SAVED, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::METADATA_SAVED, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::STUB_CREATED, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::AFTER_STORE, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::BEFORE_STORE, $this->dispatcher->events);
+        $this->assertContains(Events::OBJECT_SAVED, $this->dispatcher->events);
+        $this->assertContains(Events::METADATA_SAVED, $this->dispatcher->events);
+        $this->assertContains(Events::STUB_CREATED, $this->dispatcher->events);
+        $this->assertContains(Events::AFTER_STORE, $this->dispatcher->events);
 
         // Ensure sequence (index ordering)
-        $beforeIdx = array_search(Events::BEFORE_STORE, $this->storage->getEventDispatcher()->events, true);
-        $savedIdx = array_search(Events::OBJECT_SAVED, $this->storage->getEventDispatcher()->events, true);
-        $metaIdx = array_search(Events::METADATA_SAVED, $this->storage->getEventDispatcher()->events, true);
-        $stubIdx = array_search(Events::STUB_CREATED, $this->storage->getEventDispatcher()->events, true);
-        $afterIdx = array_search(Events::AFTER_STORE, $this->storage->getEventDispatcher()->events, true);
+        $beforeIdx = array_search(Events::BEFORE_STORE, $this->dispatcher->events, true);
+        $savedIdx = array_search(Events::OBJECT_SAVED, $this->dispatcher->events, true);
+        $metaIdx = array_search(Events::METADATA_SAVED, $this->dispatcher->events, true);
+        $stubIdx = array_search(Events::STUB_CREATED, $this->dispatcher->events, true);
+        $afterIdx = array_search(Events::AFTER_STORE, $this->dispatcher->events, true);
 
         $this->assertIsInt($beforeIdx);
         $this->assertIsInt($savedIdx);
@@ -69,27 +62,27 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         $uuid = $this->storage->store($obj);
 
         // First load triggers BEFORE_LOAD, AFTER_LOAD
-        $this->storage->getEventDispatcher()->events = [];
+        $this->dispatcher->events = [];
         $this->storage->clearCache();
         $loaded = $this->storage->load($uuid);
 
         $this->assertNotNull($loaded);
-        $this->assertContains(Events::BEFORE_LOAD, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::AFTER_LOAD, $this->storage->getEventDispatcher()->events);
-        $this->assertNotContains(Events::CACHE_HIT, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::BEFORE_LOAD, $this->dispatcher->events);
+        $this->assertContains(Events::AFTER_LOAD, $this->dispatcher->events);
+        $this->assertNotContains(Events::CACHE_HIT, $this->dispatcher->events);
 
         // Second load should hit cache and fire CACHE_HIT (and may still fire BEFORE/AFTER_LOAD around it depending on implementation)
-        $this->storage->getEventDispatcher()->events = [];
+        $this->dispatcher->events = [];
         $loaded2 = $this->storage->load($uuid);
         $this->assertNotNull($loaded2);
-        $this->assertContains(Events::CACHE_HIT, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::CACHE_HIT, $this->dispatcher->events);
     }
 
     public function testClearCacheFiresEvent(): void
     {
         $this->storage->clearCache();
 
-        $this->assertContains(Events::CACHE_CLEARED, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::CACHE_CLEARED, $this->dispatcher->events);
     }
 
     public function testSetLifetimeFiresLifetimeChanged(): void
@@ -99,10 +92,10 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         };
         $uuid = $this->storage->store($obj);
 
-        $this->storage->getEventDispatcher()->events = [];
+        $this->dispatcher->events = [];
         $this->storage->setLifetime($uuid, 60);
 
-        $this->assertContains(Events::LIFETIME_CHANGED, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::LIFETIME_CHANGED, $this->dispatcher->events);
     }
 
     public function testDeleteFiresBeforeAfterAndStubRemoved(): void
@@ -112,12 +105,12 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         };
         $uuid = $this->storage->store($obj);
 
-        $this->storage->getEventDispatcher()->events = [];
+        $this->dispatcher->events = [];
         $this->storage->delete($uuid);
 
-        $this->assertContains(Events::BEFORE_DELETE, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::AFTER_DELETE, $this->storage->getEventDispatcher()->events);
-        $this->assertContains(Events::STUB_REMOVED, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::BEFORE_DELETE, $this->dispatcher->events);
+        $this->assertContains(Events::AFTER_DELETE, $this->dispatcher->events);
+        $this->assertContains(Events::STUB_REMOVED, $this->dispatcher->events);
     }
 
     public function testExpiredFiresObjectExpiredOnLoad(): void
@@ -130,11 +123,11 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         // Make sure it expires
         sleep(2);
 
-        $this->storage->getEventDispatcher()->events = [];
+        $this->dispatcher->events = [];
         $loaded = $this->storage->load($uuid);
 
         $this->assertNull($loaded);
-        $this->assertContains(Events::OBJECT_EXPIRED, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::OBJECT_EXPIRED, $this->dispatcher->events);
     }
 
     public function testClassnameChangedFiresEvent(): void
@@ -151,10 +144,10 @@ final class ObjectStorageEventDispatcherTest extends TestCase
             public string $v = '2';
         };
         // Assign UUID by storing with explicit UUID
-        $this->storage->getEventDispatcher()->events = [];
+        $this->dispatcher->events = [];
         $this->storage->store($obj2, $uuid);
 
-        $this->assertContains(Events::CLASSNAME_CHANGED, $this->storage->getEventDispatcher()->events);
+        $this->assertContains(Events::CLASSNAME_CHANGED, $this->dispatcher->events);
     }
 
     public function testLifetimeChangedFiresEvent(): void
@@ -191,5 +184,20 @@ final class ObjectStorageEventDispatcherTest extends TestCase
         $this->storage->setLifetime($uuid, 0);
         $this->storage->expired($uuid);
         $this->assertEquals(1, $calls);
+    }
+}
+
+/**
+ * Records the names of the dispatched events.
+ */
+final class RecordingDispatcher extends Dispatcher
+{
+    /** @var list<string> */
+    public array $events = [];
+
+    public function dispatch(string $event, ?callable $contextBuilder = null): void
+    {
+        $this->events[] = $event;
+        parent::dispatch($event, $contextBuilder);
     }
 }

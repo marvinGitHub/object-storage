@@ -1,0 +1,16 @@
+parameters:
+    level: 3
+    paths:
+        - src
+        - tests
+    excludePaths:
+        - tests/e2e/node_modules (?)
+        # runs with the code of 0.0.10, not of this version
+        - tests/fixtures/upgrade/generate-0.0.10.php
+    # classes whose properties are read and written by name: LazyLoadReference forwards them to the loaded object
+    # (__get/__set), the test fixtures allow dynamic properties
+    universalObjectCratesClasses:
+        - melia\ObjectStorage\LazyLoadReference
+        - Tests\melia\ObjectStorage\TestObject
+        - Tests\melia\ObjectStorage\TestObjectWithReference
+        - tests\melia\ObjectStorage\ParentFixture

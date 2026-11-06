@@ -13,13 +13,13 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
     public function testSetChildWritePolicyRejectsInvalidValue(): void
     {
         $this->expectException(InvalidPolicyException::class);
-        $this->storage->getStrategy()->setPolicyChildPersistence(999999);
+        $this->strategy()->setPolicyChildPersistence(999999);
     }
 
     public function testPolicyNeverDoesNotWriteChildWhenStoringParent(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::NEVER);
+        $this->strategy()->setPolicyChildPersistence(ChildPersistence::NEVER);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -45,7 +45,7 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
     public function testPolicyIfNotExistWritesChildOnlyWhenChildIsMissing(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::IF_NOT_EXIST);
+        $this->strategy()->setPolicyChildPersistence(ChildPersistence::IF_NOT_EXIST);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);
@@ -72,7 +72,7 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
     public function testPolicyAlwaysCascadesAndWritesModifiedChildWhenStoringParent(): void
     {
         // Arrange
-        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
+        $this->strategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
 
         $child = new ChildObject('Child', 10);
         $parent = new ParentObject('Parent', $child);

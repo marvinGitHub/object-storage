@@ -8,6 +8,8 @@ use melia\ObjectStorage\Query\Ast\Source;
 /**
  * A SELECT bound to its sources, ready to run: columns bound to aliases, parameters replaced by their values,
  * aliases and positions of ORDER BY resolved, joins with the expressions to hash by. See Planner.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Plan
 {

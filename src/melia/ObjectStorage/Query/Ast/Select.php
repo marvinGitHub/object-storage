@@ -2,7 +2,11 @@
 
 namespace melia\ObjectStorage\Query\Ast;
 
-/** a SELECT statement */
+/**
+ * a SELECT statement
+ *
+ * @internal Not part of the public API; may change in any release.
+ */
 final readonly class Select
 {
     /**

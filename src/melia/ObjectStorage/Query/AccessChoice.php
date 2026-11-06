@@ -4,6 +4,8 @@ namespace melia\ObjectStorage\Query;
 
 /**
  * How the objects of a source are found (see Access): the UUIDs an index named, or null for all of the class.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final readonly class AccessChoice
 {

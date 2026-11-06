@@ -29,6 +29,8 @@ use melia\ObjectStorage\Unique\Manager as UniqueManager;
  * Objects are read one after another and only what the query needs is kept, so large classes don't fill the
  * memory. With UUID = '…', a unique index or (with the search manager) a search index on a filterable string field,
  * only the objects the index names are read; EXPLAIN SELECT … tells which way.
+ *
+ * @experimental OQL is experimental in 1.x: its syntax, semantics and this API may change in a minor release (see docs/query.md).
  */
 final class Oql
 {

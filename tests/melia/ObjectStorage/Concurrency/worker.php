@@ -12,12 +12,14 @@
 
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
+use melia\ObjectStorage\Strategy\Standard;
 use Tests\melia\ObjectStorage\Concurrency\Counter;
 use Tests\melia\ObjectStorage\Concurrency\OwnParent;
 use Tests\melia\ObjectStorage\Concurrency\SharedChild;
 
 require __DIR__ . '/../../../../vendor/autoload.php';
 
+$argv = $_SERVER['argv'];
 [, $scenario, $dir, $startFile, $worker] = $argv;
 $args = array_slice($argv, 5);
 
@@ -47,7 +49,9 @@ switch ($scenario) {
     // with the policy ALWAYS the child is written along with every parent
     case 'shared-child':
         [$childUuid, $rounds] = $args;
-        $storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
+        $strategy = $storage->getStrategy();
+        assert($strategy instanceof Standard);
+        $strategy->setPolicyChildPersistence(ChildPersistence::ALWAYS);
         $child = new SharedChild($worker);
         $child->setUUID($childUuid);
         $parent = new OwnParent("parent of $worker", $child);

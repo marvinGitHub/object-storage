@@ -93,7 +93,7 @@ class Transaction
      */
     public function getStorage(): ?ObjectStorage
     {
-        return $this->storage;
+        return $this->storage instanceof ObjectStorage ? $this->storage : null;
     }
 
     /**
@@ -110,7 +110,7 @@ class Transaction
         ];
 
         $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData), true);
+        (new Writer())->atomicWrite($logFile, serialize($logData));
     }
 
     /**
@@ -332,7 +332,7 @@ class Transaction
         ];
 
         $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData), true);
+        (new Writer())->atomicWrite($logFile, serialize($logData));
     }
 
     /**

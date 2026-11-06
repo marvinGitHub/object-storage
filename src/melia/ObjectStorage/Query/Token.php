@@ -2,6 +2,9 @@
 
 namespace melia\ObjectStorage\Query;
 
+/**
+ * @internal Not part of the public API; may change in any release.
+ */
 final readonly class Token
 {
     /**

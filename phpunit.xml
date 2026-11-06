@@ -9,4 +9,8 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+    <php>
+        <!-- the whole suite runs in one process; the Loupe tests allocate on top of what earlier tests left -->
+        <ini name="memory_limit" value="512M"/>
+    </php>
 </phpunit>

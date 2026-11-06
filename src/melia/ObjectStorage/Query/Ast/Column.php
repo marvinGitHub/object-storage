@@ -6,6 +6,8 @@ namespace melia\ObjectStorage\Query\Ast;
  * A column as written: names separated by dots, e.g. p.category.title; the first may be an alias of a source, the
  * others are a path into the stored data, also into referenced objects. Bound to a source before running.
  * With the keyword UUID at the end (UUID, p.UUID, p.category.UUID): the UUID of the object there.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final readonly class Column implements Expr
 {

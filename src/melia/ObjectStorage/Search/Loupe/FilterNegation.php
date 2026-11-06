@@ -15,6 +15,8 @@ use melia\ObjectStorage\Search\Exception\SearchException;
  * "(x <= 1 OR x IS NULL)" and "x BETWEEN 1 AND 2" "(x < 1 OR x > 2 OR x IS NULL)", as comparisons are false for
  * missing values in Loupe (= and IN too, but != and NOT IN are true for them). So NOT always matches exactly the
  * documents the condition doesn't match. The geo filters can't be negated.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class FilterNegation
 {

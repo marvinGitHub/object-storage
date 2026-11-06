@@ -8,6 +8,8 @@ use melia\ObjectStorage\Query\Ast\Source;
 /**
  * An INSERT, UPDATE or DELETE bound to its source: the properties written and their values (INSERT: one list of
  * values per object; UPDATE: one list, evaluated for every object), the condition of UPDATE and DELETE.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final readonly class WritePlan
 {

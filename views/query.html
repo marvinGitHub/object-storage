@@ -37,7 +37,7 @@
     {label: 'Query'},
 ]} %}
     {% block title %}Query{% endblock %}
-    {% block badges %}<span class="text-muted small">OQL: SELECT … FROM Class … JOIN … WHERE … GROUP BY … ORDER BY … LIMIT</span>{% endblock %}
+    {% block badges %}<span class="badge text-bg-warning me-2" title="OQL is experimental: its syntax and semantics may change in a minor release">experimental</span><span class="text-muted small">OQL: SELECT … FROM Class … JOIN … WHERE … GROUP BY … ORDER BY … LIMIT</span>{% endblock %}
 {% endembed %}
 
 <form method="get" class="card card-body mb-3" id="query-form">

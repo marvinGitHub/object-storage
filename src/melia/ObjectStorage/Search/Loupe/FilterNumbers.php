@@ -13,6 +13,8 @@ use Loupe\Loupe\Internal\Filter\Lexer;
  *   SQL: "x BETWEEN 1 AND 5" becomes "(x >= 1 AND x <= 5)" (nothing for "BETWEEN 5 AND 1"), "x NOT BETWEEN 1 AND 5"
  *   "(x < 1 OR x > 5 OR x IS NULL)", true for missing values as in Loupe.
  * Geo filters stay as they are.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class FilterNumbers
 {

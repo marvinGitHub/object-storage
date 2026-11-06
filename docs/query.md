@@ -1,5 +1,7 @@
 # OQL: querying objects with SQL
 
+> **Experimental.** OQL is new in 1.0 and marked `@experimental`: its syntax, its semantics and the API of `Oql`, `Result`, `Reference` and `QueryException` may change in a minor release of 1.x, not only in a major one. Such changes are listed in the [Changelog](../Changelog.md) under **Breaking (experimental)**. Feedback on the language is welcome before it is declared stable.
+
 OQL is a small query language like SQL for the objects of a storage: `SELECT` with joins, `WHERE`, `GROUP BY` with aggregates, `HAVING`, `ORDER BY`, `LIMIT` and `OFFSET`, and `INSERT`, `UPDATE` and `DELETE`. It works on the objects as stored, so the classes aren't needed to read (the [viewer](maintenance.md#the-web-viewer) queries any storage), and paths lead into referenced objects.
 
 ```php

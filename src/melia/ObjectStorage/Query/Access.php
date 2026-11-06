@@ -32,6 +32,8 @@ use Throwable;
  * nor are other comparisons, LIKE or number fields: the indexes convert values differently than OQL compares them.
  * An index naming more than MAX_CANDIDATES objects isn't used. Writes the indexes didn't see (without the managers
  * attached) aren't found by them, as by any search.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Access
 {

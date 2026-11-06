@@ -4,6 +4,8 @@ namespace melia\ObjectStorage\Query\Ast;
 
 /**
  * An expression of the selection with its name, or * (all properties of all sources) or alias.* (of one source).
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final readonly class SelectItem
 {

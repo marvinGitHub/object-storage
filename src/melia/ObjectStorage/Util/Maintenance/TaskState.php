@@ -4,6 +4,8 @@ namespace melia\ObjectStorage\Util\Maintenance;
 
 /**
  * The state of a running maintenance task, stored as an object in the internal storage of the maintenance tasks.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class TaskState
 {

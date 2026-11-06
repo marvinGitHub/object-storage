@@ -13,7 +13,7 @@ class ObjectStorageChildDeletionPolicyTest extends TestCase
     public function testSetChildDeletionPolicyRejectsInvalidValue(): void
     {
         $this->expectException(InvalidPolicyException::class);
-        $this->storage->getStrategy()->setPolicyChildDeletion(999999);
+        $this->strategy()->setPolicyChildDeletion(999999);
     }
 
     public function testDefaultPolicyKeepsReferencedObjects(): void
@@ -31,7 +31,7 @@ class ObjectStorageChildDeletionPolicyTest extends TestCase
 
     public function testPolicyAlwaysDeletesReferencedObjectsRecursively(): void
     {
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
 
         $grandChild = new ChildObject('GrandChild', 1);
         $child = new ParentObject('Child', $grandChild);
@@ -48,7 +48,7 @@ class ObjectStorageChildDeletionPolicyTest extends TestCase
 
     public function testPolicyAlwaysDeletesReferencedObjectsInNestedArrays(): void
     {
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
 
         $order = new stdClass();
         $order->lines = ['a' => [new ChildObject('Line 1', 1)], 'b' => [[new ChildObject('Line 2', 2)]]];
@@ -66,7 +66,7 @@ class ObjectStorageChildDeletionPolicyTest extends TestCase
 
     public function testPolicyAlwaysHandlesCircularReferences(): void
     {
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
 
         $a = new stdClass();
         $b = new stdClass();
@@ -87,14 +87,14 @@ class ObjectStorageChildDeletionPolicyTest extends TestCase
 
     public function testPolicyAlwaysIgnoresReferencedObjectsDeletedBefore(): void
     {
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
 
         $child = new ChildObject('Child', 1);
         $parentUuid = $this->storage->store(new ParentObject('Parent', $child));
 
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::NEVER);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::NEVER);
         $this->storage->delete($child->getUUID());
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
 
         $this->storage->delete($parentUuid);
 
@@ -103,8 +103,8 @@ class ObjectStorageChildDeletionPolicyTest extends TestCase
 
     public function testPolicyAlwaysDeletesCorruptedObjectWithoutReferencedObjects(): void
     {
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
-        $this->storage->getStrategy()->disableChecksumValidation();
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->disableChecksumValidation();
 
         $child = new ChildObject('Child', 1);
         $parentUuid = $this->storage->store(new ParentObject('Parent', $child));

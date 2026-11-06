@@ -475,7 +475,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->writerSpy->clearMethodCalls();
 
         // Store parent - loaded lazy references should be processed
-        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
+        $this->strategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
         $this->storage->store($loadedParent, $parentUuid);
 
         $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
@@ -503,7 +503,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $parent->nonLoadedChild = $child2;
         $parent->modifiedChild = $child3;
 
-        $this->storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
+        $this->strategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
 
         // Store all objects
         $parentUuid = $this->storage->store($parent);

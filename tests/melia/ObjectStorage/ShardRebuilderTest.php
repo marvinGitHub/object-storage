@@ -62,7 +62,7 @@ class ShardRebuilderTest extends TestCase
         $uuids = $this->storeObjects($this->storage, 30);
         $this->assertSame([2 => 60], $this->fileDepths($this->storage), 'data and metadata of 30 objects at depth 2');
 
-        $this->storage->getStrategy()->setShardDepth(3);
+        $this->strategy()->setShardDepth(3);
         $rebuilder = $this->createRebuilder($this->storage);
 
         // the progress counts objects; their data and metadata files are moved together
@@ -90,11 +90,11 @@ class ShardRebuilderTest extends TestCase
 
     public function testRebuildToALowerDepthRemovesEmptyDirectories(): void
     {
-        $this->storage->getStrategy()->setShardDepth(4);
+        $this->strategy()->setShardDepth(4);
         $uuids = $this->storeObjects($this->storage, 20);
         $directoriesBefore = $this->countDirectories($this->storage);
 
-        $this->storage->getStrategy()->setShardDepth(1);
+        $this->strategy()->setShardDepth(1);
         $progress = $this->createRebuilder($this->storage)->rebuildShards();
 
         $this->assertTrue($progress['done']);
@@ -121,7 +121,7 @@ class ShardRebuilderTest extends TestCase
         }
         $this->assertEquals([2 => 10, 3 => 10], $this->fileDepths($this->storage));
 
-        $this->storage->getStrategy()->setShardDepth(1);
+        $this->strategy()->setShardDepth(1);
         $progress = $this->createRebuilder($this->storage)->rebuildShards(batchSize: 3);
 
         $this->assertSame(20, $progress['moved']);
@@ -135,7 +135,7 @@ class ShardRebuilderTest extends TestCase
     public function testRebuildReportsProgressToACallback(): void
     {
         $this->storeObjects($this->storage, 10);
-        $this->storage->getStrategy()->setShardDepth(3);
+        $this->strategy()->setShardDepth(3);
 
         $reports = [];
         $this->createRebuilder($this->storage)->rebuildShards(static function (array $progress) use (&$reports): void {
@@ -148,7 +148,7 @@ class ShardRebuilderTest extends TestCase
     public function testInterruptedRebuildIsContinuedByAnotherProcess(): void
     {
         $uuids = $this->storeObjects($this->storage, 10);
-        $this->storage->getStrategy()->setShardDepth(3);
+        $this->strategy()->setShardDepth(3);
 
         $first = $this->createRebuilder($this->storage);
         $first->start();
@@ -179,7 +179,7 @@ class ShardRebuilderTest extends TestCase
     {
         $this->storeObjects($this->storage, 3);
         $this->storage->getStateHandler()->enableSafeMode();
-        $this->storage->getStrategy()->setShardDepth(3);
+        $this->strategy()->setShardDepth(3);
 
         $this->createRebuilder($this->storage)->rebuildShards();
 

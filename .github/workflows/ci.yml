@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    name: PHPUnit and PHPStan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: json, intl, pdo_sqlite, xdebug
+          coverage: xdebug
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --display-deprecations
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --no-progress
+
+  js:
+    name: JavaScript unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test 'tests/js/*.test.js'
+
+  e2e:
+    name: Viewer end-to-end tests
+    runs-on: ubuntu-latest
+    needs: [php, js]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: json, intl, pdo_sqlite, xdebug
+          tools: composer:v2
+
+      - run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Start the viewer with a seeded storage
+        run: |
+          mkdir -p appData
+          php tests/e2e/seed.php /tmp/e2e-storage
+          php -S 127.0.0.1:8091 -t . > /tmp/viewer.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8091/view.php > /dev/null && break; sleep 1; done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Playwright
+        working-directory: tests/e2e
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8091
+          E2E_STORAGE: /tmp/e2e-storage
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+      - name: Viewer log
+        if: failure()
+        run: cat /tmp/viewer.log

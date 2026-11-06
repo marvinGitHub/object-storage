@@ -139,7 +139,7 @@ echo '{"name": "shared", "lock": {"type": "redis", "dsn": "redis://redis:6379", 
 
 1. query
 
-- Run an [OQL](query.md) query (`SELECT … FROM Class …`) and print the result as a table, or as JSON with `--json`.
+- *Experimental.* Run an [OQL](query.md) query (`SELECT … FROM Class …`) and print the result as a table, or as JSON with `--json`.
 - Options:
 - --file, -f Read the query from a file (otherwise the argument, or STDIN)
 - --param, -p A parameter: `name=value` for `:name`, `value` for the next `?`; numbers, true, false and null as such, "quoted" as text

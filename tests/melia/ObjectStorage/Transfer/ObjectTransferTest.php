@@ -87,7 +87,7 @@ class ObjectTransferTest extends TestCase
 
     public function testMovingDeletesOnlyTheObjectInTheSource(): void
     {
-        $this->storage->getStrategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
+        $this->strategy()->setPolicyChildDeletion(ChildDeletion::ALWAYS);
         $uuid = $this->storage->store(new Product('Chair', category: new Category('Furniture')));
         $categoryUuid = json_decode(file_get_contents($this->storage->getFilePathData($uuid)), true)['category']['__reference'];
 
@@ -180,7 +180,7 @@ class ObjectTransferTest extends TestCase
         $this->assertStringContainsString('(crc32b, metadata version 2)', $failed->failed[$uuid], 'the cause is named');
 
         // as when loading: with validation disabled, the data is used as it is
-        $this->storage->getStrategy()->disableChecksumValidation();
+        $this->strategy()->disableChecksumValidation();
         $this->assertSame([$uuid], $this->transfer()->copy([$uuid])->transferred);
     }
 

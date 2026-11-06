@@ -2,7 +2,11 @@
 
 namespace melia\ObjectStorage\Query\Ast;
 
-/** a function or an aggregate, e.g. LOWER(name), COUNT(*), COUNT(DISTINCT city) */
+/**
+ * a function or an aggregate, e.g. LOWER(name), COUNT(*), COUNT(DISTINCT city)
+ *
+ * @internal Not part of the public API; may change in any release.
+ */
 final readonly class FunctionCall implements Expr
 {
     public const array AGGREGATES = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'];

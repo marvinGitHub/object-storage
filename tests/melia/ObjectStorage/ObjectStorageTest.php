@@ -634,8 +634,8 @@ class ObjectStorageTest extends TestCase
                 return ['a' => $this->a ?? null];
             }
         };
-        $object->a = 'test';
-        $object->nested = [
+        $object->a = 'test'; // @phpstan-ignore property.notFound (dynamic, left out by __serialize())
+        $object->nested = [ // @phpstan-ignore property.notFound
             10
         ];
 
@@ -942,7 +942,7 @@ class ObjectStorageTest extends TestCase
 
         $this->assertNotFalse($written, 'Tampered object data should be writable for the test setup.');
 
-        $this->storage->getStrategy()->disableChecksumValidation();
+        $this->strategy()->disableChecksumValidation();
         $loaded = $this->storage->load($uuid);
 
         $reflection = new Reflection($loaded);

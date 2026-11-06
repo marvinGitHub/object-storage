@@ -242,7 +242,7 @@ class QueryBuilderFiltersTest extends TestCase
             'CONTAINS', 'NOT CONTAINS' => ('CONTAINS' === $op) === $any(fn($v) => str_contains($lower($v), $lower($text))),
             'STARTS WITH' => $any(fn($v) => str_starts_with($lower($v), $lower($text))),
             'ENDS WITH' => $any(fn($v) => str_ends_with($lower($v), $lower($text))),
-            'LIKE', 'NOT LIKE' => ('LIKE' === $op) === $any(fn($v) => static::like($lower($v), $lower($text))),
+            'LIKE', 'NOT LIKE' => ('LIKE' === $op) === $any(fn($v) => self::like($lower($v), $lower($text))),
             default => $this->fail('unknown operator ' . $op),
         };
     }

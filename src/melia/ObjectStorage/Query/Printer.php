@@ -19,6 +19,8 @@ use melia\ObjectStorage\Query\Ast\Unary;
 /**
  * An expression as text, the same for the same expression however it was written (spaces, case of keywords,
  * parentheses): to compare expressions, e.g. of the selection with those of GROUP BY.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Printer
 {

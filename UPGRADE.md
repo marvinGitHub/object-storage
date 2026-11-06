@@ -1,0 +1,65 @@
+# Upgrading
+
+## From 0.0.x to 1.0
+
+1.0 contains all changes since 0.0.4, see the [Changelog](Changelog.md). Some of them were already published with 0.0.10; they are marked *(already in 0.0.10)* below and only concern you when coming from 0.0.9 or older. No migration of the stored data is needed when coming from 0.0.3 or later: old metadata (format version 1, without a revision) is still read as it is.
+
+### Before upgrading
+
+1. **Stop every process using the storage** (web workers, CLI commands, cron jobs, queue consumers). Old and new versions lock different files (`<uuid>.lock` in the storage directory before, `<storage dir>/locks` now), so they don't exclude each other while running side by side. Coming from 0.0.10, the lock files are the same, but stopping all processes is still recommended.
+2. **Back up the storage directory.**
+3. Coming from **0.0.1 or 0.0.2**: run the migrations in `migrations/` first (`001_002.php`, then `002_003.php`), from inside that directory, as described in the Changelog of 0.0.2 and 0.0.3.
+
+### Requirements
+
+- PHP **8.5** or newer.
+- Symfony **8** (`symfony/console`, `symfony/cache`, `symfony/lock`). Applications still on Symfony 6 or 7 can't install 1.0.
+- Dependency `symfony/lock`, installed with the package *(already in 0.0.10)*.
+
+### After upgrading
+
+- Old `<uuid>.lock` files in the storage directory are no longer used and can be deleted *(already in 0.0.10)*.
+- Stores flush every file to disk (`fsync`) and are noticeably slower. Where durability doesn't matter (e.g. caches), disable it: `$storage->getWriter()->setSyncEnabled(false)`.
+- Optional: create unique and search indexes (`docs/unique.md`, `docs/search.md`); OQL uses them where it can.
+
+### Breaking changes
+
+Check your code for the following; most applications using only `store()`, `load()`, `delete()` and the query methods aren't affected.
+
+**Lock backends** *(already in 0.0.10)*
+- `Locking\Backends\FileSystem` was removed: use `SymfonyLockAdapter::createFileLockAdapter()`.
+- `Locking\Backends\CachedLockAdapter` was removed: use `SymfonyLockAdapter` with a Redis or Memcached store. There is no replacement for APCu-based locking. See "Lock backends" in `docs/concurrency.md`.
+
+**Interfaces you may implement**
+- `Strategy\StrategyInterface`: new methods `getPolicyChildDeletion()`, `shouldDeleteChild()`, `optimisticLockingEnabled()`. Strategies extending `Strategy\Standard` already have them.
+- `File\WriterInterface`: new methods `atomicWriteAll()`, `recover()`, `syncEnabled()`, `setSyncEnabled()`; `createEmptyFile()` was removed. See `File\Writer`. *(already in 0.0.10)*
+- `File\IO\AdapterInterface`: new methods `fsyncFile()`, `fsyncDirectory()`, `renameSync()`, `moveFileSync()`. See `File\IO\RealAdapter`. *(already in 0.0.10)*
+
+**Subclasses of `ObjectStorage`** — protected methods were renamed:
+
+| Before | Now |
+|---|---|
+| `loadFromStorage()` | `loadFromFiles()` |
+| `buildLoadedObject()` | `hydrateObject()` |
+| `processLoadedData()` | `hydrateProperties()` |
+| `processLoadedArray()` | `hydrateArray()` |
+| `serializeAndStore()` | `storeObject()` |
+| `createGraphAndStoreReferencedChildren()` | `serializeGraph()` |
+| `saveMetadata()` | `writeMetadata()` |
+| `readFile()`, `loadFromJsonFile()`, `decodeJson()`, `serializeMetadata()` | `File\JsonFileReader` / `File\JsonFileWriter` (`getJsonFileReader()`, `getJsonFileWriter()`) |
+
+**Stored data**
+- Metadata is written in format version 2 (with a `revision`). Metadata written by 0.0.x (version 1) is read as it is. Going back to 0.0.x after 1.0 has written to a storage is not supported, so keep the backup until you are sure you won't downgrade.
+
+**Behavior**
+- `__unserialize()` receives the referenced objects as objects (as returned by `__serialize()`), no longer as `['__reference' => '<uuid>']` arrays. Code evaluating these arrays has to be adapted.
+- `ObjectStorage::buildShardedDirectory()` no longer creates the directory. Code writing into shard directories itself has to create them. *(already in 0.0.10)*
+- `load()` of a UUID under which nothing is stored returns `null` instead of throwing and enabling safe mode.
+- Scalar values are converted to the declared property type when loading; lossy conversions (e.g. `"abc"` to `int`) throw a `TypeConversionFailureException`. *(already in 0.0.10)*
+- Safe mode only blocks writes; loading and listing keep working.
+- `getWriter()` and `getReader()` return the same instance on every call, so their configuration applies to later operations.
+- `Writer::atomicWrite()` no longer takes `$createDirectoryIfNotExist`; directories are always created. *(already in 0.0.10)*
+
+### Experimental: OQL
+
+OQL (`Query\Oql`, the CLI command `query`, the query console of the viewer) is new and **experimental**: its syntax, semantics and API may change in a minor 1.x release. Pin a minor version (`~1.0.0`) if you depend on it in production, and watch the Changelog for **Breaking (experimental)**.

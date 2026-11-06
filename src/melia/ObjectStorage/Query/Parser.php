@@ -26,6 +26,8 @@ use melia\ObjectStorage\Query\Exception\QueryException;
 /**
  * Parses a query into a syntax tree. The precedence of the operators, from the lowest: OR, AND, NOT,
  * equality (= != IS IN LIKE BETWEEN), comparison (< <= > >=), + -, * /, ||, unary - and +; as in SQLite.
+ *
+ * @internal Not part of the public API; may change in any release.
  */
 final class Parser
 {
