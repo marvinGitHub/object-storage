@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Query;
 
 use melia\ObjectStorage\Path\Path;
+use melia\ObjectStorage\Path\PathSegment;
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
@@ -20,6 +21,7 @@ use melia\ObjectStorage\Query\Ast\Literal;
 use melia\ObjectStorage\Query\Ast\OutputColumn;
 use melia\ObjectStorage\Query\Ast\Parameter;
 use melia\ObjectStorage\Query\Ast\Select;
+use melia\ObjectStorage\Query\Ast\Target;
 use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Exception\QueryException;
 
@@ -311,12 +313,55 @@ final class Planner
             return new WritePlan(WritePlan::DELETE, $source, [], [], $where);
         }
 
-        $properties = array_map(static fn(array $assignment): string => $assignment[0], $statement->assignments);
-        if (count(array_unique($properties)) !== count($properties)) {
-            throw new QueryException('A property is set twice');
+        $targets = array_map(static fn(array $assignment): Target => $assignment[0], $statement->assignments);
+        foreach ($targets as $i => $target) {
+            foreach ([...array_slice($targets, $i + 1), ...$statement->removals] as $other) {
+                if (self::overlap($target, $other)) {
+                    throw new QueryException(!$target->isPath() && !$other->isPath() && in_array($other, $targets, true)
+                        ? 'A property is set twice'
+                        : sprintf('%s and %s may be the same: set or remove a value once', $target, $other));
+                }
+            }
         }
         $values = array_map(fn(array $assignment): Expr => $this->value($assignment[1]), $statement->assignments);
-        return new WritePlan(WritePlan::UPDATE, $source, $properties, [$values], $where);
+        $properties = array_map(static fn(Target $target): string => $target->property, $targets);
+        return new WritePlan(WritePlan::UPDATE, $source, $properties, [$values], $where, $targets, $statement->removals);
+    }
+
+    /**
+     * Whether two targets of UPDATE may name the same value, or one a value inside the other: the same property, and
+     * along the shorter path every two segments may be the same key (* any, [-1] any position, [] a new element).
+     */
+    private static function overlap(Target $a, Target $b): bool
+    {
+        if ($a->property !== $b->property) {
+            return false;
+        }
+        $length = min(count($a->segments), count($b->segments));
+        for ($i = 0; $i < $length; $i++) {
+            $x = self::key($a->segments[$i]);
+            $y = self::key($b->segments[$i]);
+            if (null === $x && null === $y && null === $a->segments[$i] && null === $b->segments[$i]) {
+                return false; // tags[] twice: two new elements
+            }
+            if (null !== $x && null !== $y && $x !== $y) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** the key a segment names, as PHP keys of arrays; null if it may name any (*, [-1], []) */
+    private static function key(string|PathSegment|null $segment): int|string|null
+    {
+        if (null === $segment || ($segment instanceof PathSegment && PathSegment::WILDCARD === $segment->kind)) {
+            return null;
+        }
+        if ($segment instanceof PathSegment && PathSegment::INDEX === $segment->kind) {
+            return $segment->value >= 0 ? (int)$segment->value : null;
+        }
+        $key = (string)($segment instanceof PathSegment ? $segment->value : $segment);
+        return array_key_first([$key => true]);
     }
 
     /** a value to write: REF(…) only as the whole value */

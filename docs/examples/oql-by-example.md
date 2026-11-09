@@ -854,6 +854,26 @@ SELECT name, category.title AS category FROM Product WHERE name IN ('Apple', 'Ba
 | Apple | Fruit |
 | Banana | Food |
 
+**Lists and maps are changed with paths**: `SET` a key (`phones['fax']`), an element by position (`tags[0]`, `tags[-1]`) or a new element at the end (`tags[]`); `REMOVE` takes keys and elements out (the rest of a list moves up):
+
+```sql
+UPDATE Customer SET tags[] = 'newsletter', phones['fax'] = '+49 171 4444444' WHERE name = 'Alex';
+SELECT name, tags, phones['fax'] AS fax FROM Customer WHERE name = 'Alex'
+```
+<!-- result -->
+| name | tags | fax |
+|---|---|---|
+| Alex | ["newsletter"] | +49 171 4444444 |
+
+```sql
+UPDATE Customer REMOVE tags[-1], phones['fax'] WHERE name = 'Alex';
+SELECT name, tags, phones['fax'] AS fax FROM Customer WHERE name = 'Alex'
+```
+<!-- result -->
+| name | tags | fax |
+|---|---|---|
+| Alex | [] | NULL |
+
 **DELETE** deletes objects (and referenced objects, as the child deletion policy of the storage says):
 
 ```sql
@@ -885,6 +905,9 @@ UPDATE Product SET color = 'red'
 
 UPDATE Product SET category = NULL
 -- category of Product is Category: NULL isn't possible
+
+UPDATE Purchase SET lines[0].quantity = 3
+-- lines[0].quantity leads into a referenced object: UPDATE writes only the object itself, …
 ```
 
 ## When objects were created and modified

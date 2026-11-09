@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] - 2026-11-09
+
+The fifth release candidate of 1.0: `UPDATE` in OQL writes into lists and maps with paths (`SET newlist['today'] = NOW()`, `tags[]`, `friends.*.active`) and removes keys and elements with `REMOVE`. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc4-to-100-rc5).
+
+### Added
+- OQL *(experimental)*: paths in `UPDATE` (`docs/query.md`, "INSERT, UPDATE, DELETE and ALTER"). `SET` writes keys and elements of the lists and maps (arrays) an object holds, as in PHP: `UPDATE stdClass SET newlist['today'] = NOW()` (missing lists and maps on the way are created), `tags[0]`, `tags[-1]` (from the end, must exist), `tags[6]` (beyond the end: the list becomes a map), `tags[]` (appended), `settings.mail.enabled`, `friends.*.active` (in every element). `UPDATE … REMOVE path, …` takes keys and elements out (positions as before removing; lists are numbered anew, maps keep their keys), also with `SET`: `UPDATE Class SET a = 1 REMOVE b['x'] WHERE …`. Paths into referenced objects and dates are refused, as are two targets that may name the same value. Dates and `REF()` may be written into lists and maps. `REMOVE` isn't reserved. `OqlUpdatePathTest`; an example in [OQL by example](docs/examples/oql-by-example.md#writing-insert-update-delete).
+
 ## [1.0.0-rc.4] - 2026-11-09
 
 The fourth release candidate of 1.0: faster reflection when loading, storing and writing with OQL. **Read [UPGRADE.md](UPGRADE.md#from-100-rc3-to-100-rc4) before upgrading.**

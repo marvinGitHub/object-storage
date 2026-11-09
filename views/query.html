@@ -77,7 +77,7 @@
             [<strong>WHERE</strong> condition] [<strong>GROUP BY</strong> expressions] [<strong>HAVING</strong> condition]
             [<strong>ORDER BY</strong> expression [ASC|DESC], …] [<strong>LIMIT</strong> n] [<strong>OFFSET</strong> n]</p>
         <p class="mb-1"><strong>INSERT INTO</strong> Class (property, …) <strong>VALUES</strong> (value, …), … |
-            <strong>UPDATE</strong> Class [alias] <strong>SET</strong> property = value, … [<strong>WHERE</strong> condition] |
+            <strong>UPDATE</strong> Class [alias] [<strong>SET</strong> property = value, …] [<strong>REMOVE</strong> path, …] [<strong>WHERE</strong> condition] (paths: <code>tags[0]</code>, <code>phones['fax']</code>, <code>tags[]</code>, <code>friends.*.active</code>) |
             <strong>DELETE FROM</strong> Class [alias] [<strong>WHERE</strong> condition] |
             <strong>ALTER CLASS</strong> Class <strong>DROP ATTRIBUTE</strong> property, … (<strong>ALTER TABLE</strong> … <strong>DROP COLUMN</strong>)
             — references with <code>REF('uuid')</code>; asks before writing, <em>Dry run</em> only lists the objects.</p>

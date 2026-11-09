@@ -7,6 +7,8 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Path\PathSegment;
+use melia\ObjectStorage\Query\Ast\Target;
 use melia\ObjectStorage\Query\Exception\QueryException;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Serialization\DateTimeValue;
@@ -72,7 +74,7 @@ final class Writer
         foreach ($plan->rows as $values) {
             $data = [];
             foreach ($plan->properties as $i => $property) {
-                $data[$property] = $this->executor->evaluate($values[$i], []);
+                $data[$property] = $this->assignable($property, $class, $this->executor->evaluate($values[$i], []));
             }
             $objects[] = $this->dataOf($class, $data, $this->defaults(Reflection::getReflectionClass($class), $data), Metadata::RESERVED_NAME_DEFAULTS);
         }
@@ -232,11 +234,216 @@ final class Writer
      */
     private function updated(WritePlan $plan, string $class, array $object): array
     {
+        $row = [$plan->source->alias => $object];
+        $data = $object['data'];
         $values = [];
-        foreach ($plan->properties as $i => $property) {
-            $values[$property] = $this->executor->evaluate($plan->rows[0][$i], [$plan->source->alias => $object]);
+        foreach ($plan->targets as $i => $target) {
+            $value = $this->assignable((string)$target, $class, $this->executor->evaluate($plan->rows[0][$i], $row));
+            if ($target->isPath()) {
+                // the new list or map of the property; later targets in it build on it
+                $value = $this->set($data[$target->property] ?? null, $target->segments, $value, $target, $object);
+                if (null === $value && !array_key_exists($target->property, $data)) {
+                    continue; // * in a property that isn't there: nothing to set
+                }
+                $data[$target->property] = $value;
+            }
+            $values[$target->property] = $value;
         }
-        return $this->dataOf($class, $values, $object['data'], [Metadata::RESERVED_REFERENCE => $object['reserved'], Metadata::RESERVED_DATETIME => $object['dateTime']]);
+
+        $removals = [];
+        foreach ($plan->removals as $target) {
+            $removals[$target->property][] = $target;
+        }
+        foreach ($removals as $property => $targets) {
+            if (!array_key_exists($property, $data)) {
+                continue;
+            }
+            $value = $this->removed($data[$property], $targets, $object);
+            if ($value !== $data[$property]) {
+                $values[$property] = $data[$property] = $value;
+            }
+        }
+
+        return $this->dataOf($class, $values, $data, [Metadata::RESERVED_REFERENCE => $object['reserved'], Metadata::RESERVED_DATETIME => $object['dateTime']]);
+    }
+
+    /**
+     * A value computed by INSERT or UPDATE: a value, a date or REF(); lists and objects can't be written.
+     */
+    private function assignable(string $target, string $class, mixed $value): mixed
+    {
+        if (is_array($value) || (is_object($value) && !$value instanceof DateValue && !$value instanceof Reference)) {
+            throw new QueryException(sprintf('%s of %s: lists and objects can\'t be written yet, only values and REF()', $target, $class));
+        }
+        return $value;
+    }
+
+    // ---- paths in UPDATE: SET newlist['today'] = NOW(), REMOVE tags[0] ----
+
+    /**
+     * The value with another value at the path, as PHP would: missing lists and maps (and NULL) on the way become
+     * maps, [n] sets the key n (also beyond the end), [-n] the element n from the end of a list (which must exist),
+     * [] appends, * sets the path in every element (none if there are none).
+     *
+     * @param list<string|PathSegment|null> $segments
+     */
+    private function set(mixed $current, array $segments, mixed $value, Target $target, array $object): mixed
+    {
+        if ([] === $segments) {
+            return $value;
+        }
+        $this->enterable($current, $target, $object, true);
+        $segment = array_shift($segments);
+        if ($segment instanceof PathSegment && $segment->isWildcard()) {
+            if (null === $current) {
+                return null;
+            }
+            foreach ($current as $key => $element) {
+                $current[$key] = $this->set($element, $segments, $value, $target, $object);
+            }
+            return $current;
+        }
+
+        $current ??= [];
+        if (null === $segment) {
+            $current[] = $this->set(null, $segments, $value, $target, $object);
+            return $current;
+        }
+        $key = self::keyIn($current, $segment);
+        if (null === $key) {
+            throw new QueryException(sprintf('%s: there is no element %s in %s', $target, $segment, self::describe($current)));
+        }
+        $current[$key] = $this->set($current[$key] ?? null, $segments, $value, $target, $object);
+        return $current;
+    }
+
+    /**
+     * The value without the keys and elements at the paths of the targets (those that aren't there are left); lists
+     * that lost elements are numbered anew (the others move up), maps keep their keys. The positions are those
+     * before removing.
+     *
+     * @param list<Target> $targets Paths into the same property.
+     */
+    private function removed(mixed $value, array $targets, array $object): mixed
+    {
+        $paths = [];
+        $lists = [];
+        foreach ($targets as $target) {
+            $this->find($value, $target->segments, [], $target, $object, $paths, $lists);
+        }
+        if ([] === $paths) {
+            return $value;
+        }
+        foreach ($paths as $path) {
+            $value = self::without($value, $path);
+        }
+        // the deepest first: numbering a list anew changes the keys of the paths in it
+        usort($lists, static fn(array $a, array $b): int => count($b) <=> count($a));
+        foreach ($lists as $path) {
+            $value = self::renumbered($value, $path);
+        }
+        return $value;
+    }
+
+    /**
+     * The keys of the values at the path (as lists of keys from the value of the property), and the lists they are in.
+     *
+     * @param list<string|PathSegment|null> $segments
+     * @param list<int|string> $path
+     * @param list<list<int|string>> $paths
+     * @param array<string, list<int|string>> $lists
+     */
+    private function find(mixed $current, array $segments, array $path, Target $target, array $object, array &$paths, array &$lists): void
+    {
+        if (!$this->enterable($current, $target, $object, false) || !is_array($current)) {
+            return;
+        }
+        $segment = array_shift($segments);
+        if (null === $segment) {
+            return; // [] can't be removed (refused when parsing)
+        }
+        $keys = $segment instanceof PathSegment && $segment->isWildcard() ? array_keys($current) : [self::keyIn($current, $segment)];
+        foreach ($keys as $key) {
+            if (null === $key || !array_key_exists($key, $current)) {
+                continue;
+            }
+            if ([] === $segments) {
+                $paths[] = [...$path, $key];
+                if (array_is_list($current)) {
+                    $lists[serialize($path)] = $path;
+                }
+            } else {
+                $this->find($current[$key], $segments, [...$path, $key], $target, $object, $paths, $lists);
+            }
+        }
+    }
+
+    /**
+     * Whether a path may lead into the value: a list or map, or NULL (nothing there yet). Not into referenced objects
+     * (UPDATE writes only the object itself) or dates; into other values not either: an error when setting.
+     */
+    private function enterable(mixed $current, Target $target, array $object, bool $setting): bool
+    {
+        $reference = $current instanceof Reference || (is_array($current) && 1 === count($current)
+                && is_string($current[$object['reserved']] ?? null) && UuidValidator::validate($current[$object['reserved']]));
+        if ($reference) {
+            throw new QueryException(sprintf('%s leads into a referenced object: UPDATE writes only the object itself, update the referenced object with its own UPDATE', $target));
+        }
+        if ($current instanceof DateValue || DateTimeValue::isEncodedAny($current, $object['dateTime'])) {
+            throw new QueryException(sprintf('%s leads into a date: a date has no keys or elements', $target));
+        }
+        if (null === $current || is_array($current)) {
+            return true;
+        }
+        if ($setting) {
+            throw new QueryException(sprintf('%s: there is %s, not a list or map', $target, self::describe($current)));
+        }
+        return false;
+    }
+
+    /**
+     * The key a segment names in a list or map: names, ['key'] and [n] as PHP keys of arrays; [-n] the element n
+     * from the end of a list, null if there is none.
+     */
+    private static function keyIn(array $value, string|PathSegment $segment): int|string|null
+    {
+        if ($segment instanceof PathSegment && PathSegment::INDEX === $segment->kind) {
+            $index = (int)$segment->value;
+            if ($index >= 0) {
+                return $index;
+            }
+            return array_is_list($value) && -$index <= count($value) ? count($value) + $index : null;
+        }
+        $key = (string)($segment instanceof PathSegment ? $segment->value : $segment);
+        return array_key_first([$key => true]);
+    }
+
+    /** @param list<int|string> $path */
+    private static function without(array $value, array $path): array
+    {
+        $key = array_shift($path);
+        if (!array_key_exists($key, $value)) {
+            return $value;
+        }
+        if ([] === $path) {
+            unset($value[$key]);
+        } elseif (is_array($value[$key])) {
+            $value[$key] = self::without($value[$key], $path);
+        }
+        return $value;
+    }
+
+    /** @param list<int|string> $path */
+    private static function renumbered(array $value, array $path): array
+    {
+        if ([] === $path) {
+            return array_values($value);
+        }
+        $key = array_shift($path);
+        if (array_key_exists($key, $value) && is_array($value[$key])) {
+            $value[$key] = self::renumbered($value[$key], $path);
+        }
+        return $value;
     }
 
     // ---- ALTER CLASS … DROP ATTRIBUTE ----
@@ -351,8 +558,13 @@ final class Writer
         foreach ($values as $property => $value) {
             if ($value instanceof Reference) {
                 $this->checkReference($value, $class, $property, $reflection);
-            } elseif (is_array($value) || (is_object($value) && !$value instanceof DateValue)) {
-                throw new QueryException(sprintf('%s of %s: lists and objects can\'t be written yet, only values and REF()', $property, $class));
+            } elseif (is_array($value)) {
+                // REF() in a list or map set by a path: the object must exist, its class isn't declared
+                array_walk_recursive($value, function (mixed $element) use ($class, $property): void {
+                    if ($element instanceof Reference) {
+                        $this->checkReference($element, $class, $property, null);
+                    }
+                });
             }
             if (null !== $reflection) {
                 $value = $this->checked($reflection, $property, $value);
@@ -457,6 +669,7 @@ final class Writer
             }
             $converted = match ($named->getName()) {
                 'mixed' => $value,
+                'array', 'iterable' => is_array($value) ? $value : null,
                 'int' => is_int($value) ? $value : (is_float($value) && floor($value) === $value && abs($value) < PHP_INT_MAX ? (int)$value : null),
                 'float' => is_int($value) || is_float($value) ? (float)$value : null,
                 'string' => is_string($value) ? $value : null,
@@ -497,6 +710,7 @@ final class Writer
     {
         return match (true) {
             $value instanceof DateValue => 'the date ' . $value->utc,
+            is_array($value) => array_is_list($value) ? sprintf('a list of %d', count($value)) : 'a map',
             is_string($value) => sprintf("the text '%s'", mb_strimwidth($value, 0, 40, '…')),
             is_bool($value) => $value ? 'TRUE' : 'FALSE',
             is_float($value) => 'the number ' . json_encode($value, JSON_PRESERVE_ZERO_FRACTION),

@@ -21,6 +21,7 @@ use melia\ObjectStorage\Query\Ast\Parameter;
 use melia\ObjectStorage\Query\Ast\Select;
 use melia\ObjectStorage\Query\Ast\SelectItem;
 use melia\ObjectStorage\Query\Ast\Source;
+use melia\ObjectStorage\Query\Ast\Target;
 use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Ast\Update;
 use melia\ObjectStorage\Query\Exception\QueryException;
@@ -97,16 +98,71 @@ final class Parser
     private function update(): Update
     {
         $this->expect(Lexer::KEYWORD, 'UPDATE');
-        $source = $this->source();
-        $this->expect(Lexer::KEYWORD, 'SET');
+        // UPDATE Class REMOVE path: REMOVE isn't a keyword, here it isn't the alias
+        $source = $this->source(fn(): bool => $this->isWord($this->peek(), 'REMOVE') && $this->peek(1)->is(Lexer::IDENTIFIER));
+
         $assignments = [];
-        do {
-            $property = $this->property();
-            $this->expect(Lexer::SYMBOL, '=');
-            $assignments[] = [$property, $this->expression()];
-        } while ($this->accept(Lexer::SYMBOL, ','));
+        if ($this->accept(Lexer::KEYWORD, 'SET')) {
+            do {
+                $target = $this->target($source, false);
+                $this->expect(Lexer::SYMBOL, '=');
+                $assignments[] = [$target, $this->expression()];
+            } while ($this->accept(Lexer::SYMBOL, ','));
+        }
+
+        $removals = [];
+        if ($this->isWord($this->peek(), 'REMOVE')) {
+            $this->next();
+            do {
+                $removals[] = $this->target($source, true);
+            } while ($this->accept(Lexer::SYMBOL, ','));
+        }
+
+        if ([] === $assignments && [] === $removals) {
+            throw $this->error('SET or REMOVE expected', $this->peek());
+        }
         $where = $this->accept(Lexer::KEYWORD, 'WHERE') ? $this->expression() : null;
-        return new Update($source, $assignments, $where);
+        return new Update($source, $assignments, $where, $removals);
+    }
+
+    /**
+     * What UPDATE sets or removes: a property, or a path into the lists and maps it holds (newlist['today'], tags[0],
+     * tags[-1], settings.mail.enabled, friends.*.active; to set also tags[], a new element at the end). May start
+     * with the alias of the source (p.tags[0]).
+     */
+    private function target(Source $source, bool $remove): Target
+    {
+        $name = $this->expect(Lexer::IDENTIFIER);
+        if ($name->value === $source->alias && $this->peek()->is(Lexer::SYMBOL, '.')) {
+            $this->next();
+            $name = $this->expect(Lexer::IDENTIFIER);
+        }
+
+        $segments = [];
+        while (true) {
+            if ($this->peek()->is(Lexer::SYMBOL, '[')) {
+                if ($this->peek(1)->is(Lexer::SYMBOL, ']')) {
+                    if ($remove) {
+                        throw $this->error('[] appends an element: it can only be set, not removed', $this->peek());
+                    }
+                    $this->next();
+                    $this->next();
+                    $segments[] = null;
+                    continue;
+                }
+                $segments[] = $this->bracket();
+                continue;
+            }
+            if (!$this->accept(Lexer::SYMBOL, '.')) {
+                break;
+            }
+            $segments[] = $this->accept(Lexer::SYMBOL, '*') ? PathSegment::wildcard() : $this->expect(Lexer::IDENTIFIER)->value;
+        }
+
+        if ($remove && [] === $segments) {
+            throw $this->error(sprintf('REMOVE takes keys and elements, e.g. REMOVE %1$s[0] or REMOVE %1$s[\'key\']; to remove the property %1$s from the stored objects: ALTER CLASS … DROP ATTRIBUTE %1$s', $name->value), $name);
+        }
+        return new Target($name->value, $segments, $name->position);
     }
 
     private function delete(): Delete
@@ -260,13 +316,16 @@ final class Parser
         return new SelectItem($expression, $alias, null, $text);
     }
 
-    private function source(): Source
+    /**
+     * @param (callable(): bool)|null $noAlias Whether the name after the class isn't its alias, but starts a clause.
+     */
+    private function source(?callable $noAlias = null): Source
     {
         $class = $this->expect(Lexer::IDENTIFIER);
         $alias = null;
         if ($this->accept(Lexer::KEYWORD, 'AS')) {
             $alias = $this->expect(Lexer::IDENTIFIER)->value;
-        } elseif ($this->peek()->is(Lexer::IDENTIFIER)) {
+        } elseif ($this->peek()->is(Lexer::IDENTIFIER) && !(null !== $noAlias && $noAlias())) {
             $alias = $this->next()->value;
         }
         // without an alias: the short name of the class

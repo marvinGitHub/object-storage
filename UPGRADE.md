@@ -1,5 +1,9 @@
 # Upgrading
 
+## From 1.0.0-rc.4 to 1.0.0-rc.5
+
+Nothing has to be migrated. OQL *(experimental)*: `UPDATE` takes paths as targets and a `REMOVE` clause; `REMOVE` isn't reserved, so properties and aliases named so keep working. An `UPDATE` without `SET` now says "SET or REMOVE expected".
+
 ## From 1.0.0-rc.3 to 1.0.0-rc.4
 
 Nothing has to be migrated. Check:

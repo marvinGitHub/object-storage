@@ -103,9 +103,11 @@ class ParserTest extends TestCase
             ['INSERT INTO T VALUES (1)', 'Expected ('],
             ['INSERT INTO T (a, b) VALUES (1)', '1 values for 2 properties'],
             ['INSERT INTO T (a.b) VALUES (1)', 'Only properties of the object itself'],
-            ['UPDATE T SET a.b = 1', 'Only properties of the object itself'],
+            ['UPDATE T SET a.b. = 1', 'Expected a name'],
+            ['UPDATE T REMOVE a', 'REMOVE takes keys and elements'],
+            ['INSERT INTO T (a.b) VALUES (1)', 'Only properties of the object itself'],
             ['UPDATE T SET UUID = 1', 'Expected a name, found "UUID"'],
-            ['UPDATE T a = 1', 'Expected SET'],
+            ['UPDATE T a = 1', 'SET or REMOVE expected'],
             ['DELETE T', 'Expected FROM'],
             ['SELECT p.UUID.name FROM T p', 'Expected FROM, found "."'],
         ];
