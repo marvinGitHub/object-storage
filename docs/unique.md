@@ -40,7 +40,7 @@ $unique->findOwner('customer-email', 'Ada@Example.com'); // its UUID, without lo
 | `paths` | the path of the value in the stored data, e.g. `email` or `address.email`; several paths for a combination: `['customer', 'number']` |
 | `caseInsensitive` | strings differing in case and surrounding spaces are the same, e.g. for emails |
 
-- Paths work like the [fields of a search index](search.md#defining-an-index): they lead into the stored data, a referenced object counts by its UUID. `['customer', 'number']` makes an order number unique per customer.
+- Paths work like the [fields of a search index](search.md#defining-an-index): they lead into the stored data, a referenced object counts by its UUID; a position or key in brackets names one element: `emails[0]`, `addresses['home'].email` (see [Paths](search.md#paths-into-lists-and-keys)). `['customer', 'number']` makes an order number unique per customer.
 - A path has to lead to a single value. Lists can't be unique: `create()` refuses an index none of whose objects has a single value at its paths.
 - **Missing values**: as in SQL, an object with a `null` value at a path has no key, so any number of objects may lack it.
 - **Values are compared as stored**, numbers and numeric strings alike: `12`, `12.0` and `"12"` are the same value.

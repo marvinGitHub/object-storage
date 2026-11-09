@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\Query;
 
+use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
@@ -29,8 +30,8 @@ final class Printer
         return match (true) {
             $expression instanceof Literal => self::literal($expression->value),
             $expression instanceof Parameter => is_numeric($expression->name) ? '?' . $expression->name : ':' . $expression->name,
-            $expression instanceof Column => implode('.', [...$expression->segments, ...($expression->uuid ? ['UUID'] : [])]),
-            $expression instanceof BoundColumn => implode('.', [$expression->alias, ...$expression->path, ...($expression->uuid && [] !== $expression->path ? ['UUID'] : [])]),
+            $expression instanceof Column => Path::toString([...$expression->segments, ...($expression->uuid ? ['UUID'] : [])]),
+            $expression instanceof BoundColumn => Path::toString([$expression->alias, ...$expression->path, ...($expression->uuid && [] !== $expression->path ? ['UUID'] : [])]),
             $expression instanceof OutputColumn => '#' . ($expression->index + 1),
             $expression instanceof FunctionCall => $expression->name . '(' . ($expression->star ? '*' : ($expression->distinct ? 'DISTINCT ' : '') . implode(', ', array_map([self::class, 'print'], $expression->arguments))) . ')',
             $expression instanceof Unary => 'NOT' === $expression->operator ? 'NOT (' . self::print($expression->operand) . ')' : '-(' . self::print($expression->operand) . ')',

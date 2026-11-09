@@ -67,7 +67,7 @@ A field takes a value from the **stored data** of an object, not from the object
 | Field parameter | Meaning |
 |---|---|
 | `name` | attribute name in the index, used in filters and sorting: letters, digits and `_`, starting with a letter |
-| `path` | path of the value in the stored data, separated by dots: `address.city`. A path segment that isn't a key of a list applies to all elements: `lines.title` collects the titles of all lines |
+| `path` | path of the value in the stored data, separated by dots: `address.city`. A path segment that isn't a key of a list applies to all elements: `lines.title` collects the titles of all lines. Lists and keys explicitly: `friends.*.name` (all elements), `friends[0].name` (by position, `[-1]` the last), `friends['alex'].name` (by key), see [Paths](#paths-into-lists-and-keys) |
 | `type` | the type the value is converted to, see below |
 | `searchable` | the full-text search covers the field (default) |
 | `filterable` | the field can be used in filters and facets |
@@ -81,6 +81,28 @@ What the path leads to:
 - **Referenced objects** as their UUID: a field `category` holds the UUID of the category, so a filter like `category = '<uuid>'` finds all products of a category.
 - **Into referenced objects**: `category.title` is the title of the referenced category, `labels.title` the titles of all referenced labels, see [Joins](#joins-paths-into-referenced-objects). Nested objects, e.g. an address, are referenced objects as well: `address.city`.
 - A missing value is `null`.
+
+### Paths into lists and keys
+
+Besides names separated by dots, a path may name the elements of lists and keys explicitly, also in referenced objects (`melia\ObjectStorage\Path\Path`):
+
+| Path | Value |
+|---|---|
+| `friends.*.name`, `friends[*].name` | the names of all friends, as a list (`STRING_ARRAY`) |
+| `friends[0].name`, `friends[-1].name` | the name of the first (last) friend |
+| `friendsByName['alex'].name` | the name at exactly the key `alex` of a map (`["alex"]` too; a quote is written twice: `['o''neil']`); also for keys with dots or spaces: `['a.b']` |
+| `friends.*.friends.*.name` | across several objects: the names of the friends of all friends (at most three references per path) |
+| `friends.*.emails[0]` | the first email of each friend |
+
+```php
+new Definition('members', Member::class, [
+    new Field('friendNames', 'friends.*.name', FieldType::STRING_ARRAY, filterable: true),
+    new Field('firstFriend', 'friends[0].name', filterable: true),
+    new Field('alex', "friendsByName['alex'].name"),
+]);
+```
+
+`*` applies the rest of the path to every element (and the values of a map), the results of all elements are merged into one list; a position or key that doesn't exist gives `null`. Changing a friend updates the documents built from it, as for any [join](#joins-paths-into-referenced-objects). A key in the data with `.`, `[`, `]`, quotes or exactly `*` is written in brackets (`['*']`); suggested fields do that. In requests (filter, sort, facets), name such fields by their names.
 
 ### Joins: paths into referenced objects
 

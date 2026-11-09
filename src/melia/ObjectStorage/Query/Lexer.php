@@ -27,7 +27,7 @@ final class Lexer
         'FALSE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'UUID',
     ];
 
-    private const array SYMBOLS = ['<>', '!=', '<=', '>=', '||', '=', '<', '>', '+', '-', '*', '/', '(', ')', ',', '.', ';'];
+    private const array SYMBOLS = ['<>', '!=', '<=', '>=', '||', '=', '<', '>', '+', '-', '*', '/', '(', ')', '[', ']', ',', '.', ';'];
 
     /**
      * @return list<Token>

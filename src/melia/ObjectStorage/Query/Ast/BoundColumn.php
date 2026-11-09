@@ -2,6 +2,8 @@
 
 namespace melia\ObjectStorage\Query\Ast;
 
+use melia\ObjectStorage\Path\PathSegment;
+
 /**
  * A column bound to a source: the path into the object of the alias; no path is the object itself (its UUID).
  * $uuid: the UUID of the object at the path (UUID), NULL if there is no reference.
@@ -11,7 +13,7 @@ namespace melia\ObjectStorage\Query\Ast;
 final readonly class BoundColumn implements Expr
 {
     /**
-     * @param list<string> $path
+     * @param list<string|PathSegment> $path See Path
      */
     public function __construct(public string $alias, public array $path, public bool $uuid = false)
     {

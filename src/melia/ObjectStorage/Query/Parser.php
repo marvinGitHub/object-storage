@@ -4,6 +4,7 @@ namespace melia\ObjectStorage\Query;
 
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
+use melia\ObjectStorage\Path\PathSegment;
 use melia\ObjectStorage\Query\Ast\Column;
 use melia\ObjectStorage\Query\Ast\Delete;
 use melia\ObjectStorage\Query\Ast\Expr;
@@ -199,7 +200,8 @@ final class Parser
             return new SelectItem(null, null);
         }
         // alias.*
-        if ($this->peek()->is(Lexer::IDENTIFIER) && $this->peek(1)->is(Lexer::SYMBOL, '.') && $this->peek(2)->is(Lexer::SYMBOL, '*')) {
+        if ($this->peek()->is(Lexer::IDENTIFIER) && $this->peek(1)->is(Lexer::SYMBOL, '.') && $this->peek(2)->is(Lexer::SYMBOL, '*')
+            && !$this->peek(3)->is(Lexer::SYMBOL, '.') && !$this->peek(3)->is(Lexer::SYMBOL, '[')) {
             $alias = $this->next()->value;
             $this->next();
             $this->next();
@@ -401,10 +403,22 @@ final class Parser
                     return $this->functionCall($token);
                 }
                 $segments = [$token->value];
-                while ($this->accept(Lexer::SYMBOL, '.')) {
+                while (true) {
+                    if ($this->peek()->is(Lexer::SYMBOL, '[')) {
+                        $segments[] = $this->bracket();
+                        continue;
+                    }
+                    if (!$this->accept(Lexer::SYMBOL, '.')) {
+                        break;
+                    }
                     // p.UUID, p.category.UUID: the UUID of the object there, at the end of a path
                     if ($this->accept(Lexer::KEYWORD, 'UUID')) {
                         return new Column($segments, $token->position, true);
+                    }
+                    // p.friends.*.name: all elements
+                    if ($this->accept(Lexer::SYMBOL, '*')) {
+                        $segments[] = PathSegment::wildcard();
+                        continue;
                     }
                     $segments[] = $this->expect(Lexer::IDENTIFIER)->value;
                 }
@@ -412,6 +426,31 @@ final class Parser
             default:
                 throw $this->error('Unexpected end of the query', $token);
         }
+    }
+
+    /**
+     * A segment in brackets: [0], [-1] (the element at a position), ['key'] (exactly that key), [*] (all elements).
+     */
+    private function bracket(): PathSegment
+    {
+        $open = $this->expect(Lexer::SYMBOL, '[');
+        $token = $this->next();
+        if ($token->is(Lexer::SYMBOL, '*')) {
+            $segment = PathSegment::wildcard();
+        } elseif ($token->is(Lexer::STRING)) {
+            $segment = PathSegment::key($token->value);
+        } else {
+            $negative = $token->is(Lexer::SYMBOL, '-');
+            if ($negative) {
+                $token = $this->next();
+            }
+            if (!$token->is(Lexer::NUMBER) || !ctype_digit($token->value)) {
+                throw $this->error("A position (e.g. [0]), a key (e.g. ['alex']) or * expected in brackets", $open);
+            }
+            $segment = PathSegment::index($negative ? -(int)$token->value : (int)$token->value);
+        }
+        $this->expect(Lexer::SYMBOL, ']');
+        return $segment;
     }
 
     private function functionCall(Token $name): FunctionCall

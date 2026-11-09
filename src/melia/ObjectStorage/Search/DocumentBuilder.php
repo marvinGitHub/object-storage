@@ -4,6 +4,8 @@ namespace melia\ObjectStorage\Search;
 
 use Closure;
 use melia\ObjectStorage\Metadata\Metadata;
+use melia\ObjectStorage\Path\PathSegment;
+use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\Search\Index\Definition;
 use melia\ObjectStorage\Serialization\DateTimeValue;
 use melia\ObjectStorage\UUID\Validator;
@@ -112,9 +114,11 @@ final class DocumentBuilder
      * Reads the value at a path. A referenced object yields its UUID, or, with $follow and segments left, the value
      * at the rest of the path in the referenced object. A path segment that isn't a key of a list is applied to
      * every element, so "lines.title" yields the titles of all lines, and "tags.title" those of all referenced tags.
+     * Segments of Path: "*" applies the rest to all elements (also of referenced objects: "friends.*.name"), [0]
+     * reads the element at a position ([-1] the last), ['key'] exactly that key.
      *
      * @param mixed $value The data to read from.
-     * @param string[] $segments The remaining path segments.
+     * @param list<string|PathSegment> $segments The remaining path segments, see Path::parse().
      * @param string $reserved The reserved reference name the data was written with.
      * @param (callable(string): (array{0: array, 1: string, 2?: string}|null))|null $follow Reads a referenced
      *        object: its data and the reserved reference name it was written with; null if it doesn't exist.
@@ -151,24 +155,59 @@ final class DocumentBuilder
 
         $segment = array_shift($segments);
 
+        if ($segment instanceof PathSegment) {
+            // a date is a single value, it has no elements or keys
+            if (DateTimeValue::isEncodedAny($value, $reservedDateTime)) {
+                return null;
+            }
+            switch ($segment->kind) {
+                case PathSegment::WILDCARD:
+                    return static::collect(array_values($value), $segments, $reserved, $follow, $followed, $reservedDateTime);
+                case PathSegment::INDEX:
+                    $index = (int)$segment->value;
+                    if ($index < 0 && array_is_list($value)) {
+                        $index += count($value);
+                    }
+                    return array_key_exists($index, $value)
+                        ? static::extract($value[$index], $segments, $reserved, $follow, $followed, $reservedDateTime)
+                        : null;
+                default:
+                    $key = (string)$segment->value;
+                    return array_key_exists($key, $value)
+                        ? static::extract($value[$key], $segments, $reserved, $follow, $followed, $reservedDateTime)
+                        : null;
+            }
+        }
+
         if (array_key_exists($segment, $value)) {
             return static::extract($value[$segment], $segments, $reserved, $follow, $followed, $reservedDateTime);
         }
 
         if (array_is_list($value)) {
-            $result = [];
-            foreach ($value as $element) {
-                $extracted = static::extract($element, [$segment, ...$segments], $reserved, $follow, $followed, $reservedDateTime);
-                if (is_array($extracted) && !DateTimeValue::isEncodedAny($extracted, $reservedDateTime)) {
-                    array_push($result, ...array_values($extracted));
-                } elseif (null !== $extracted) {
-                    $result[] = $extracted;
-                }
-            }
-            return [] === $result ? null : $result;
+            return static::collect($value, [$segment, ...$segments], $reserved, $follow, $followed, $reservedDateTime);
         }
 
         return null;
+    }
+
+    /**
+     * The values at the rest of a path in each element, as one list (lists found are merged); null if there are none.
+     *
+     * @param list<mixed> $elements
+     * @param list<string|PathSegment> $segments
+     */
+    private static function collect(array $elements, array $segments, string $reserved, ?callable $follow, int $followed, ?string $reservedDateTime): ?array
+    {
+        $result = [];
+        foreach ($elements as $element) {
+            $extracted = static::extract($element, $segments, $reserved, $follow, $followed, $reservedDateTime);
+            if (is_array($extracted) && !DateTimeValue::isEncodedAny($extracted, $reservedDateTime)) {
+                array_push($result, ...array_values($extracted));
+            } elseif (null !== $extracted) {
+                $result[] = $extracted;
+            }
+        }
+        return [] === $result ? null : $result;
     }
 
     /**
@@ -271,7 +310,8 @@ final class DocumentBuilder
         $fields = [];
 
         foreach ($data as $key => $value) {
-            $path = '' === $prefix ? (string)$key : $prefix . '.' . $key;
+            $segment = Path::toString([(string)$key]);
+            $path = '' === $prefix ? $segment : $prefix . (str_starts_with($segment, '[') ? '' : '.') . $segment;
             $resolved = static::resolveReference($value, $reserved);
             $isReference = $resolved !== $value;
             $value = static::dates($resolved);

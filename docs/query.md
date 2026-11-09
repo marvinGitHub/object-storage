@@ -63,7 +63,13 @@ Keywords ignore case; `--` starts a comment up to the end of the line, `/* … *
 - **Paths lead into referenced objects**: `p.category.parent.title` follows the references to the category and its parent, at most three references per path (as the [search indexes](search.md#joins-paths-into-referenced-objects)). A referenced object that doesn't exist (anymore) or has expired gives `NULL`; so does a property that doesn't exist.
 - **`UUID` is the UUID of an object**, a reserved keyword: `SELECT UUID, name FROM Product WHERE UUID IN (?, ?)`, with several sources `p.UUID`, and at the end of a path the UUID of the referenced object there: `p.category.UUID` (`NULL` if there is no reference). It can be used wherever a value can: in the selection, conditions, `ON`, `GROUP BY`, `ORDER BY`, `UPDATE` and `DELETE`. As a keyword it ignores case; a property named uuid is written in backticks: `` p.`uuid` ``.
 - **The alias alone is the object** too, as its UUID: `SELECT p FROM Product p` lists the UUIDs; a reference is its UUID as well, so `JOIN Category c ON c = p.category` (or `ON c.UUID = p.category`) joins the referenced category.
-- Lists give arrays, also through references: `p.labels.title` gives the titles of all labels (`NULL` for an empty list). Lists can be selected, but not compared.
+- Lists give arrays, also through references: `p.labels.title` gives the titles of all labels (`NULL` for an empty list). Lists can be selected, but not compared — except as follows.
+- **Elements of lists and keys** (see [Paths](search.md#paths-into-lists-and-keys)), also across referenced objects:
+  - `u.friends[0].name`, `u.friends[-1].name`: by position (the last); `u.friendsByName['alex'].name`: by key (also keys with dots or spaces; `` `quoted` `` names are keys too).
+  - `u.friends.*.name` (or `u.friends[*].name`): the values of all elements, a list; `u.friends.*.friends.*.name` across several objects; `u.friends.*.UUID` the UUIDs of the referenced objects.
+  - **A condition comparing a path with `*` directly is true if it is true for any element**: `WHERE u.friends.*.name = 'Alex'`, also `<`, `>`, `IN`, `BETWEEN`, `LIKE`. Negated (`!=`, `NOT IN`, `NOT BETWEEN`, `NOT LIKE`) it is true if it is true for no element, also for no elements at all: `WHERE u.friends.*.name != 'Alex'` finds those without a friend named Alex. Inside functions (`LOWER(u.friends.*.name)`) the path is the list, which isn't compared.
+  - Joins: `JOIN User f ON f = u.friends.*` joins every friend (by hashing too).
+  - `alias.*` alone is still all properties of the source; `u.friends[*]` is the list.
 - `*` selects the properties of the objects (with joins: as `alias.property`), `alias.*` those of one source; references as UUIDs.
 
 ### Values and operators
@@ -171,7 +177,7 @@ The caches of the storage are bounded: `ObjectStorage` and configurations of typ
 | Condition | Index |
 |---|---|
 | `UUID = ?`, `UUID IN (…)` | none needed |
-| `path = 'text'`, `path IN ('text', …)` | a [unique index](unique.md) on exactly this path |
+| `path = 'text'`, `path IN ('text', …)` | a [unique index](unique.md) on exactly this path (`emails[0]` too, not with `*`) |
 | the same, on a filterable `string` field | a Loupe [search index](search.md) of the class that is built and has no pending changes, passed as `new Oql($storage, $searchManager)` |
 
 ```php

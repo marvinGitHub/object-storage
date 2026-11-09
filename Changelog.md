@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+### Added
+- Paths into lists and keys (`docs/search.md`, "Paths into lists and keys"), the same for search indexes, unique indexes and OQL, also across referenced objects: `friends.*.name` / `friends[*].name` (all elements), `friends[0].name`, `friends[-1].name` (by position), `friends['alex'].name` (by key, also keys with dots), `friends.*.friends.*.name`. `melia\ObjectStorage\Path\Path` parses and writes them (`PathSegment`, `InvalidPathException`); `Field::getPathSegments()` and `DocumentBuilder::extract()` take its segments. Suggested fields write keys that aren't plain names in brackets.
+- OQL *(experimental)*: the same paths in columns; a condition comparing a path with `*` directly is true if it is true for any element (`WHERE u.friends.*.name = 'Alex'`), negated for none; `JOIN … ON f = u.friends.*`; a search index field of a list of strings with the same path answers `=`/`IN` on a path with `*`.
+
+### Changed
+- **Breaking:** in paths of fields and unique indexes, `[`, `]` and a segment that is exactly `*` are syntax now; a key containing them is written in brackets: `['a[1]']`.
+
 ## [1.0.0-rc.2] - 2026-11-09
 
 The second release candidate of 1.0: dates are stored inline and can be filtered and sorted in OQL, search indexes and the viewer. **Read [UPGRADE.md](UPGRADE.md#from-100-rc1-to-100-rc2) before upgrading.**

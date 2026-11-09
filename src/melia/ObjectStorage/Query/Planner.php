@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage\Query;
 
+use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
@@ -235,7 +236,7 @@ final class Planner
     private function column(Column $column, string $mode, array $visible): Expr
     {
         $segments = $column->segments;
-        $text = implode('.', [...$segments, ...($column->uuid ? ['UUID'] : [])]);
+        $text = Path::toString([...$segments, ...($column->uuid ? ['UUID'] : [])]);
         if ([] === $this->aliases) {
             throw new QueryException(sprintf('"%s" isn\'t possible here: there is no object to read it of', $text), $column->position);
         }

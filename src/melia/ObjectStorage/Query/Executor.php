@@ -7,6 +7,8 @@ use DateTimeZone;
 use Generator;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Path\Path;
+use melia\ObjectStorage\Path\PathSegment;
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
@@ -263,7 +265,14 @@ final class Executor
                 return;
             }
             if ($expression instanceof BoundColumn && [] !== $expression->path && is_array($keys[$expression->alias] ?? null)) {
-                $keys[$expression->alias][$expression->path[0]] = true;
+                $first = $expression->path[0];
+                if (is_string($first)) {
+                    $keys[$expression->alias][$first] = true;
+                } elseif (PathSegment::KEY === $first->kind) {
+                    $keys[$expression->alias][(string)$first->value] = true;
+                } else {
+                    $keys[$expression->alias] = null; // p[0], p.*: any property
+                }
             }
             foreach ($expression->children() as $child) {
                 $collect($child);
@@ -322,10 +331,10 @@ final class Executor
                 $objects[] = $object;
                 continue;
             }
-            // the joined objects by the value they are compared with; NULL and arrays never equal anything
-            $value = Values::normalize($this->evaluate($join['hash'][1], [$alias => $object]));
-            if (null !== $value && !is_array($value)) {
-                $buckets[Values::equalityKey($value)][] = $object;
+            // the joined objects by the value they are compared with; NULL never equals anything, a list (of a path
+            // with *) is compared element by element
+            foreach (self::hashKeys($this->evaluate($join['hash'][1], [$alias => $object])) as $key) {
+                $buckets[$key][$object['uuid']] = $object;
             }
         }
 
@@ -333,8 +342,10 @@ final class Executor
             if (null === $buckets) {
                 $candidates = $objects;
             } else {
-                $value = Values::normalize($this->evaluate($join['hash'][0], $row));
-                $candidates = null === $value || is_array($value) ? [] : ($buckets[Values::equalityKey($value)] ?? []);
+                $candidates = [];
+                foreach (self::hashKeys($this->evaluate($join['hash'][0], $row)) as $key) {
+                    $candidates += $buckets[$key] ?? [];
+                }
             }
             $matched = false;
             foreach ($candidates as $object) {
@@ -348,6 +359,23 @@ final class Executor
                 yield $row + [$alias => null];
             }
         }
+    }
+
+    /**
+     * The keys of the hash join for a value: none for NULL, one per element for a list.
+     *
+     * @return list<string>
+     */
+    private static function hashKeys(mixed $value): array
+    {
+        $keys = [];
+        foreach (is_array($value) && array_is_list($value) ? $value : [$value] as $element) {
+            $element = Values::normalize(is_array($element) ? (DateValue::fromStored($element) ?? $element) : $element);
+            if (null !== $element && !is_array($element)) {
+                $keys[] = Values::equalityKey($element);
+            }
+        }
+        return array_values(array_unique($keys));
     }
 
     // ---- results: [values of the selection, values to sort by, objects for *, position] ----
@@ -551,6 +579,11 @@ final class Executor
     {
         $value = fn(Expr $child): mixed => $this->evaluate($child, $row, $group);
 
+        $wildcard = self::wildcardOperand($expression);
+        if (null !== $wildcard) {
+            return $this->anyElement($expression, $wildcard, $row, $group);
+        }
+
         switch (true) {
             case $expression instanceof Literal:
                 return $expression->value;
@@ -565,6 +598,10 @@ final class Executor
                 $found = DocumentBuilder::extract($object['data'], $expression->path, $object['reserved'], $this->follow);
                 // p.category.UUID: a reference there is its UUID; anything else isn't one
                 if ($expression->uuid) {
+                    if (is_array($found) && Path::hasWildcard($expression->path)) {
+                        $uuids = array_values(array_filter($found, static fn(mixed $v): bool => is_string($v) && UuidValidator::validate($v)));
+                        return [] === $uuids ? null : $uuids;
+                    }
                     return is_string($found) && UuidValidator::validate($found) ? $found : null;
                 }
                 return self::valueOf($found, $object);
@@ -613,6 +650,60 @@ final class Executor
             default:
                 throw new QueryException('Unknown expression ' . $expression::class);
         }
+    }
+
+    // ---- paths with * ----
+
+    /**
+     * The column with * a condition compares directly (=, <, IN, BETWEEN, LIKE …), if any: such a condition is
+     * checked for each element of the list.
+     */
+    private static function wildcardOperand(Expr $expression): ?BoundColumn
+    {
+        $operands = match (true) {
+            $expression instanceof Binary && in_array($expression->operator, ['=', '!=', '<', '<=', '>', '>='], true) => [$expression->left, $expression->right],
+            $expression instanceof InList, $expression instanceof Between, $expression instanceof Like => [$expression->operand],
+            default => [],
+        };
+        foreach ($operands as $operand) {
+            if ($operand instanceof BoundColumn && Path::hasWildcard($operand->path)) {
+                return $operand;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A condition on a path with *: true if it is true for any element (friends.*.name = 'Alex'); negated (!=,
+     * NOT IN, NOT BETWEEN, NOT LIKE) true if it is true for none, also for no elements. As in SQL, NULL if it is
+     * true for none but unknown for one.
+     */
+    private function anyElement(Binary|InList|Between|Like $condition, BoundColumn $column, array $row, ?array $group): ?bool
+    {
+        $negated = $condition instanceof Binary ? '!=' === $condition->operator : $condition->negated;
+        $object = $row[$column->alias] ?? null;
+        $found = $this->evaluate($column, $row, $group);
+        $elements = null === $found ? [] : (is_array($found) && array_is_list($found) ? $found : [$found]);
+
+        $result = false;
+        foreach ($elements as $element) {
+            $literal = new Literal(null === $object ? $element : self::valueOf($element, $object));
+            $positive = match (true) {
+                $condition instanceof Binary => new Binary(
+                    '!=' === $condition->operator ? '=' : $condition->operator,
+                    $condition->left === $column ? $literal : $condition->left,
+                    $condition->left === $column ? $condition->right : $literal,
+                ),
+                $condition instanceof InList => new InList($literal, $condition->values, false),
+                $condition instanceof Between => new Between($literal, $condition->low, $condition->high, false),
+                $condition instanceof Like => new Like($literal, $condition->pattern, false),
+            };
+            $result = Values::or($result, Values::truth($this->evaluate($positive, $row, $group)));
+            if (true === $result) {
+                break;
+            }
+        }
+        return $negated ? Values::not($result) : $result;
     }
 
     /**

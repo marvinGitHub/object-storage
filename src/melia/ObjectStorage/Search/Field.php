@@ -2,6 +2,9 @@
 
 namespace melia\ObjectStorage\Search;
 
+use melia\ObjectStorage\Path\Exception\InvalidPathException;
+use melia\ObjectStorage\Path\Path;
+use melia\ObjectStorage\Path\PathSegment;
 use melia\ObjectStorage\Search\Exception\InvalidIndexDefinitionException;
 use melia\ObjectStorage\Search\Index\Definition;
 
@@ -18,7 +21,8 @@ final readonly class Field
     /**
      * @param string $name The attribute name in the search index, e.g. "city".
      * @param string $path The path of the value in the stored data, separated by dots, e.g. "address.city".
-     *                     A referenced object is indexed as its UUID.
+     *                     A referenced object is indexed as its UUID. Lists: "friends.*.name" (all elements),
+     *                     "friends[0].name" (by position), "friends['alex'].name" (by key), see Path.
      * @param FieldType $type The type the value is converted to.
      * @param bool $searchable Whether the full-text search covers the field.
      * @param bool $filterable Whether the field can be used in filters (and facets).
@@ -42,8 +46,13 @@ final readonly class Field
             throw new InvalidIndexDefinitionException(sprintf('The field name "%s" is reserved.', $name));
         }
 
-        if ('' === trim($path) || str_contains($path, '..') || str_starts_with($path, '.') || str_ends_with($path, '.')) {
+        if ('' === trim($path)) {
             throw new InvalidIndexDefinitionException(sprintf('Invalid path "%s" for field "%s".', $path, $name));
+        }
+        try {
+            Path::parse($path);
+        } catch (InvalidPathException $e) {
+            throw new InvalidIndexDefinitionException(sprintf('Invalid path "%s" for field "%s": %s', $path, $name, $e->getMessage()), 0, $e);
         }
 
         if ($sortable && $type->isList()) {
@@ -52,11 +61,11 @@ final readonly class Field
     }
 
     /**
-     * @return string[] The segments of the path.
+     * @return list<string|PathSegment> The segments of the path, see Path::parse().
      */
     public function getPathSegments(): array
     {
-        return explode('.', $this->path);
+        return Path::parse($this->path);
     }
 
     public function toArray(): array

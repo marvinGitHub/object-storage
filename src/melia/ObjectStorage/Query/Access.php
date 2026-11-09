@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Query;
 
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
 use melia\ObjectStorage\Query\Ast\Expr;
@@ -27,7 +28,8 @@ use Throwable;
  * - UUID = 'uuid' or UUID IN (…): those objects, no index needed;
  * - path = 'text' or path IN ('text', …) on the path of a unique index (one path, also case-insensitive);
  * - the same on a filterable string field of a search index of Loupe that is built and has no pending changes
- *   (several such conditions are searched together).
+ *   (several such conditions are searched together); for a path with * (friends.*.name = 'Alex', true if any
+ *   element is) a filterable field of a list of strings with the same path.
  * Texts that are numbers aren't looked up ('12' equals the number 12 in OQL, which the indexes store otherwise),
  * nor are other comparisons, LIKE or number fields: the indexes convert values differently than OQL compares them.
  * An index naming more than MAX_CANDIDATES objects isn't used. Writes the indexes didn't see (without the managers
@@ -109,7 +111,7 @@ final class Access
     /**
      * path = 'text', 'text' = path, path IN ('text', …) of the source; UUID = '…' and UUID IN (…).
      *
-     * @return array{0: list<string>, 1: list<string>}|null
+     * @return array{0: list<string|\melia\ObjectStorage\Path\PathSegment>, 1: list<string>}|null
      */
     private static function lookup(Expr $condition, string $alias): ?array
     {
@@ -147,7 +149,8 @@ final class Access
                 continue;
             }
             foreach ($lookups as [$path, $values]) {
-                if (implode('.', $path) !== $definition->paths[0]) {
+                // unique indexes have single values; a path with * names several
+                if (Path::hasWildcard($path) || Path::toString($path) !== $definition->paths[0]) {
                     continue;
                 }
                 $uuids = [];
@@ -177,15 +180,28 @@ final class Access
             if (null === $definition) {
                 continue;
             }
+            // by the path as written the same way (friends[0].name, friends.*.name); single strings, lists of
+            // strings for paths with *
             $fields = [];
+            $lists = [];
             foreach ($definition->fields as $field) {
-                if ($field->filterable && FieldType::STRING === $field->type) {
-                    $fields[$field->path] = $field;
+                if (!$field->filterable) {
+                    continue;
+                }
+                try {
+                    $canonical = Path::toString($field->getPathSegments());
+                } catch (Throwable) {
+                    continue;
+                }
+                if (FieldType::STRING === $field->type) {
+                    $fields[$canonical] = $field;
+                } elseif (FieldType::STRING_ARRAY === $field->type) {
+                    $lists[$canonical] = $field;
                 }
             }
             $filters = [];
             foreach ($lookups as [$path, $values]) {
-                $field = $fields[implode('.', $path)] ?? null;
+                $field = Path::hasWildcard($path) ? ($lists[Path::toString($path)] ?? null) : ($fields[Path::toString($path)] ?? null);
                 if ($field instanceof Field) {
                     $quoted = array_map(static fn(string $value): string => "'" . str_replace("'", "''", $value) . "'", array_values(array_unique($values)));
                     $filters[] = sprintf('%s IN (%s)', $field->name, implode(', ', $quoted));

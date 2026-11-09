@@ -2,6 +2,8 @@
 
 namespace melia\ObjectStorage\Unique;
 
+use melia\ObjectStorage\Path\Exception\InvalidPathException;
+use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\Search\DocumentBuilder;
 use melia\ObjectStorage\Unique\Exception\InvalidUniqueIndexException;
 
@@ -46,14 +48,24 @@ final readonly class Definition
             throw new InvalidUniqueIndexException('A unique index needs at least one path.');
         }
         foreach ($paths as $path) {
-            if (!is_string($path) || !preg_match('/^[^.\s]+(\.[^.\s]+)*$/', $path)) {
-                throw new InvalidUniqueIndexException(sprintf('Invalid path "%s": keys separated by dots, e.g. "address.email".', (string)$path));
+            if (!is_string($path) || !preg_match('/^\S+$/', $path) || !self::isValidPath($path)) {
+                throw new InvalidUniqueIndexException(sprintf('Invalid path "%s": keys separated by dots, e.g. "address.email" or "emails[0]".', (string)$path));
             }
         }
         if (count($paths) !== count(array_unique($paths))) {
             throw new InvalidUniqueIndexException('A path is listed twice.');
         }
         $this->paths = $paths;
+    }
+
+    private static function isValidPath(string $path): bool
+    {
+        try {
+            Path::parse($path);
+            return true;
+        } catch (InvalidPathException) {
+            return false;
+        }
     }
 
     /**
@@ -69,7 +81,7 @@ final readonly class Definition
         $values = [];
         $normalized = [];
         foreach ($this->paths as $path) {
-            $value = DocumentBuilder::extract($data, explode('.', $path), $reservedReferenceName);
+            $value = DocumentBuilder::extract($data, Path::parse($path), $reservedReferenceName);
             if (null === $value || is_array($value) || is_object($value)) {
                 return null;
             }
