@@ -2,7 +2,10 @@
 
 namespace melia\ObjectStorage\Query;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use Generator;
+use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Query\Ast\Between;
 use melia\ObjectStorage\Query\Ast\Binary;
@@ -51,6 +54,9 @@ final class Executor
 
     /** @var list<string>|null */
     private ?array $classNames = null;
+
+    /** NOW(): the same for the whole statement */
+    private ?DateValue $now = null;
 
     private \Closure $follow;
 
@@ -205,14 +211,17 @@ final class Executor
     }
 
     /**
-     * An object of a row: its UUID, data and reserved reference name; null if expired or not readable.
+     * An object of a row: its UUID, data, reserved reference name and reserved key of dates; null if expired or not
+     * readable.
      *
-     * @return array{uuid: string, data: array, reserved: string}|null
+     * @return array{uuid: string, data: array, reserved: string, dateTime: string}|null
      */
     public static function objectOf(RawObject $raw): ?array
     {
         $data = $raw->isExpired() ? null : json_decode($raw->data, true);
-        return is_array($data) ? ['uuid' => $raw->uuid, 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName()] : null;
+        return is_array($data)
+            ? ['uuid' => $raw->uuid, 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName()]
+            : null;
     }
 
     /**
@@ -469,7 +478,7 @@ final class Executor
         // the references of * are read with the row
         foreach ($stars as $alias => $data) {
             if (null !== $data) {
-                $stars[$alias] = ['data' => $data, 'reserved' => $row[$alias]['reserved'], 'uuid' => $row[$alias]['uuid']];
+                $stars[$alias] = ['data' => $data, 'reserved' => $row[$alias]['reserved'], 'dateTime' => $row[$alias]['dateTime'], 'uuid' => $row[$alias]['uuid']];
             }
         }
         return [$values, $keys, $stars, $position];
@@ -519,13 +528,13 @@ final class Executor
             $row = [];
             foreach ($columns as [, $i, $alias, $property]) {
                 if (null === $alias) {
-                    $row[] = $result[0][$i];
+                    $row[] = self::output($result[0][$i]);
                     continue;
                 }
                 $object = $result[2][$alias] ?? null;
                 $row[] = null === $object || !array_key_exists($property, $object['data'])
                     ? null
-                    : DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow);
+                    : self::output(self::valueOf(DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow), $object));
             }
             $rows[] = $row;
         }
@@ -558,7 +567,7 @@ final class Executor
                 if ($expression->uuid) {
                     return is_string($found) && UuidValidator::validate($found) ? $found : null;
                 }
-                return $found;
+                return self::valueOf($found, $object);
             case $expression instanceof FunctionCall:
                 if ('REF' === $expression->name) {
                     $uuid = Values::text($value($expression->arguments[0]));
@@ -604,6 +613,25 @@ final class Executor
             default:
                 throw new QueryException('Unknown expression ' . $expression::class);
         }
+    }
+
+    /**
+     * A value read from an object: a date as stored becomes a DateValue. Values read through references are
+     * marked with the reserved key of the object they were read from: dates there use the default key, unless
+     * their object has another one (rare: a property with the name of the key).
+     */
+    private static function valueOf(mixed $found, array $object): mixed
+    {
+        if (!is_array($found)) {
+            return $found;
+        }
+        return DateValue::fromStored($found, $object['dateTime'] ?? null) ?? $found;
+    }
+
+    /** a value as returned in a result: a date as its point in time in UTC as stored */
+    private static function output(mixed $value): mixed
+    {
+        return $value instanceof DateValue ? $value->utc : $value;
     }
 
     private static function equals(mixed $a, mixed $b): ?bool
@@ -671,6 +699,9 @@ final class Executor
                 return null;
             case 'IFNULL':
                 return $arguments[0] ?? $arguments[1];
+            case 'NOW':
+                // the same for the whole statement
+                return $this->now ??= new DateValue(new DateTimeImmutable('now', new DateTimeZone('UTC')));
         }
         if (null === $first) {
             return null;
@@ -706,8 +737,90 @@ final class Executor
                     return mb_substr($text, $start, $length, 'UTF-8');
                 }
                 return null === $length ? $text : mb_substr($text, 0, max(0, $length - 1), 'UTF-8');
+            case 'DATETIME':
+                return $this->date($first, $arguments[1] ?? null);
+            case 'DATE':
+            case 'YEAR':
+            case 'MONTH':
+            case 'DAY':
+            case 'HOUR':
+            case 'MINUTE':
+            case 'SECOND':
+                $timezone = self::timezone($arguments[1] ?? null);
+                $date = $this->date($first, $timezone)?->in($timezone);
+                return null === $date ? null : match ($name) {
+                    'DATE' => $date->format('x-m-d'),
+                    'YEAR' => (int)$date->format('Y'),
+                    'MONTH' => (int)$date->format('n'),
+                    'DAY' => (int)$date->format('j'),
+                    'HOUR' => (int)$date->format('G'),
+                    'MINUTE' => (int)$date->format('i'),
+                    'SECOND' => (int)$date->format('s'),
+                };
+            case 'DATE_ADD':
+                return $this->dateAdd($first, $arguments[1], $arguments[2]);
         }
         throw new QueryException('Unknown function ' . $name);
+    }
+
+    /**
+     * A value as a date: a date; a text that is one (in the time zone if it has no Z or offset); a number as seconds
+     * since 1970-01-01 UTC. Null for anything else.
+     */
+    private function date(mixed $value, mixed $timezone = null): ?DateValue
+    {
+        $value = Values::normalize($value);
+        if ($value instanceof DateValue) {
+            return $value;
+        }
+        if (is_string($value)) {
+            return DateValue::fromText($value, self::timezone($timezone));
+        }
+        if ((is_int($value) || is_float($value)) && is_finite($value) && abs($value) < 1e12) {
+            $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $value), new DateTimeZone('UTC'));
+            return false === $date ? null : new DateValue($date);
+        }
+        return null;
+    }
+
+    /** the name of a time zone given to a date function, UTC if none */
+    private static function timezone(mixed $timezone): string
+    {
+        if (null === $timezone) {
+            return 'UTC';
+        }
+        $name = (string)Values::text($timezone);
+        try {
+            return (new DateTimeZone($name))->getName();
+        } catch (Throwable) {
+            throw new QueryException(sprintf("Unknown time zone '%s'", $name));
+        }
+    }
+
+    /**
+     * DATE_ADD(date, amount, unit): the date plus a whole number of seconds, minutes, hours, days, weeks, months or
+     * years (negative to subtract), in the time zone of the date (a day is a day of the calendar, also across daylight
+     * saving time). As in PHP and SQLite, a month that doesn't have the day goes on into the next (January 31 plus a
+     * month is March 3, or 2 in a leap year).
+     */
+    private function dateAdd(mixed $value, mixed $amount, mixed $unit): ?DateValue
+    {
+        $date = $this->date($value);
+        $number = Values::number($amount);
+        $unitName = Values::text($unit);
+        if (null === $date || null === $number || null === $unitName) {
+            return null;
+        }
+        $units = ['SECOND' => 'second', 'MINUTE' => 'minute', 'HOUR' => 'hour', 'DAY' => 'day', 'WEEK' => 'week', 'MONTH' => 'month', 'YEAR' => 'year'];
+        $key = rtrim(strtoupper(trim($unitName)), 'S');
+        if (!isset($units[$key])) {
+            throw new QueryException(sprintf("Unknown unit '%s' for DATE_ADD: SECOND, MINUTE, HOUR, DAY, WEEK, MONTH or YEAR", $unitName));
+        }
+        if (floor($number) != $number || abs($number) > 1e9) {
+            throw new QueryException(sprintf('DATE_ADD adds whole %ss, not %s', strtolower($key), $number));
+        }
+        $changed = $date->date->modify(sprintf('%+d %s', (int)$number, $units[$key]));
+        return new DateValue($changed, $date->class);
     }
 
     /** the running values of an aggregate of a group */

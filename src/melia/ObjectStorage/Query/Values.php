@@ -6,16 +6,18 @@ namespace melia\ObjectStorage\Query;
  * The values of queries as in SQL (SQLite): NULL is unknown, so comparisons with it are unknown (null) and logic is
  * three-valued; booleans are the numbers 1 and 0; numbers are compared as numbers (1 = 1.0), strings by their bytes,
  * and numbers sort before strings. A number and a string that is a number ('97.65') are compared as numbers, as in
- * MySQL: objects have no schema, a property may hold numbers as text. Lists and objects (arrays) can't be compared,
- * only sorted (after strings).
+ * MySQL: objects have no schema, a property may hold numbers as text. Dates (DateValue) are compared by their point
+ * in time, also with a text that is a date ('2026-01-01', read as UTC), and sort between numbers and strings. Lists
+ * and objects (arrays) can't be compared, only sorted (after strings).
  *
  * @internal Not part of the public API; may change in any release.
  */
 final class Values
 {
     private const int NUMBER = 1;
-    private const int STRING = 2;
-    private const int ARRAY = 3;
+    private const int DATE = 2;
+    private const int STRING = 3;
+    private const int ARRAY = 4;
 
     /** booleans as the numbers 1 and 0 */
     public static function normalize(mixed $value): mixed
@@ -27,6 +29,7 @@ final class Values
     {
         return match (true) {
             is_int($value), is_float($value) => self::NUMBER,
+            $value instanceof DateValue => self::DATE,
             is_string($value) => self::STRING,
             default => self::ARRAY,
         };
@@ -39,7 +42,8 @@ final class Values
     {
         $a = self::normalize($a);
         $b = self::normalize($b);
-        if (null === $a || null === $b || is_array($a) || is_array($b) || is_object($a) || is_object($b)) {
+        if (null === $a || null === $b || is_array($a) || is_array($b)
+            || (is_object($a) && !$a instanceof DateValue) || (is_object($b) && !$b instanceof DateValue)) {
             return null;
         }
         return self::order($a, $b);
@@ -66,12 +70,29 @@ final class Values
         } elseif (self::NUMBER === self::rank($b) && is_string($a) && is_numeric($a)) {
             $a = self::numberOf(trim($a));
         }
+        // a date and a text that is a date: as dates; a text that isn't one with the date as text, as SQLite does
+        if ($a instanceof DateValue && is_string($b)) {
+            $date = DateValue::fromText($b);
+            if (null === $date) {
+                $a = $a->utc;
+            } else {
+                $b = $date;
+            }
+        } elseif ($b instanceof DateValue && is_string($a)) {
+            $date = DateValue::fromText($a);
+            if (null === $date) {
+                $b = $b->utc;
+            } else {
+                $a = $date;
+            }
+        }
         $rank = self::rank($a) <=> self::rank($b);
         if (0 !== $rank) {
             return $rank;
         }
         return match (self::rank($a)) {
             self::NUMBER => $a <=> $b,
+            self::DATE => $a->compare($b),
             self::STRING => strcmp($a, $b) <=> 0,
             default => strcmp(json_encode($a), json_encode($b)) <=> 0,
         };
@@ -90,6 +111,7 @@ final class Values
             is_float($value) => is_finite($value) && floor($value) === $value && abs($value) < 1e18
                 ? 'd' . (int)$value
                 : 'd' . sprintf('%.17g', $value),
+            $value instanceof DateValue => 't' . $value->utc,
             is_string($value) => 's' . $value,
             default => 'a' . json_encode($value),
         };
@@ -102,7 +124,17 @@ final class Values
      */
     public static function equalityKey(mixed $value): string
     {
-        return is_string($value) && is_numeric($value) ? self::key(self::numberOf(trim($value))) : self::key($value);
+        if (is_string($value)) {
+            if (is_numeric($value)) {
+                return self::key(self::numberOf(trim($value)));
+            }
+            // a text that is a date may equal a date
+            $date = DateValue::fromText($value);
+            if (null !== $date) {
+                return self::key($date);
+            }
+        }
+        return self::key($value);
     }
 
     /**
@@ -111,6 +143,7 @@ final class Values
     public static function truth(mixed $value): ?bool
     {
         return match (true) {
+            $value instanceof DateValue => true,
             null === $value, is_array($value), is_object($value) => null,
             is_bool($value) => $value,
             is_int($value), is_float($value) => 0 != $value,
@@ -119,14 +152,15 @@ final class Values
     }
 
     /**
-     * A value as a number for arithmetic: strings by the number they start with (0 if none), null for null and
-     * arrays.
+     * A value as a number for arithmetic: strings by the number they start with (0 if none), dates as seconds since
+     * 1970-01-01 UTC, null for null and arrays.
      */
     public static function number(mixed $value): int|float|null
     {
         $value = self::normalize($value);
         return match (true) {
             is_int($value), is_float($value) => $value,
+            $value instanceof DateValue => $value->timestamp(),
             is_string($value) => preg_match('/^\s*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?/', $value, $match) ? self::numberOf(trim($match[0])) : 0,
             default => null,
         };
@@ -140,7 +174,8 @@ final class Values
     }
 
     /**
-     * A value as text, e.g. for || and LIKE: numbers as written, floats with a fraction (2.0), booleans as 1 and 0.
+     * A value as text, e.g. for || and LIKE: numbers as written, floats with a fraction (2.0), booleans as 1 and 0,
+     * dates as their point in time in UTC as stored.
      */
     public static function text(mixed $value): ?string
     {
@@ -148,6 +183,7 @@ final class Values
         return match (true) {
             null === $value => null,
             is_string($value) => $value,
+            $value instanceof DateValue => $value->utc,
             is_int($value) => (string)$value,
             is_float($value) => json_encode($value, JSON_PRESERVE_ZERO_FRACTION),
             default => json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),

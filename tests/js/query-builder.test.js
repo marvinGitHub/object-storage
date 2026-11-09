@@ -16,6 +16,8 @@ const fields = QB.createFields([
     {name: 'uuid', path: 'uuid', type: 'string', filterable: true, reserved: true},
     {name: 'secret', path: 'secret', type: 'string', filterable: false},
     {name: 'counts', path: 'counts', type: 'array<number>', filterable: true},
+    {name: 'born', path: 'born', type: 'date', filterable: true},
+    {name: 'visits', path: 'visits', type: 'array<date>', filterable: true},
     // a field named like the path of another: the name wins
     {name: 'other', path: 'name', type: 'number', filterable: true},
 ]);
@@ -48,6 +50,28 @@ test('lists, ranges and the IS operators', () => {
     for (const op of ['IS NULL', 'IS NOT NULL', 'IS EMPTY', 'IS NOT EMPTY']) {
         assert.deepEqual(write(condition('name', op, 'ignored')), {text: `name ${op}`});
     }
+});
+
+test('dates', () => {
+    assert.deepEqual(write(condition('born', '>=', ' 2026-01-01 ')), {text: "born >= '2026-01-01'"}, 'trimmed and quoted');
+    assert.deepEqual(write(condition('born', '<', '2026-01-01T10:00:00.5+01:00')), {text: "born < '2026-01-01T10:00:00.5+01:00'"});
+    assert.deepEqual(write(condition('born', 'IN', '2026-01-01, 2026-01-02 10:00')), {text: "born IN ('2026-01-01', '2026-01-02 10:00')"});
+    assert.deepEqual(write(condition('visits', 'NOT IN', '2026-03-01')), {text: "visits NOT IN ('2026-03-01')"});
+    assert.deepEqual(write(condition('born', 'BETWEEN', '2026-01-01T00:30+01:00, 2026-01-01')), {text: "born BETWEEN '2026-01-01T00:30+01:00' AND '2026-01-01'"}, 'by the point in time');
+    assert.match(write(condition('born', 'BETWEEN', '2026-01-02, 2026-01-01')).error, /earlier date first/);
+    assert.match(write(condition('born', '=', 'tomorrow')).error, /is no date/);
+    assert.match(write(condition('born', '=', '2026-02-30')).error, /is no date/, 'a day that does not exist');
+    assert.match(write(condition('born', 'LIKE', '2026%')).error, /isn't possible/);
+
+    assert.equal(QB.dateTime('2026-01-01'), Date.UTC(2026, 0, 1));
+    assert.equal(QB.dateTime('2026-01-01T01:00+01:00'), Date.UTC(2026, 0, 1));
+    assert.equal(QB.dateTime('2025-12-31 20:00-05:00'), Date.UTC(2026, 0, 1, 1));
+
+    // read back into the builder
+    const parsed = QB.parse("born BETWEEN '2026-01-01' AND '2026-02-01' AND visits IN ('2026-03-01')", fields);
+    assert.deepEqual(parsed.children.map(c => [c.field, c.op, c.value]), [['born', 'BETWEEN', '2026-01-01, 2026-02-01'], ['visits', 'IN', '2026-03-01']]);
+    assert.throws(() => QB.parse("born = 'soon'", fields), /is no date/);
+    assert.throws(() => QB.parse('born = 5', fields), /doesn't fit/);
 });
 
 test('patterns', () => {

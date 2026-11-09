@@ -71,12 +71,13 @@ Keywords ignore case; `--` starts a comment up to the end of the line, `/* … *
 | | |
 |---|---|
 | values | `'text'` (`''` for a quote), `12`, `-1.5`, `1e3`, `TRUE`, `FALSE`, `NULL` |
-| parameters | `?` (by position, from 0) and `:name`; the values are never read as part of the query |
+| parameters | `?` (by position, from 0) and `:name`: texts, numbers, booleans, `NULL` and dates (`DateTimeInterface`); the values are never read as part of the query |
 | arithmetic | `+ - * /`; `7 / 2` is `3.5`, a division by 0 is `NULL` |
 | text | `a \|\| b` joins texts |
 | comparison | `= != <> < <= > >=` |
 | conditions | `IS [NOT] NULL`, `[NOT] IN (a, b, …)`, `[NOT] BETWEEN low AND high`, `[NOT] LIKE pattern`, `AND`, `OR`, `NOT` |
 | functions | `LOWER`, `UPPER`, `LENGTH` (characters), `TRIM`, `SUBSTR(text, start [, length])` (from 1), `ABS`, `ROUND(number [, digits])`, `COALESCE(a, b, …)`, `IFNULL(a, b)` |
+| dates | `NOW()`, `DATETIME(x [, zone])`, `DATE(x [, zone])`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND(x [, zone])`, `DATE_ADD(x, amount, unit)`, see [Dates](#dates) |
 | aggregates | `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM([DISTINCT] x)`, `AVG`, `MIN`, `MAX` |
 
 The precedence of the operators, from the lowest, is that of SQLite: `OR`, `AND`, `NOT`, `= != IS IN LIKE BETWEEN`, `< <= > >=`, `+ -`, `* /`, `||`, unary `-`.
@@ -91,7 +92,32 @@ As in SQL:
 - Booleans are the numbers 1 and 0 (`active = 1` is `active = TRUE`).
 - Numbers are compared as numbers (`1 = 1.0`), texts by their bytes (with case: `'a' != 'A'`, `'B' < 'a'`); numbers come before texts.
 - A number and a number written as text are compared as numbers, as in MySQL: objects have no schema, and a price may be stored as `"97.65"` in some objects. `GROUP BY` and `DISTINCT` keep them apart (`'1.0'` and `1` are two groups).
+- Dates are compared by their point in time, see [Dates](#dates); they come after numbers and before texts.
 - Aggregates skip `NULL`; `COUNT` of no values is 0, `SUM`, `AVG`, `MIN`, `MAX` are `NULL`. `SUM` of integers is an integer, `AVG` a float. Without `GROUP BY`, aggregates make one row, also without any objects.
+
+### Dates
+
+Dates (`DateTimeInterface`, [stored inline](serialization.md#dates)) are values of their own:
+
+- **Compared by their point in time**, whatever their time zone: `ORDER BY createdAt`, `MIN(createdAt)`, `createdAt BETWEEN :from AND :to`.
+- **A text that is a date** is read as one when compared with a date: `'2026-01-01'`, `'2026-01-01 10:00'`, `'2026-01-01T10:00:00.5Z'`, `'2026-01-01T10:00:00+01:00'`. **Without `Z` or offset it is UTC**: `createdAt >= '2026-01-01'` means from midnight UTC; write the offset for a local time (`'2026-01-01T00:00+01:00'`). A text that isn't a date (also `'2026-02-30'`) is compared with the date as text, as in SQLite. Parameters may be dates (`DateTimeInterface`) or texts.
+- **In results**, a date is its point in time in UTC as stored: `2026-11-09T09:00:00.123456Z`. As text (`||`, `LIKE`) too, so `LIKE '2026-11%'` matches November in UTC; in arithmetic it is the seconds since 1970-01-01 UTC (`DATE_ADD(a, 1, 'DAY') - a` is 86400).
+- **Functions** take a date, a text that is one or a number (seconds since 1970); the time zone is UTC unless given as the last argument (an identifier like `'Europe/Berlin'` or an offset like `'+01:00'`). A value that isn't a date gives `NULL`.
+
+| function | |
+|---|---|
+| `NOW()` | the current time, the same for the whole statement |
+| `DATETIME(x [, zone])` | `x` as a date; a text without offset in the zone: `DATETIME('2026-01-01 10:00', 'Europe/Berlin')` |
+| `DATE(x [, zone])` | the day as text, `'2026-11-09'` |
+| `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND(x [, zone])` | the part as a number: `GROUP BY YEAR(createdAt, 'Europe/Berlin'), MONTH(createdAt, 'Europe/Berlin')` |
+| `DATE_ADD(x, amount, unit)` | plus a whole number of `SECOND`, `MINUTE`, `HOUR`, `DAY`, `WEEK`, `MONTH` or `YEAR` (also plural, negative to subtract), in the time zone of the date: a day is a day of its calendar, also across daylight saving time. A month that doesn't have the day goes on into the next (`DATE_ADD('2026-01-31', 1, 'MONTH')` is March 3), as in PHP and SQLite. |
+
+```sql
+SELECT title, createdAt FROM Post WHERE createdAt >= DATE_ADD(NOW(), -7, 'DAY') ORDER BY createdAt DESC
+SELECT YEAR(createdAt) AS y, MONTH(createdAt) AS m, COUNT(*) FROM Post GROUP BY y, m ORDER BY y, m
+```
+
+`INSERT` and `UPDATE` write dates as the storage does: a property declared as a date (`DateTimeImmutable`, `DateTime`, `DateTimeInterface`, nullable) takes a date or a text that is one (`SET publishedAt = '2026-11-09T10:00+01:00'`, written with the offset as its time zone), in the declared class; a property without type takes a date (`DATETIME(…)`, `NOW()`), a text stays a text. A date for a property declared as `string` is refused. Indexes aren't used for a text that is a date (`createdAt = '2026-01-01'`): they don't have dates as text.
 
 ### Joins
 

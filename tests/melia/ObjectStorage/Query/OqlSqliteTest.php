@@ -2,7 +2,10 @@
 
 namespace Tests\melia\ObjectStorage\Query;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use melia\ObjectStorage\Query\Oql;
+use melia\ObjectStorage\Serialization\DateTimeValue;
 use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\melia\ObjectStorage\TestCase;
@@ -14,7 +17,10 @@ use Throwable;
  * logic, GROUP BY, aggregates, HAVING, DISTINCT, ORDER BY, LIMIT, OFFSET), and their results compared.
  *
  * Paths into referenced objects (p.company.name) are scalar subqueries in SQL, a JOIN ON c = p.company compares
- * with the UUID of c; booleans are 1 and 0 in SQLite. The data is ASCII, as SQLite's LOWER, UPPER and LIKE ignore
+ * with the UUID of c; booleans are 1 and 0 in SQLite. Dates (born, in various time zones) are their point in time in
+ * UTC as stored in SQLite ('2010-05-01T08:00:00.000000Z'), compared there as text; OQL compares them as dates, also
+ * with texts written in other forms ('2010-05-01T10:00:00+02:00', '2010-05-01'), and YEAR(), DATE() etc. are
+ * strftime() and date(). The data is ASCII, as SQLite's LOWER, UPPER and LIKE ignore
  * case of ASCII letters only (OQL of all), and numbers are compared with a tolerance.
  */
 class OqlSqliteTest extends TestCase
@@ -23,6 +29,10 @@ class OqlSqliteTest extends TestCase
     private const array CITIES = ['Berlin', 'Bonn', 'berlin', 'Hamburg', 'Munich', "Val d'Or"];
     private const array COUNTRIES = ['DE', 'AT', 'CH', 'de'];
     private const array COMPANIES = ['Acme', 'Globex', 'Initech', 'Umbrella', 'acme', 'Stark'];
+    private const array TIMEZONES = ['UTC', 'Europe/Berlin', 'America/New_York', 'Asia/Kolkata', '+05:45', '-03:00'];
+
+    /** @var list<DateTimeImmutable> points in time of a seed, in UTC: people born at the same time, literals hitting them */
+    private array $instants = [];
 
     private PDO $sql;
     private Oql $oql;
@@ -53,7 +63,15 @@ class OqlSqliteTest extends TestCase
         $this->sql->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, false);
         // no declared types: values stay as they are, as in the object storage
         $this->sql->exec('CREATE TABLE company (uuid, name, country, size)');
-        $this->sql->exec('CREATE TABLE person (uuid, name, age, score, active, city, company, friend)');
+        $this->sql->exec('CREATE TABLE person (uuid, name, age, score, active, city, company, friend, born)');
+        $this->instants = [];
+        for ($i = 0; $i < 12; $i++) {
+            // 1990 to 2030; some at midnight (UTC), some with microseconds
+            $seconds = 631152000 + $this->random(1262304000);
+            $seconds = $this->chance(0.25) ? $seconds - $seconds % 86400 : $seconds;
+            $micro = $this->chance(0.3) ? $this->random(1000000) : 0;
+            $this->instants[] = DateTimeImmutable::createFromFormat('U.u', sprintf('%d.%06d', $seconds, $micro), new DateTimeZone('UTC'));
+        }
 
         $maybe = fn(callable $value, float $null = 0.15): mixed => $this->chance($null) ? null : $value();
         $companies = [];
@@ -73,6 +91,8 @@ class OqlSqliteTest extends TestCase
                 $maybe(fn() => $this->chance(0.5)),
                 $maybe(fn() => $this->pick(self::CITIES)),
                 $maybe(fn() => $this->pick($companies), 0.25),
+                null,
+                $maybe(fn() => $this->pick($this->instants)->setTimezone(new DateTimeZone($this->pick(self::TIMEZONES))), 0.2),
             );
         }
         foreach ($people as $person) {
@@ -97,7 +117,7 @@ class OqlSqliteTest extends TestCase
             $insert->bindValue(4, $company->size, null === $company->size ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $insert->execute();
         }
-        $insert = $this->sql->prepare('INSERT INTO person VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $insert = $this->sql->prepare('INSERT INTO person VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         foreach ($people as $person) {
             $insert->bindValue(1, $uuids[$person]);
             $insert->bindValue(2, $person->name);
@@ -111,6 +131,7 @@ class OqlSqliteTest extends TestCase
             $insert->bindValue(6, $person->city);
             $insert->bindValue(7, null === $person->company ? null : $uuids[$person->company]);
             $insert->bindValue(8, null === $person->friend ? null : $uuids[$person->friend]);
+            $insert->bindValue(9, null === $person->born ? null : DateTimeValue::utc($person->born));
             $insert->execute();
         }
         // scores are numbers in SQLite too (bound as text above to keep floats exact)
@@ -176,6 +197,47 @@ class OqlSqliteTest extends TestCase
         return $this->pick($this->withoutFriends($columns));
     }
 
+    private function dateColumn(): array
+    {
+        $columns = [['p.born', 'p.born'], ['p.friend.born', '(SELECT born FROM person WHERE uuid = p.friend)']];
+        if (in_array('f', $this->aliases, true)) {
+            $columns[] = ['f.born', 'f.born'];
+        }
+        return $this->pick($this->withoutFriends($columns));
+    }
+
+    /**
+     * A date: in SQL as stored, in OQL in any form of the same point in time (or the same, $canonical).
+     */
+    private function dateLiteral(bool $canonical = false): array
+    {
+        $instant = $this->chance(0.7)
+            ? $this->pick($this->instants)
+            : DateTimeImmutable::createFromFormat('U', (string)(631152000 + $this->random(1262304000)), new DateTimeZone('UTC'));
+        $sql = "'" . DateTimeValue::utc($instant) . "'";
+        if ($canonical) {
+            return [$sql, $sql];
+        }
+        $micro = '000000' !== $instant->format('u');
+        $local = $instant->setTimezone(new DateTimeZone($this->pick(self::TIMEZONES)));
+        $forms = [DateTimeValue::utc($instant), $local->format($micro ? 'Y-m-d\TH:i:s.uP' : 'Y-m-d H:i:sP')];
+        if (!$micro && 0 === $instant->getTimestamp() % 60) {
+            $forms[] = $instant->format('Y-m-d\TH:i\Z');
+        }
+        if (!$micro && 0 === $instant->getTimestamp() % 86400) {
+            $forms[] = $instant->format('Y-m-d');
+        }
+        return ["'" . $this->pick($forms) . "'", $sql];
+    }
+
+    /** a part of a date, a number: [oql, sql] */
+    private function datePart(): array
+    {
+        [$d, $ds] = $this->dateColumn();
+        [$f, $format] = $this->pick([['YEAR', '%Y'], ['MONTH', '%m'], ['DAY', '%d'], ['HOUR', '%H'], ['MINUTE', '%M'], ['SECOND', '%S']]);
+        return ["$f($d)", "CAST(strftime('$format', $ds) AS INTEGER)"];
+    }
+
     private function numberLiteral(): array
     {
         $number = $this->chance(0.7) ? (string)($this->random(80) - 10) : sprintf('%.2f', ($this->random(400) - 100) / 8);
@@ -196,7 +258,7 @@ class OqlSqliteTest extends TestCase
         }
         [$a, $as] = $this->number($depth + 1);
         [$b, $bs] = $this->number($depth + 1);
-        return match ($this->random(9)) {
+        return match ($this->random(10)) {
             0 => ["($a + $b)", "($as + $bs)"],
             1 => ["($a - $b)", "($as - $bs)"],
             2 => ["($a * $b)", "($as * $bs)"],
@@ -210,6 +272,7 @@ class OqlSqliteTest extends TestCase
                 [$s, $ss] = $this->string($depth + 1);
                 return ["LENGTH($s)", "LENGTH($ss)"];
             })(),
+            8 => $this->datePart(),
             default => $this->numberColumn(),
         };
     }
@@ -220,7 +283,7 @@ class OqlSqliteTest extends TestCase
             return $this->chance(0.75) ? $this->stringColumn() : $this->stringLiteral();
         }
         [$a, $as] = $this->string($depth + 1);
-        return match ($this->random(7)) {
+        return match ($this->random(8)) {
             0 => ["LOWER($a)", "LOWER($as)"],
             1 => ["UPPER($a)", "UPPER($as)"],
             2 => (function () use ($a, $as, $depth): array {
@@ -232,6 +295,10 @@ class OqlSqliteTest extends TestCase
                 return ["COALESCE($a, $b)", "COALESCE($as, $bs)"];
             })(),
             4 => ["TRIM($a)", "TRIM($as, ' ')"],
+            5 => (function (): array {
+                [$d, $ds] = $this->dateColumn();
+                return ["DATE($d)", "date($ds)"];
+            })(),
             default => $this->stringColumn(),
         };
     }
@@ -260,7 +327,7 @@ class OqlSqliteTest extends TestCase
 
     private function predicate(int $depth = 0): array
     {
-        $kind = $this->random($depth < 2 ? 12 : 8);
+        $kind = $this->random($depth < 2 ? 14 : 10);
         $not = $this->chance(0.3);
         switch ($kind) {
             case 0:
@@ -302,6 +369,33 @@ class OqlSqliteTest extends TestCase
                 [$a, $as] = $this->booleanColumn();
                 return $this->pick([[$a, $as], ["$a = TRUE", "$as = TRUE"], ["$a = FALSE", "$as = FALSE"], ["NOT $a", "NOT $as"]]);
             case 8:
+                [$a, $as] = $this->dateColumn();
+                [$b, $bs] = $this->chance(0.7) ? $this->dateLiteral() : $this->dateColumn();
+                $op = $this->pick(['=', '!=', '<', '<=', '>', '>=']);
+                return ["$a $op $b", "$as $op $bs"];
+            case 9:
+                [$a, $as] = $this->dateColumn();
+                switch ($this->random(4)) {
+                    case 0:
+                        [$low, $lows] = $this->dateLiteral();
+                        [$high, $highs] = $this->dateLiteral();
+                        $between = $not ? 'NOT BETWEEN' : 'BETWEEN';
+                        return ["$a $between $low AND $high", "$as $between $lows AND $highs"];
+                    case 1:
+                        $values = [];
+                        for ($i = 0, $n = 1 + $this->random(3); $i < $n; $i++) {
+                            $values[] = $this->dateLiteral();
+                        }
+                        $in = $not ? 'NOT IN' : 'IN';
+                        return ["$a $in (" . implode(', ', array_column($values, 0)) . ')', "$as $in (" . implode(', ', array_column($values, 1)) . ')'];
+                    case 2:
+                        $is = $not ? 'IS NOT NULL' : 'IS NULL';
+                        return ["$a $is", "$as $is"];
+                    default:
+                        $day = substr($this->dateLiteral(true)[0], 1, 10);
+                        return ["DATE($a) = '$day'", "date($as) = '$day'"];
+                }
+            case 10:
                 [$a, $as] = $this->predicate($depth + 1);
                 return ["NOT ($a)", "NOT ($as)"];
             default:
@@ -362,7 +456,7 @@ class OqlSqliteTest extends TestCase
                 return ["SUM(DISTINCT $a)", "SUM(DISTINCT $as)"];
             })(),
             default => (function (): array {
-                [$a, $as] = $this->pick([$this->number(), $this->string()]);
+                [$a, $as] = $this->pick([$this->number(), $this->string(), $this->dateColumn()]);
                 $f = $this->pick(['MIN', 'MAX']);
                 return ["$f($a)", "$f($as)"];
             })(),
@@ -387,7 +481,7 @@ class OqlSqliteTest extends TestCase
         if ($grouped) {
             $keys = $this->random(3); // 0: aggregates only
             for ($i = 0; $i < $keys; $i++) {
-                $key = $this->pick([$this->stringColumn(), $this->numberColumn(), $this->booleanColumn(), $this->string(1)]);
+                $key = $this->pick([$this->stringColumn(), $this->numberColumn(), $this->booleanColumn(), $this->string(1), $this->dateColumn()]);
                 $groupBy[] = $key;
                 $select[] = $key;
             }
@@ -396,7 +490,7 @@ class OqlSqliteTest extends TestCase
             }
         } else {
             for ($i = 0, $n = 1 + $this->random(3); $i < $n; $i++) {
-                $select[] = $this->pick([$this->number(), $this->string(), $this->booleanColumn()]);
+                $select[] = $this->pick([$this->number(), $this->string(), $this->booleanColumn(), $this->dateColumn()]);
             }
         }
 
@@ -474,6 +568,8 @@ class OqlSqliteTest extends TestCase
                 [$s] = $this->stringLiteral();
                 return $this->pick([[$s, $s], ["LOWER(p.$property)", "LOWER(p.$property)"], ["p.$property || 'x'", "p.$property || 'x'"],
                     ["COALESCE(p.$property, $s)", "COALESCE(p.$property, $s)"], ['p.company.name', '(SELECT name FROM company WHERE uuid = p.company)']]);
+            case 'born':
+                return $this->pick([$this->dateLiteral(), $this->dateLiteral(), ['p.born', 'p.born'], ['COALESCE(p.born, ' . ($l = $this->dateLiteral(true))[0] . ')', "COALESCE(p.born, $l[1])"]]);
             case 'company':
                 $uuid = $this->pick($this->uuidsOf('Company') ?: [null]);
                 return null === $uuid ? ['NULL', 'NULL'] : ["REF('$uuid')", "'$uuid'"];
@@ -495,9 +591,11 @@ class OqlSqliteTest extends TestCase
             case 1:
                 // a person, with values but no paths
                 $values = [];
-                foreach (['name', 'age', 'score', 'active', 'city'] as $property) {
+                foreach (['name', 'age', 'score', 'active', 'city', 'born'] as $property) {
                     $values[$property] = match ($property) {
                         'age' => (string)$this->random(80),
+                        // as SQL gets it too
+                        'born' => $this->chance(0.2) ? 'NULL' : $this->dateLiteral(true)[0],
                         'score' => $this->numberLiteral()[0],
                         'active' => $this->pick(['TRUE', 'FALSE', 'NULL']),
                         default => $this->chance(0.2) ? 'NULL' : $this->stringLiteral()[0],
@@ -512,7 +610,7 @@ class OqlSqliteTest extends TestCase
                 return ["DELETE FROM Company WHERE size < $size", "DELETE FROM company WHERE size < $size", 'DELETE'];
             default:
                 $set = $setSql = [];
-                foreach ($this->some(['name', 'age', 'score', 'active', 'city', 'company', 'friend'], 1 + $this->random(3)) as $property) {
+                foreach ($this->some(['name', 'age', 'score', 'active', 'city', 'company', 'friend', 'born'], 1 + $this->random(3)) as $property) {
                     [$o, $s] = $this->personValue($property);
                     $set[] = "$property = $o";
                     $setSql[] = "$property = $s";
@@ -531,7 +629,7 @@ class OqlSqliteTest extends TestCase
     /** the tables of both, as SQL rows */
     private function tables(): array
     {
-        $people = 'SELECT UUID, name, age, score, active, city, company, friend FROM Person ORDER BY UUID';
+        $people = 'SELECT UUID, name, age, score, active, city, company, friend, born FROM Person ORDER BY UUID';
         $companies = 'SELECT UUID, name, country, size FROM Company ORDER BY UUID';
         return [
             [self::rows($this->oql->query($people)->rows, true), self::rows($this->oql->query($companies)->rows, true)],
@@ -559,7 +657,7 @@ class OqlSqliteTest extends TestCase
                 // the INSERT with the UUID OQL gave the object
                 $values = substr($oql, strpos($oql, 'VALUES (') + 8, -1);
                 $values = str_replace(['TRUE', 'FALSE'], ['1', '0'], $values);
-                $sql = sprintf("INSERT INTO person (uuid, name, age, score, active, city) VALUES ('%s', %s)", $result->column(0)[0], $values);
+                $sql = sprintf("INSERT INTO person (uuid, name, age, score, active, city, born) VALUES ('%s', %s)", $result->column(0)[0], $values);
                 $changed = $this->sql->exec($sql);
             } else {
                 $changed = $this->sql->exec($sql);

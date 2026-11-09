@@ -3,9 +3,13 @@
 namespace melia\ObjectStorage\Query;
 
 use AllowDynamicProperties;
+use DateTime;
+use DateTimeImmutable;
+use DateTimeInterface;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Serialization\DateTimeValue;
 use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\Transfer\RawObject;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
@@ -23,7 +27,9 @@ use Throwable;
  * and search indexes notified as for any write.
  *
  * - If the class can be loaded, values are checked against the types of its properties (int, float, string, bool,
- *   classes for REF(), nullable), and properties it doesn't declare are refused unless it allows dynamic ones.
+ *   dates, classes for REF(), nullable), and properties it doesn't declare are refused unless it allows dynamic ones.
+ *   A property declared as a date takes a date or a text that is one ('2026-01-01', UTC without offset); dates are
+ *   written inline as the storage writes them (see Serialization\DateTimeValue).
  * - All values are computed and checked before the first object is written: an error writes nothing.
  * - Each object is changed under its exclusive lock: read again, its condition checked again (another process may
  *   have changed it), then written. If writing an object fails (e.g. a unique value), the objects written before
@@ -69,14 +75,14 @@ final class Writer
             foreach ($plan->properties as $i => $property) {
                 $data[$property] = $this->executor->evaluate($values[$i], []);
             }
-            $objects[] = $this->dataOf($class, $data, $this->defaults(new ReflectionClass($class), $data), Metadata::RESERVED_REFERENCE_NAME_DEFAULT);
+            $objects[] = $this->dataOf($class, $data, $this->defaults(new ReflectionClass($class), $data), Metadata::RESERVED_NAME_DEFAULTS);
         }
         if ($dryRun) {
             return array_fill(0, count($objects), null);
         }
 
         $uuids = [];
-        foreach ($objects as [$data, $reserved]) {
+        foreach ($objects as [$data, $reservedNames]) {
             try {
                 $uuid = $this->storage->getNextAvailableUuid();
                 $metadata = new Metadata();
@@ -84,7 +90,9 @@ final class Writer
                 $metadata->setClassName($class);
                 $metadata->setVersion(Metadata::VERSION);
                 $metadata->setTimestampCreation(microtime(true));
-                $metadata->setReservedReferenceName($reserved);
+                foreach ($reservedNames as $kind => $name) {
+                    $metadata->setReservedName($kind, $name);
+                }
                 $metadata->setChecksumAlgorithm($this->storage->getStrategy()?->getChecksumAlgorithm() ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT);
                 $json = $this->serialize($data);
                 $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
@@ -129,7 +137,9 @@ final class Writer
             } else {
                 throw new QueryException(sprintf('%s of %s needs a value: it has no default', $name, $class->getName()));
             }
-            if (is_object($value) || (is_array($value) && str_contains((string)json_encode($value), '{'))) {
+            if ($value instanceof DateTimeInterface) {
+                $value = DateValue::of($value);
+            } elseif (is_object($value) || (is_array($value) && str_contains((string)json_encode($value), '{'))) {
                 throw new QueryException(sprintf('%s of %s needs a value: its default can\'t be written', $name, $class->getName()));
             }
             $defaults[$name] = $value;
@@ -171,13 +181,15 @@ final class Writer
                 if (null === $object || (null !== $plan->where && true !== Values::truth($this->executor->evaluate($plan->where, [$alias => $object])))) {
                     continue;
                 }
-                [$data, $reserved] = $this->updated($plan, $class, $object);
+                [$data, $reservedNames] = $this->updated($plan, $class, $object);
                 $json = $this->serialize($data);
                 if ($json === $raw->data) {
                     continue; // nothing changes
                 }
                 $metadata = clone $raw->metadata;
-                $metadata->setReservedReferenceName($reserved);
+                foreach ($reservedNames as $kind => $name) {
+                    $metadata->setReservedName($kind, $name);
+                }
                 $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
                 $metadata->setRevision($metadata->getRevision() + 1);
                 $this->storage->writeRaw(new RawObject($uuid, $json, $metadata), true);
@@ -196,7 +208,7 @@ final class Writer
     /**
      * The data of an object with the values of UPDATE, computed from its values before.
      *
-     * @return array{0: array, 1: string} the data and the reserved reference name
+     * @return array{0: array, 1: array<string, string>} the data and the reserved names (kind => name)
      */
     private function updated(WritePlan $plan, string $class, array $object): array
     {
@@ -204,7 +216,7 @@ final class Writer
         foreach ($plan->properties as $i => $property) {
             $values[$property] = $this->executor->evaluate($plan->rows[0][$i], [$plan->source->alias => $object]);
         }
-        return $this->dataOf($class, $values, $object['data'], $object['reserved']);
+        return $this->dataOf($class, $values, $object['data'], [Metadata::RESERVED_REFERENCE => $object['reserved'], Metadata::RESERVED_DATETIME => $object['dateTime']]);
     }
 
     // ---- DELETE ----
@@ -266,18 +278,19 @@ final class Writer
     /**
      * The data of an object with new values: checked against the class, references written as references.
      *
-     * @param array<string, mixed> $values Property => value (Reference for REF()).
+     * @param array<string, mixed> $values Property => value (Reference for REF(), DateValue for dates).
      * @param array $data The data before.
-     * @return array{0: array, 1: string} the data, sorted by property as the storage writes it, and the reserved
-     *         reference name (another one if a property has its name)
+     * @param array<string, string> $reservedNames The reserved names of the data before (kind => name).
+     * @return array{0: array, 1: array<string, string>} the data, sorted by property as the storage writes it, and
+     *         the reserved names (others if a property has their name)
      */
-    private function dataOf(string $class, array $values, array $data, string $reserved): array
+    private function dataOf(string $class, array $values, array $data, array $reservedNames): array
     {
         $reflection = class_exists($class) ? new ReflectionClass($class) : null;
         foreach ($values as $property => $value) {
             if ($value instanceof Reference) {
                 $this->checkReference($value, $class, $property, $reflection);
-            } elseif (is_array($value) || is_object($value)) {
+            } elseif (is_array($value) || (is_object($value) && !$value instanceof DateValue)) {
                 throw new QueryException(sprintf('%s of %s: lists and objects can\'t be written yet, only values and REF()', $property, $class));
             }
             if (null !== $reflection) {
@@ -286,15 +299,34 @@ final class Writer
             $data[$property] = $value;
         }
 
-        // the reserved name must not be a property; references keep their names
-        $properties = array_keys($data);
-        $chosen = $reserved;
-        while (in_array($chosen, $properties, true)) {
-            $chosen = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT, true);
-        }
-        $data = $this->withReferences($data, $reserved, $chosen);
+        // the reserved names must not be properties; references and dates written before keep their values
+        $chosen = Metadata::chooseReservedNames($reservedNames, array_keys($data));
+        $data = $this->withReferences($data, $reservedNames[Metadata::RESERVED_REFERENCE], $chosen[Metadata::RESERVED_REFERENCE]);
+        $data = $this->withDates($data, $reservedNames[Metadata::RESERVED_DATETIME], $chosen[Metadata::RESERVED_DATETIME]);
+
         ksort($data);
         return [$data, $chosen];
+    }
+
+    /**
+     * Dates written with the reserved key: those written before keep their value, new ones (DateValue) are written as
+     * the storage writes them.
+     */
+    private function withDates(array $data, string $before, string $reserved): array
+    {
+        foreach ($data as $key => $value) {
+            if ($value instanceof DateValue) {
+                $data[$key] = $value->stored($reserved);
+            } elseif (DateTimeValue::isEncoded($value, $before)) {
+                if ($before !== $reserved) {
+                    $data[$key] = [$reserved => $value[$before]] + $value;
+                    unset($data[$key][$before]);
+                }
+            } elseif (is_array($value)) {
+                $data[$key] = $this->withDates($value, $before, $reserved);
+            }
+        }
+        return $data;
     }
 
     /**
@@ -363,6 +395,9 @@ final class Writer
         if (null === $type || $value instanceof Reference) {
             return $value;
         }
+        if ($value instanceof DateValue && $type instanceof ReflectionNamedType && 'object' === $type->getName()) {
+            return $value;
+        }
         if (null === $value) {
             if (!$type->allowsNull()) {
                 throw new QueryException(sprintf('%s of %s is %s: NULL isn\'t possible', $property, $class->getName(), $type));
@@ -381,7 +416,7 @@ final class Writer
                 'bool' => is_bool($value) ? $value : null,
                 'true' => true === $value ? true : null,
                 'false' => false === $value ? false : null,
-                default => null,
+                default => self::dateFor($named, $value),
             };
             if (null !== $converted) {
                 return $converted;
@@ -390,9 +425,31 @@ final class Writer
         throw new QueryException(sprintf('%s of %s is %s, not %s', $property, $class->getName(), $type, self::describe($value)));
     }
 
+    /**
+     * A date for a property declared as a date class (DateTimeInterface, DateTimeImmutable, DateTime or a subclass):
+     * a date, or a text that is one; written with the declared class if it isn't one already. Null otherwise.
+     */
+    private static function dateFor(ReflectionNamedType $type, mixed $value): ?DateValue
+    {
+        $name = $type->getName();
+        if ($type->isBuiltin() || !(is_a($name, DateTimeInterface::class, true))) {
+            return null;
+        }
+        $date = DateValue::from($value);
+        if (null === $date) {
+            return null;
+        }
+        if (is_a($date->class, $name, true)) {
+            return $date;
+        }
+        // an interface (DateTimeInterface) keeps the class; a class of its own is written as declared
+        return is_a($name, DateTimeImmutable::class, true) || is_a($name, DateTime::class, true) ? $date->as($name) : $date;
+    }
+
     private static function describe(mixed $value): string
     {
         return match (true) {
+            $value instanceof DateValue => 'the date ' . $value->utc,
             is_string($value) => sprintf("the text '%s'", mb_strimwidth($value, 0, 40, '…')),
             is_bool($value) => $value ? 'TRUE' : 'FALSE',
             is_float($value) => 'the number ' . json_encode($value, JSON_PRESERVE_ZERO_FRACTION),

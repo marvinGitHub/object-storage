@@ -30,6 +30,7 @@ use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Metadata\Metadata;
+use melia\ObjectStorage\Serialization\DateTimeValue;
 use melia\ObjectStorage\Search\DocumentBuilder;
 use melia\ObjectStorage\Search\Engine\EngineInterface;
 use melia\ObjectStorage\Search\Field;
@@ -1078,6 +1079,25 @@ try {
                 }
             }
 
+            // the time zones of the dates that browsers don't know (abbreviations like CEST): their fixed offsets
+            $reservedDateTime = $metadata?->getReservedDateTimeName() ?? Metadata::RESERVED_DATETIME_NAME_DEFAULT;
+            $fixedOffsets = [];
+            $collectZones = static function (mixed $value) use (&$collectZones, &$fixedOffsets, $reservedDateTime): void {
+                if (DateTimeValue::isEncoded($value, $reservedDateTime)) {
+                    try {
+                        $zone = new DateTimeZone($value[DateTimeValue::KEY_TIMEZONE]);
+                        if (2 === ($zone->__serialize()['timezone_type'] ?? null)) {
+                            $fixedOffsets[$value[DateTimeValue::KEY_TIMEZONE]] = $zone->getOffset(new DateTimeImmutable('@0'));
+                        }
+                    } catch (Throwable) {
+                        // unknown: the widget shows it can't be edited
+                    }
+                } elseif (is_array($value)) {
+                    array_walk($value, $collectZones);
+                }
+            };
+            $collectZones(json_decode($json ?? '{}', true) ?: []);
+
             $size = 0;
             if ($exists) {
                 try {
@@ -1119,6 +1139,8 @@ try {
                 'metadataJson' => $metadataJson,
                 'metadataPath' => $metadataPath,
                 'linkCandidates' => $linkCandidates,
+                'reservedDateTime' => $reservedDateTime,
+                'fixedOffsets' => (object)$fixedOffsets,
                 'checksum' => $metadata?->getChecksum() ?? '',
                 'algorithm' => $metadata?->getChecksumAlgorithm() ?? '',
                 'isLocked' => $isLocked,

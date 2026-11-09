@@ -10,12 +10,12 @@ use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 
 class Metadata implements JsonSerializable
 {
-    public const RESERVED_REFERENCE_NAME_DEFAULT = '__reference';
     /** version of the metadata format; 2 added the revision */
     public const VERSION = 2;
 
     use AwareTrait;
     use AlgorithmAwareTrait;
+    use ReservedNamesTrait;
 
     private string $className;
     private float $timestampCreation;
@@ -26,8 +26,6 @@ class Metadata implements JsonSerializable
     private int $revision = 0;
 
     private ?float $timestampExpiresAt = null;
-
-    private ?string $reservedReferenceName;
 
     /**
      * @throws InvalidUUIDException
@@ -70,9 +68,7 @@ class Metadata implements JsonSerializable
             $metadata->setUuid($data['uuid']);
         }
 
-        if (isset($data['reservedReferenceName'])) {
-            $metadata->setReservedReferenceName($data['reservedReferenceName']);
-        }
+        $metadata->reservedNamesFromArray($data);
 
         return $metadata;
     }
@@ -233,28 +229,7 @@ class Metadata implements JsonSerializable
             'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
             'uuid' => $this->uuid ?? '',
-            'reservedReferenceName' => $this->getReservedReferenceName(),
+            ...$this->reservedNamesToArray(),
         ];
-    }
-
-    /**
-     * Retrieves the reserved reference name.
-     *
-     * @return string The reserved reference name associated with this instance.
-     */
-    public function getReservedReferenceName(): string
-    {
-        return $this->reservedReferenceName ?? static::RESERVED_REFERENCE_NAME_DEFAULT;
-    }
-
-    /**
-     * Sets the reserved reference name.
-     *
-     * @param string $reservedReferenceName The reserved reference name to set.
-     * @return void
-     */
-    public function setReservedReferenceName(string $reservedReferenceName): void
-    {
-        $this->reservedReferenceName = $reservedReferenceName;
     }
 }

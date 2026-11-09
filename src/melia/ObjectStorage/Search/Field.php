@@ -46,7 +46,7 @@ final readonly class Field
             throw new InvalidIndexDefinitionException(sprintf('Invalid path "%s" for field "%s".', $path, $name));
         }
 
-        if ($sortable && in_array($type, [FieldType::STRING_ARRAY, FieldType::NUMBER_ARRAY], true)) {
+        if ($sortable && $type->isList()) {
             throw new InvalidIndexDefinitionException(sprintf('The field "%s" is a list and can\'t be sortable.', $name));
         }
     }

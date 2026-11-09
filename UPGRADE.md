@@ -1,5 +1,13 @@
 # Upgrading
 
+## From 1.0.0-rc.1 to 1.0.0-rc.2
+
+**Dates are stored inline.** `DateTimeInterface` values are no longer records of their own, but stored in the object holding them (see [Serialization](docs/serialization.md#dates)). Nothing has to be migrated: dates stored as records still load, and the object holding them stores them inline the next time it is stored (in a property without type, a date that wasn't accessed is still a `LazyLoadReference` and keeps its reference until it is loaded). Check:
+
+- **Paths into dates**: OQL queries, search index fields and unique indexes reading the inner properties of the old date records (`createdAt.date`, `createdAt.timezone`) don't find them in objects stored from now on. The point in time in UTC is `createdAt.__datetime`.
+- **Leftover date records**: the old records of dates are not deleted when the object holding them stores them inline, nor later with that object, as it no longer references them. They are records of the class `DateTimeImmutable` or `DateTime` and can be listed with `$storage->list(DateTimeImmutable::class)`; delete those no other object references anymore.
+- **Shared `DateTime` instances** are no longer the same instance after loading, see [Serialization](docs/serialization.md#dates).
+
 ## From 0.0.x to 1.0
 
 1.0 contains all changes since 0.0.4, see the [Changelog](Changelog.md). Some of them were already published with 0.0.10; they are marked *(already in 0.0.10)* below and only concern you when coming from 0.0.9 or older. No migration of the stored data is needed when coming from 0.0.3 or later: old metadata (format version 1, without a revision) is still read as it is.

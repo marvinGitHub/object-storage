@@ -123,11 +123,15 @@ Engines usually expect one type per attribute; Loupe, for instance, derives it f
 
 | Type | Converts | to `null` |
 |---|---|---|
-| `STRING` | strings; numbers and booleans as text | lists, objects |
-| `NUMBER` | integers, floats, numeric strings (`"12.50"`) | other strings, booleans |
+| `STRING` | strings; numbers and booleans as text; dates as their point in time in UTC (`2026-11-09T09:00:00.000000Z`) | lists, objects |
+| `NUMBER` | integers, floats, numeric strings (`"12.50"`); dates as seconds since 1970 | other strings, booleans |
+| `DATE` | dates (`DateTimeInterface`, [stored inline](serialization.md#dates)), texts that are dates (`"2026-01-01"`, `"2026-01-01T10:00:00+01:00"`, UTC without offset), numbers as seconds since 1970-01-01 UTC; indexed as those seconds (with the microseconds as fraction) | other strings, booleans |
 | `BOOLEAN` | booleans, `0`/`1`, `"0"`/`"1"`, `"true"`/`"false"` | everything else |
 | `STRING_ARRAY` | lists, element by element as `STRING`; a single value as a list of one | |
 | `NUMBER_ARRAY` | lists, element by element as `NUMBER` | |
+| `DATE_ARRAY` | lists, element by element as `DATE`, e.g. `lines.deliveredAt` | |
+
+A date is one value, also in lists (`lines.deliveredAt` gives one date per line, not its parts); suggested fields of dates are `DATE` (filterable and sortable) and `DATE_ARRAY`. Hits return the values of date fields as their point in time in UTC, as stored (`"2026-11-09T09:00:00.000000Z"`), not as the numbers they are indexed as.
 
 Elements of a list that can't be converted are left out. This matters for data stored over time with changing types, e.g. a price stored as `"12.50"` by an older version of a class: it is still found by `price > 10`.
 
@@ -346,12 +350,15 @@ The filter language of Loupe ([documentation](https://github.com/loupe-php/loupe
 | empty values | `city IS NULL`, `city IS NOT NULL`, `tags IS EMPTY`, `tags IS NOT EMPTY` |
 | combinations | `AND`, `OR`, `NOT` and parentheses: `a = 1 AND NOT (b = 2 OR c IS NULL)` |
 | patterns (added by this library) | `name CONTAINS 'om'`, `name LIKE 'Ho%'`, `name LIKE 'H_ma'`, `NOT CONTAINS`, `NOT LIKE` |
+| dates (added by this library) | `createdAt >= '2026-01-01'`, `createdAt BETWEEN '2026-01-01' AND '2026-01-31T23:59:59+01:00'`, `createdAt IN ('2026-01-01')` |
 
 **NOT**: Loupe itself has no `NOT` before a condition or a group; the engine rewrites it into the negated conditions following De Morgan's laws (`Loupe\FilterNegation`): `NOT (a = 1 OR b IN ('x'))` is searched as `a != 1 AND b NOT IN ('x')`, `NOT (x > 1)` as `(x <= 1 OR x IS NULL)`. So `NOT` always finds exactly the documents the condition doesn't: in Loupe, `=`, `IN`, comparisons and `BETWEEN` are false for missing values, `!=` and `NOT IN` true. The geo filters can't be negated.
 
 **Numbers**: Loupe's filters take no negative numbers (except in geo filters), and `BETWEEN` swaps bounds in the wrong order; the engine writes negative numbers as strings, which Loupe compares as numbers (`price > '-7.5'`), and `BETWEEN` as comparisons, as in SQL (`Loupe\FilterNumbers`): `x BETWEEN -5 AND 5` is searched as `(x >= '-5' AND x <= 5)`, `BETWEEN 5 AND 1` finds nothing.
 
 `=` and `IN` compare strings exactly, with case; `LIKE` and `CONTAINS` ignore it. A filter Loupe fails on doesn't affect the next ones (Loupe 1.1 kept the parentheses of a failed filter open, failing every filter after it; the engine resets its parser).
+
+**Dates**: date fields are numbers in Loupe (seconds since 1970-01-01 UTC); the engine writes a text that is a date, compared with a date field, as that number (`Loupe\FilterDates`): `createdAt >= '2026-01-01'` is searched as `createdAt >= 1767225600`, dates before 1970 as negative numbers. The texts are read as in [OQL](query.md#dates): `'2026-01-01'`, `'2026-01-01 10:00'`, `'2026-01-01T10:00:00.5Z'`, `'2026-01-01T10:00:00+01:00'`, **in UTC without `Z` or offset**. Numbers are taken as seconds; a text that isn't a date stays as it is (and matches nothing). Sorting by a date field sorts by the point in time.
 
 **Patterns**: Loupe's filters have no `LIKE`; the engine adds `LIKE` (`%` any characters, `_` one, `\%` and `\_` the characters themselves) and `CONTAINS` (a part of the value, taken as it is), both ignoring case, written in capitals. A pattern is matched against the distinct values of the field, read from the documents (Loupe's facets split values at commas), and becomes an `IN` condition with the matching ones (and `= ''` if the pattern matches the empty string, as `LIKE '%'` does): it needs a filterable field of strings or lists of strings (a list matches if one of its values does) with at most `LoupeEngineIndex::MAX_PATTERN_VALUES` (10,000) distinct values, e.g. names or categories; for long texts, search the full text instead.
 

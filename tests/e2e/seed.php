@@ -56,4 +56,17 @@ $search->create(new Definition('people', stdClass::class, [
     new Field('friendAge', 'friend.age', FieldType::NUMBER, searchable: false, filterable: true),
 ]))->build();
 
+// an appointment with dates (date-widgets.spec.js): one in Berlin, one in a list, one in a time zone of an offset
+final class Appointment
+{
+    public function __construct(public string $title, public DateTimeImmutable $at, public array $reminders = [])
+    {
+    }
+}
+$storage->store(new Appointment(
+    'Dentist',
+    new DateTimeImmutable('2026-03-10 09:30:00', new DateTimeZone('Europe/Berlin')),
+    [new DateTime('2026-03-09T18:00:00Z'), new DateTimeImmutable('2026-03-10T07:00:00+05:45')],
+));
+
 echo "seeded $directory\n";

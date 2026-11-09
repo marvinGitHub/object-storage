@@ -211,7 +211,9 @@
             const op = operator.value;
             boolean.classList.toggle('hidden', type !== 'boolean' || QB.withoutValue(op));
             value.classList.toggle('hidden', type === 'boolean' || QB.withoutValue(op));
-            value.placeholder = placeholders[op] ?? (QB.isNumberType(type) ? 'number' : 'value');
+            value.placeholder = QB.isDateType(type)
+                ? ({'BETWEEN': '2026-01-01, 2026-12-31', 'IN': '2026-01-01, 2026-01-02', 'NOT IN': '2026-01-01, 2026-01-02'}[op] ?? '2026-01-01 or 2026-01-01T10:00+01:00 (UTC without offset)')
+                : placeholders[op] ?? (QB.isNumberType(type) ? 'number' : 'value');
             render();
         };
         field.addEventListener('input', updateOperators);

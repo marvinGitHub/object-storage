@@ -51,6 +51,7 @@ final class Printer
             false === $value => 'FALSE',
             is_string($value) => "'" . str_replace("'", "''", $value) . "'",
             is_float($value) => json_encode($value, JSON_PRESERVE_ZERO_FRACTION),
+            $value instanceof DateValue => "'" . $value->utc . "'",
             default => (string)$value,
         };
     }

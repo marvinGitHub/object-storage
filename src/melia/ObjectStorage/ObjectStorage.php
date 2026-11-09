@@ -34,6 +34,7 @@ use melia\ObjectStorage\Exception\ClassnameRegistrationFailureException;
 use melia\ObjectStorage\Exception\ClosureSerializationNotSupportedException;
 use melia\ObjectStorage\Exception\ConstraintViolationException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
+use melia\ObjectStorage\Exception\DateTimeRestorationFailureException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
@@ -78,6 +79,7 @@ use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Runtime\ClassRenameMap;
 use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
+use melia\ObjectStorage\Serialization\DateTimeValue;
 use melia\ObjectStorage\Serialization\LifecycleGuard;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\StorageAbstract;
@@ -870,12 +872,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         // ensure deterministic order of properties
         ksort($properties);
 
-        // pre-scan property names to avoid reserved reference name collision
-        $reserved = $context->getMetadata()->getReservedReferenceName();
-        while (array_key_exists($reserved, $properties)) {
-            $reserved = uniqid(Metadata::RESERVED_REFERENCE_NAME_DEFAULT, true);
-        }
-        $context->getMetadata()->setReservedReferenceName($reserved);
+        // reserved names (references, dates) no property has
+        $context->getMetadata()->reserveNamesAvoiding(array_keys($properties));
 
         $strategy = $this->getStrategy();
 
@@ -951,6 +949,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 }
 
                 $value = $value->getObject();
+            }
+
+            // dates are values: stored inline, not as objects of their own (a date loaded from an older record
+            // is stored inline from now on)
+            if ($value instanceof DateTimeInterface) {
+                return DateTimeValue::encode($value, $context->getMetadata()->getReservedDateTimeName());
             }
 
             $metadata = $context->getMetadata();
@@ -1220,7 +1224,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $finalValue = $value;
             $type = Reflection::getPropertyType($object, $propertyName);
 
-            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+            if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
+                $finalValue = $this->restoreDateTime($value, $metadata, $type);
+            } else if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
                 $referencedUuid = $value[$metadata->getReservedReferenceName()];
                 if (false === Validator::validate($referencedUuid)) {
                     /* reference UUID is not valid, so we just set the property to the value */
@@ -1272,7 +1278,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $childPath = $path;
             $childPath[] = $key;
 
-            if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
+            if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
+                $processed[$key] = $this->restoreDateTime($value, $metadata);
+            } else if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
                 $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, $childPath);
             } else if (is_array($value)) {
                 $processed[$key] = $this->hydrateArray($metadata, $object, $value, $childPath);
@@ -1302,8 +1310,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 continue;
             }
 
-            // invalid UUIDs are kept as they are, like hydrateProperties() does
-            if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
+            if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
+                $data[$key] = $this->restoreDateTime($value, $metadata);
+            } else if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
                 $data[$key] = $this->restoring[$value[$reserved]] ?? $this->load($value[$reserved]);
             } else {
                 $data[$key] = $this->resolveReferences($value, $metadata);
@@ -1311,6 +1320,35 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         return $data;
+    }
+
+    /**
+     * Restores a date stored inline (see Serialization\DateTimeValue). With the declared type of a property, a date of
+     * another class is converted to it, e.g. a stored DateTime for a property declared as DateTimeImmutable.
+     * What can't be restored as stored (an unknown class or time zone) is logged.
+     *
+     * @param array $value The encoded date.
+     * @param Metadata $metadata The metadata holding the reserved key of dates.
+     * @param ReflectionType|null $type The declared type of the property, if any.
+     * @throws DateTimeRestorationFailureException If the point in time can't be read.
+     */
+    protected function restoreDateTime(array $value, Metadata $metadata, ?ReflectionType $type = null): DateTimeInterface
+    {
+        $logger = $this->getLogger();
+        $onFailure = static function (Throwable $e) use ($logger): void {
+            $logger?->log($e);
+        };
+
+        $date = DateTimeValue::decode($value, $metadata->getReservedDateTimeName(), $this->getClassRenameMap(), $onFailure);
+
+        if ($type instanceof ReflectionNamedType && false === $type->isBuiltin()) {
+            $className = $type->getName();
+            if (false === $date instanceof $className) {
+                $date = DateTimeValue::convert($date, $className, $onFailure);
+            }
+        }
+
+        return $date;
     }
 
     /**

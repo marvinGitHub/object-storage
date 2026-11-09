@@ -2,6 +2,8 @@
 
 namespace Tests\melia\ObjectStorage\Query;
 
+use DateTimeImmutable;
+
 class Person
 {
     public function __construct(
@@ -12,6 +14,7 @@ class Person
         public ?string  $city = null,
         public ?Company $company = null,
         public ?Person  $friend = null,
+        public ?DateTimeImmutable $born = null,
     )
     {
     }

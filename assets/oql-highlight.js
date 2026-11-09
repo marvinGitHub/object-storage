@@ -19,7 +19,8 @@
         'TRUE', 'FALSE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'UUID'];
     const LITERALS = ['NULL', 'TRUE', 'FALSE'];
     const FUNCTIONS = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'LOWER', 'UPPER', 'LENGTH', 'TRIM', 'ABS', 'ROUND', 'SUBSTR',
-        'COALESCE', 'IFNULL', 'REF'];
+        'COALESCE', 'IFNULL', 'REF', 'NOW', 'DATETIME', 'DATE', 'DATE_ADD', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE',
+        'SECOND'];
 
     /**
      * The tokens of a query: {type, text, start}; types: keyword, literal (NULL, TRUE, FALSE), uuid (the keyword),

@@ -39,6 +39,9 @@ final class Planner
     public const array FUNCTIONS = [
         'LOWER' => [1, 1], 'UPPER' => [1, 1], 'LENGTH' => [1, 1], 'TRIM' => [1, 1], 'ABS' => [1, 1],
         'ROUND' => [1, 2], 'SUBSTR' => [2, 3], 'COALESCE' => [1, null], 'IFNULL' => [2, 2],
+        // dates: the time zone (second argument) is UTC if not given
+        'NOW' => [0, 0], 'DATETIME' => [1, 2], 'DATE' => [1, 2], 'DATE_ADD' => [3, 3],
+        'YEAR' => [1, 2], 'MONTH' => [1, 2], 'DAY' => [1, 2], 'HOUR' => [1, 2], 'MINUTE' => [1, 2], 'SECOND' => [1, 2],
         // a reference to the object of the UUID, for INSERT and UPDATE
         'REF' => [1, 1],
     ];
@@ -220,8 +223,11 @@ final class Planner
             );
         }
         $value = $this->parameters[$key];
+        if ($value instanceof \DateTimeInterface) {
+            return new Literal(DateValue::of($value));
+        }
         if (!(null === $value || is_scalar($value))) {
-            throw new QueryException(sprintf('The parameter %s must be a string, number, boolean or null', is_int($key) ? '?' : ':' . $key), $parameter->position);
+            throw new QueryException(sprintf('The parameter %s must be a string, number, boolean, date or null', is_int($key) ? '?' : ':' . $key), $parameter->position);
         }
         return new Literal($value);
     }

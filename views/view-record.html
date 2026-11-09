@@ -150,6 +150,18 @@
     <div class="card-header">Data</div>
     <div class="card-body">
         <form action="{{baseUrl}}" method="post">
+            <div class="hidden border rounded p-2 mb-2" id="date-fields">
+                <div class="d-flex align-items-center mb-1">
+                    <span class="small fw-semibold me-auto"><i class="bi bi-calendar-event"></i> Dates</span>
+                    <span class="small text-danger hidden" id="date-fields-invalid">The JSON below isn't valid: fix it to change dates here.</span>
+                </div>
+                <table class="table table-sm align-middle small mb-1">
+                    <thead><tr><th>Attribute</th><th>Date and time</th><th>Time zone</th><th>Class</th><th>Stored (UTC)</th></tr></thead>
+                    <tbody id="date-rows"></tbody>
+                </table>
+                <div class="form-text">The time is shown in the time zone of the date, as loading the object gives it. Changing the time zone keeps the time, so the point in time changes. Changes are written into the JSON below and saved with it.</div>
+            </div>
+            <datalist id="time-zones"></datalist>
             <textarea class="hidden form-control font-monospace small mb-2" id="textarea-data" name="json" rows="16" spellcheck="false">{{ json }}</textarea>
             <div id="div-data">
                 <!-- https://github.com/mohsen1/pretty-json -->
@@ -193,6 +205,7 @@
 {% else %}
 <div class="alert alert-warning" role="alert"><i class="bi bi-exclamation-triangle"></i> Record not found.</div>
 {% endif %}
+<script src="assets/date-fields.js"></script>
 <script>
     // while editing, leaving the record (storage or record link) asks before unsaved changes are lost
     let editing = false;
@@ -214,6 +227,7 @@
             textarea.classList.remove('hidden');
         }
         document.getElementById('index-selection')?.classList.remove('hidden');
+        renderDates();
         if (buttonSave) {
             buttonSave.classList.remove('hidden');
         }
@@ -234,8 +248,11 @@
 
         if (textarea) {
             textarea.classList.add('hidden');
+            // the changes (also those of the date widgets) are dropped
+            textarea.value = textarea.defaultValue;
         }
         document.getElementById('index-selection')?.classList.add('hidden');
+        document.getElementById('date-fields')?.classList.add('hidden');
 
         if (div) {
             div.classList.remove('hidden');
@@ -267,6 +284,94 @@
         }
 
         showExpiration();
+    });
+
+    // ---- dates: widgets writing into the JSON (assets/date-fields.js) ----
+
+    const reservedDateTime = {{ reservedDateTime|json_encode|raw }};
+    const fixedOffsets = {{ fixedOffsets|json_encode|raw }};
+
+    function renderDates() {
+        const panel = document.getElementById('date-fields');
+        const textarea = document.getElementById('textarea-data');
+        if (!panel || !textarea || typeof DateFields === 'undefined') {
+            return;
+        }
+        let data;
+        try {
+            data = JSON.parse(textarea.value);
+        } catch {
+            document.getElementById('date-fields-invalid').classList.remove('hidden');
+            return; // the rows stay as they were
+        }
+        document.getElementById('date-fields-invalid').classList.add('hidden');
+
+        const dates = DateFields.findDates(data, reservedDateTime);
+        panel.classList.toggle('hidden', dates.length === 0);
+        const zones = document.getElementById('time-zones');
+        if (!zones.children.length) {
+            const names = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+            zones.innerHTML = ['UTC', ...names].map(name => `<option value="${name}"></option>`).join('');
+        }
+
+        const rows = document.getElementById('date-rows');
+        rows.replaceChildren(...dates.map(date => {
+            const row = document.createElement('tr');
+            row.className = 'date-row';
+            row.dataset.path = JSON.stringify(date.path);
+            const local = DateFields.toLocal(date.utc, date.tz, fixedOffsets);
+            row.innerHTML = `
+                <td><code class="date-path"></code></td>
+                <td><input class="form-control form-control-sm date-local" type="datetime-local" step="0.001" aria-label="Date and time"></td>
+                <td><input class="form-control form-control-sm date-zone" list="time-zones" style="width: 12rem" aria-label="Time zone" spellcheck="false"></td>
+                <td class="text-muted font-monospace date-class"></td>
+                <td class="text-muted font-monospace date-utc"></td>
+                <td><button class="btn btn-outline-secondary btn-sm py-0 date-now" type="button" title="The current time in the time zone">Now</button></td>`;
+            row.querySelector('.date-path').textContent = DateFields.pathText(date.path);
+            row.querySelector('.date-class').textContent = date.class;
+            row.querySelector('.date-utc').textContent = date.utc;
+            const input = row.querySelector('.date-local');
+            const zone = row.querySelector('.date-zone');
+            zone.value = date.tz;
+            if (local === null) {
+                // an unknown time zone, or a year an input can't show: only in the JSON
+                input.type = 'text';
+                input.value = 'edit in the JSON';
+                input.disabled = zone.disabled = true;
+                row.querySelector('.date-now').disabled = true;
+                return row;
+            }
+            input.value = local;
+
+            const write = () => {
+                const utc = DateFields.fromLocal(input.value, zone.value.trim(), fixedOffsets);
+                input.classList.toggle('is-invalid', utc === null && input.value !== '');
+                zone.classList.toggle('is-invalid', utc === null);
+                if (utc === null) {
+                    return;
+                }
+                const text = DateFields.replaceDate(textarea.value, date.path, reservedDateTime, {utc, tz: zone.value.trim(), class: date.class});
+                if (text !== null) {
+                    textarea.value = text;
+                    row.querySelector('.date-utc').textContent = utc;
+                }
+            };
+            input.addEventListener('change', write);
+            zone.addEventListener('change', write);
+            row.querySelector('.date-now').addEventListener('click', () => {
+                const now = new Date().toISOString().replace(/(\.\d{3})Z$/, '$1000Z');
+                input.value = DateFields.toLocal(now, zone.value.trim(), fixedOffsets) ?? input.value;
+                write();
+            });
+            return row;
+        }));
+    }
+
+    // the widgets follow changes of the JSON typed into the text
+    let datesTimer = null;
+    document.getElementById('textarea-data')?.addEventListener('input', () => {
+        clearTimeout(datesTimer);
+        datesTimer = setTimeout(renderDates, 300);
     });
 
     // the expiration in the time zone of the browser, and the time left

@@ -129,6 +129,10 @@ final class Access
             if (!$value instanceof Literal || !is_string($value->value)) {
                 return null;
             }
+            // a text that is a date equals dates too, which indexes don't have as that text
+            if (!$column->uuid && null !== DateValue::fromText($value->value)) {
+                return null;
+            }
             $texts[] = $value->value;
         }
         return [$column->path, $texts];

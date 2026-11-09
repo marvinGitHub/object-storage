@@ -5,6 +5,7 @@ namespace melia\ObjectStorage\Search;
 use Closure;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\Search\Index\Definition;
+use melia\ObjectStorage\Serialization\DateTimeValue;
 use melia\ObjectStorage\UUID\Validator;
 
 /**
@@ -14,6 +15,9 @@ use melia\ObjectStorage\UUID\Validator;
  * Paths lead into referenced objects (a join when indexing): with a reader of referenced objects, "category.title"
  * reads the title of the referenced category. The UUIDs of the objects read are the attribute "referencedUuids" of
  * the document, so the documents depending on an object can be found when it changes.
+ *
+ * Dates stored inline are single values (not arrays of their parts): they are passed to the types of the fields as
+ * DateTimeInterface (see FieldType).
  */
 final class DocumentBuilder
 {
@@ -61,6 +65,7 @@ final class DocumentBuilder
     public function build(string $uuid, array $data, Metadata $metadata): array
     {
         $reserved = $metadata->getReservedReferenceName();
+        $reservedDateTime = $metadata->getReservedDateTimeName();
 
         $document = [
             'uuid' => $uuid,
@@ -75,8 +80,8 @@ final class DocumentBuilder
         };
 
         foreach ($this->definition->fields as $field) {
-            $value = static::extract($data, $field->getPathSegments(), $reserved, $follow);
-            $document[$field->name] = $field->type->convert($value);
+            $value = static::extract($data, $field->getPathSegments(), $reserved, $follow, 0, $reservedDateTime);
+            $document[$field->name] = $field->type->convert(static::dates($value, $reservedDateTime));
         }
 
         $uuids = array_keys($referenced);
@@ -115,8 +120,10 @@ final class DocumentBuilder
      *        object: its data and the reserved reference name it was written with; null if it doesn't exist.
      *        Without it, paths don't lead into referenced objects.
      * @param int $followed The number of references followed so far.
+     * @param string|null $reservedDateTime The reserved key of dates the data was written with (dates with the
+     *        default key are recognized too): a date is a single value, also in lists.
      */
-    public static function extract(mixed $value, array $segments, string $reserved, ?callable $follow = null, int $followed = 0): mixed
+    public static function extract(mixed $value, array $segments, string $reserved, ?callable $follow = null, int $followed = 0, ?string $reservedDateTime = null): mixed
     {
         $resolved = static::resolveReference($value, $reserved);
 
@@ -132,7 +139,7 @@ final class DocumentBuilder
         $value = $resolved;
 
         if ([] === $segments) {
-            if (is_array($value)) {
+            if (is_array($value) && !DateTimeValue::isEncodedAny($value, $reservedDateTime)) {
                 return array_map(static fn(mixed $v): mixed => static::resolveReference($v, $reserved), $value);
             }
             return $value;
@@ -145,14 +152,14 @@ final class DocumentBuilder
         $segment = array_shift($segments);
 
         if (array_key_exists($segment, $value)) {
-            return static::extract($value[$segment], $segments, $reserved, $follow, $followed);
+            return static::extract($value[$segment], $segments, $reserved, $follow, $followed, $reservedDateTime);
         }
 
         if (array_is_list($value)) {
             $result = [];
             foreach ($value as $element) {
-                $extracted = static::extract($element, [$segment, ...$segments], $reserved, $follow, $followed);
-                if (is_array($extracted)) {
+                $extracted = static::extract($element, [$segment, ...$segments], $reserved, $follow, $followed, $reservedDateTime);
+                if (is_array($extracted) && !DateTimeValue::isEncodedAny($extracted, $reservedDateTime)) {
                     array_push($result, ...array_values($extracted));
                 } elseif (null !== $extracted) {
                     $result[] = $extracted;
@@ -162,6 +169,21 @@ final class DocumentBuilder
         }
 
         return null;
+    }
+
+    /**
+     * Dates stored inline (also in lists) as DateTimeImmutable, without loading their classes.
+     */
+    public static function dates(mixed $value, ?string $reservedDateTime = null): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        $date = DateTimeValue::pointInTime($value, $reservedDateTime);
+        if (null !== $date) {
+            return $date;
+        }
+        return array_is_list($value) ? array_map(static fn(mixed $v): mixed => static::dates($v, $reservedDateTime), $value) : $value;
     }
 
     /**
@@ -178,7 +200,7 @@ final class DocumentBuilder
 
     /**
      * Suggests fields for the values in stored data: full text for texts, filters for everything else,
-     * sorting for numbers and booleans. References (UUIDs) are only filterable.
+     * sorting for numbers, dates and booleans. References (UUIDs) are only filterable.
      *
      * @param (callable(string): (array{0: array, 1: string, 2?: string}|null))|null $follow Reads a referenced object
      *        (see extract()): its values are suggested as well, e.g. "category.title" next to "category"; for a list
@@ -227,7 +249,7 @@ final class DocumentBuilder
                 type: $type,
                 searchable: $isText,
                 filterable: !$isText || FieldType::STRING_ARRAY === $type,
-                sortable: in_array($type, [FieldType::NUMBER, FieldType::BOOLEAN], true),
+                sortable: in_array($type, [FieldType::NUMBER, FieldType::BOOLEAN, FieldType::DATE], true),
             );
         }
 
@@ -252,7 +274,7 @@ final class DocumentBuilder
             $path = '' === $prefix ? (string)$key : $prefix . '.' . $key;
             $resolved = static::resolveReference($value, $reserved);
             $isReference = $resolved !== $value;
-            $value = $resolved;
+            $value = static::dates($resolved);
 
             if (is_array($value) && !array_is_list($value) && $depth < 3) {
                 $fields += static::suggestPaths($value, $reserved, $follow, $path, $depth + 1, $followed, $listed);
@@ -278,6 +300,7 @@ final class DocumentBuilder
                 }
                 $type = match ($type) {
                     FieldType::NUMBER, FieldType::NUMBER_ARRAY => FieldType::NUMBER_ARRAY,
+                    FieldType::DATE, FieldType::DATE_ARRAY => FieldType::DATE_ARRAY,
                     FieldType::BOOLEAN => null,
                     default => FieldType::STRING_ARRAY,
                 };

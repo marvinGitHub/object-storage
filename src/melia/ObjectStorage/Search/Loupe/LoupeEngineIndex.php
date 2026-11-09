@@ -2,6 +2,9 @@
 
 namespace melia\ObjectStorage\Search\Loupe;
 
+use DateTimeImmutable;
+use DateTimeZone;
+use melia\ObjectStorage\Serialization\DateTimeValue;
 use Loupe\Loupe\BrowseParameters;
 use Loupe\Loupe\Exception\InvalidDocumentException;
 use Loupe\Loupe\Internal\Filter\Lexer;
@@ -215,9 +218,10 @@ final class LoupeEngineIndex implements EngineIndexInterface
             ->withShowRankingScore('' !== $request->query);
 
         if (null !== $request->filter && '' !== trim($request->filter)) {
-            // NOT first: it turns LIKE into NOT LIKE and the like, which become IN conditions then; negative
-            // numbers last, also those NOT and the patterns write
-            $parameters = $parameters->withFilter(FilterNumbers::rewrite($this->expandPatterns(FilterNegation::rewrite($request->filter))));
+            // NOT first: it turns LIKE into NOT LIKE and the like, which become IN conditions then; dates as
+            // numbers; negative numbers last, also those NOT, the patterns and the dates write
+            $dateFields = $this->definition->fieldNames(static fn(Field $field): bool => in_array($field->type, [FieldType::DATE, FieldType::DATE_ARRAY], true));
+            $parameters = $parameters->withFilter(FilterNumbers::rewrite(FilterDates::rewrite($this->expandPatterns(FilterNegation::rewrite($request->filter)), $dateFields)));
         }
 
         // without a sort, Loupe sorts by relevance
@@ -418,6 +422,29 @@ final class LoupeEngineIndex implements EngineIndexInterface
     }
 
     /**
+     * The values of date fields of a hit as their point in time in UTC as stored ("2026-11-09T09:00:00.000000Z"),
+     * not the numbers they are indexed as.
+     */
+    private function withDates(array $document): array
+    {
+        foreach ($this->definition->fields as $field) {
+            if (!array_key_exists($field->name, $document) || !in_array($field->type, [FieldType::DATE, FieldType::DATE_ARRAY], true)) {
+                continue;
+            }
+            $toText = static function (mixed $seconds): mixed {
+                if (!is_int($seconds) && !is_float($seconds)) {
+                    return $seconds;
+                }
+                $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $seconds), new DateTimeZone('UTC'));
+                return false === $date ? $seconds : DateTimeValue::utc($date);
+            };
+            $value = $document[$field->name];
+            $document[$field->name] = is_array($value) ? array_map($toText, $value) : $toText($value);
+        }
+        return $document;
+    }
+
+    /**
      * @param array{0: string, 1: string}|null $highlightTags
      */
     private function convert(LoupeSearchResult $result, ?array $highlightTags, bool $hasScore): Result
@@ -429,6 +456,7 @@ final class LoupeEngineIndex implements EngineIndexInterface
             $document = array_diff_key($hit, array_flip(self::HIT_ATTRIBUTES));
             $uuid = (string)$document['uuid'];
             unset($document['uuid']);
+            $document = $this->withDates($document);
 
             // only fields with a match: Loupe returns all highlighted fields, marked or not
             $highlighted = [];

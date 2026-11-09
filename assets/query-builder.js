@@ -27,14 +27,45 @@
         'boolean': ['=', '!=', 'IS NULL', 'IS NOT NULL'],
         'array<string>': ['IN', 'NOT IN', 'CONTAINS', 'NOT CONTAINS', 'LIKE', 'NOT LIKE', 'IS EMPTY', 'IS NOT EMPTY'],
         'array<number>': ['IN', 'NOT IN', 'IS EMPTY', 'IS NOT EMPTY'],
+        'date': ['=', '!=', '>', '>=', '<', '<=', 'BETWEEN', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL'],
+        'array<date>': ['IN', 'NOT IN', 'IS EMPTY', 'IS NOT EMPTY'],
     };
     const COMPARISONS = ['=', '!=', '>', '>=', '<', '<='];
     const PATTERNS = ['LIKE', 'NOT LIKE', 'CONTAINS', 'NOT CONTAINS'];
     const KEYWORDS = ['AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'EMPTY', 'BETWEEN', 'LIKE', 'CONTAINS'];
     const NUMBER = /^-?\d+(\.\d+)?$/;
+    // a date as the index reads it (ISO 8601): 2026-01-01, 2026-01-01 10:00, 2026-01-01T10:00:00.5Z, …+01:00
+    const DATE = /^([+-]?\d{4,})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i;
 
     const withoutValue = op => op.startsWith('IS ');
     const isNumberType = type => type === 'number' || type === 'array<number>';
+    const isDateType = type => type === 'date' || type === 'array<date>';
+
+    /**
+     * The point in time of a date as the index reads it, in milliseconds (UTC without Z or offset); NaN if the text
+     * isn't one, also for days that don't exist (2026-02-30).
+     */
+    function dateTime(text) {
+        const match = DATE.exec(text.trim());
+        if (!match) {
+            return NaN;
+        }
+        const [, year, month, day, hour = '00', minute = '00', second = '00', fraction = '', zone = 'Z'] = match;
+        const utc = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), Number((fraction + '000').slice(0, 3)));
+        const check = new Date(utc);
+        if (check.getUTCMonth() !== Number(month) - 1 || check.getUTCDate() !== Number(day) || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) {
+            return NaN;
+        }
+        if (zone.toUpperCase() === 'Z') {
+            return utc;
+        }
+        const offset = zone.replace(':', '');
+        const minutes = Number(offset.slice(1, 3)) * 60 + Number(offset.slice(3, 5));
+        return utc - (offset[0] === '-' ? -1 : 1) * minutes * 60000;
+    }
+
+    /** the order of two values of BETWEEN of a type: < 0 if the first is smaller */
+    const compareValues = (type, a, b) => isDateType(type) ? dateTime(a) - dateTime(b) : Number(a) - Number(b);
     const quote = text => "'" + text.replace(/'/g, "''") + "'";
     // STARTS WITH and ENDS WITH become LIKE: \, % and _ of the value are taken as they are
     const likeEscape = text => text.replace(/[\\%_]/g, c => '\\' + c);
@@ -87,6 +118,12 @@
                 const trimmed = text.trim();
                 return NUMBER.test(trimmed) ? {text: trimmed} : {error: `"${text}" is no number (${name})`};
             }
+            if (isDateType(field.type)) {
+                const trimmed = text.trim();
+                return Number.isNaN(dateTime(trimmed))
+                    ? {error: `"${text}" is no date, e.g. 2026-01-01 or 2026-01-01T10:00+01:00 (${name})`}
+                    : {text: quote(trimmed)};
+            }
             if (text === '') {
                 return {error: `a value is missing (${name})`};
             }
@@ -108,15 +145,17 @@
         if (op === 'BETWEEN') {
             const values = splitList(value);
             if (values.length !== 2) {
-                return {error: `BETWEEN needs two numbers, e.g. "10, 20" (${name})`};
+                return {error: isDateType(field.type)
+                    ? `BETWEEN needs two dates, e.g. "2026-01-01, 2026-12-31" (${name})`
+                    : `BETWEEN needs two numbers, e.g. "10, 20" (${name})`};
             }
             const [from, to] = values.map(single);
             if (from.error || to.error) {
                 return from.error ? from : to;
             }
             // as in SQL, BETWEEN 20 AND 10 matches nothing: surely not what is meant
-            if (Number(from.text) > Number(to.text)) {
-                return {error: `BETWEEN needs the smaller number first (${name})`};
+            if (compareValues(field.type, values[0], values[1]) > 0) {
+                return {error: `BETWEEN needs the ${isDateType(field.type) ? 'earlier date' : 'smaller number'} first (${name})`};
             }
             return {text: `${name} BETWEEN ${from.text} AND ${to.text}`};
         }
@@ -312,6 +351,9 @@
                 if (/[\r\n]/.test(token.value)) {
                     throw new Error('a value contains a line break');
                 }
+                if (isDateType(type) && Number.isNaN(dateTime(token.value))) {
+                    throw new Error(`the value ${quote(token.value)} is no date (${name})`);
+                }
                 return token.value;
             };
 
@@ -379,8 +421,8 @@
                 const from = value();
                 expect('keyword', 'AND');
                 const to = value();
-                if (Number(from) > Number(to)) {
-                    throw new Error(`BETWEEN ${from} AND ${to} has the greater number first (${name})`);
+                if (compareValues(type, from, to) > 0) {
+                    throw new Error(`BETWEEN ${from} AND ${to} has the greater ${isDateType(type) ? 'date' : 'number'} first (${name})`);
                 }
                 return condition('BETWEEN', `${from}, ${to}`);
             }
@@ -404,5 +446,5 @@
         ? '"' + value + '"'
         : "'" + value.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
 
-    return {OPERATORS, withoutValue, isNumberType, splitList, likeEscape, createFields, conditionText, groupText, buildFilter, tokenize, parse, phpString};
+    return {OPERATORS, withoutValue, isNumberType, isDateType, dateTime, splitList, likeEscape, createFields, conditionText, groupText, buildFilter, tokenize, parse, phpString};
 });
