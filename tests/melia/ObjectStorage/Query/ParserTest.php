@@ -3,6 +3,7 @@
 namespace Tests\melia\ObjectStorage\Query;
 
 use melia\ObjectStorage\Query\Ast\Join;
+use melia\ObjectStorage\Query\Ast\TransactionControl;
 use melia\ObjectStorage\Query\Exception\QueryException;
 use melia\ObjectStorage\Query\Lexer;
 use melia\ObjectStorage\Query\Parser;
@@ -110,6 +111,10 @@ class ParserTest extends TestCase
             ['UPDATE T a = 1', 'SET or REMOVE expected'],
             ['DELETE T', 'Expected FROM'],
             ['SELECT p.UUID.name FROM T p', 'Expected FROM, found "."'],
+            ['START', 'START TRANSACTION expected'],
+            ['START WORK', 'START TRANSACTION expected'],
+            ['COMMIT now', 'Unexpected "now" after the end of the query'],
+            ['SELECT a FROM T; SELECT b FROM T', 'Unexpected "SELECT" after the end of the query'],
         ];
     }
 
@@ -119,5 +124,47 @@ class ParserTest extends TestCase
         $this->expectException(QueryException::class);
         $this->expectExceptionMessage($message);
         Parser::parse($query);
+    }
+
+    public function testTransactionStatements(): void
+    {
+        foreach ([
+            'START TRANSACTION' => TransactionControl::BEGIN,
+            'start transaction;' => TransactionControl::BEGIN,
+            'BEGIN' => TransactionControl::BEGIN,
+            'begin work' => TransactionControl::BEGIN,
+            'COMMIT' => TransactionControl::COMMIT,
+            'COMMIT WORK;' => TransactionControl::COMMIT,
+            'ROLLBACK' => TransactionControl::ROLLBACK,
+            'Rollback Work' => TransactionControl::ROLLBACK,
+        ] as $query => $action) {
+            $statement = Parser::parse($query);
+            $this->assertInstanceOf(TransactionControl::class, $statement, $query);
+            $this->assertSame($action, $statement->action, $query);
+        }
+    }
+
+    public function testTheWordsOfTransactionsStayNames(): void
+    {
+        $select = Parser::parse('SELECT start, begin, commit, rollback, transaction, work FROM T WHERE begin = 1');
+        $this->assertSame(['start', 'begin', 'commit', 'rollback', 'transaction', 'work'], array_map(static fn($item) => $item->text, $select->items));
+    }
+
+    public function testScriptsAreSplitAtSemicolonsOutsideStringsNamesAndComments(): void
+    {
+        $script = "SELECT 'a;b' FROM T; -- c;d\nSELECT `x;y` FROM T /* ; */ WHERE a = ?;;\n  DELETE FROM T WHERE b = ? ;";
+        $statements = Parser::splitScript($script);
+
+        $this->assertCount(3, $statements);
+        $texts = array_map(static fn(array $s): string => trim(substr($script, $s['start'], $s['end'] - $s['start'])), $statements);
+        $this->assertSame(["SELECT 'a;b' FROM T", "SELECT `x;y` FROM T /* ; */ WHERE a = ?", 'DELETE FROM T WHERE b = ?'], $texts);
+        $this->assertSame([0, 0, 1], array_column($statements, 'positional'), 'the ? before each statement');
+    }
+
+    public function testAScriptWithoutStatements(): void
+    {
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('No statement');
+        Parser::splitScript("-- only a comment\n;");
     }
 }

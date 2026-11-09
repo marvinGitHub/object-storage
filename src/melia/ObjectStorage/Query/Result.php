@@ -8,8 +8,8 @@ use Traversable;
 
 /**
  * The result of a query: the names of its columns and its rows, each a list of values in the order of the columns.
- * Values are as stored: strings, numbers, booleans, null; references as the UUIDs of the objects, lists and
- * objects as arrays.
+ * Values are as stored: strings, numbers, booleans, null; references as the UUIDs of the objects, dates as their
+ * point in time in UTC (also in lists and maps), lists and objects as arrays.
  *
  * @implements IteratorAggregate<int, array<string, mixed>>
  *

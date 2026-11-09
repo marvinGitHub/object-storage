@@ -19,6 +19,8 @@ A crash before step 2 leaves the previous version untouched. A crash during step
 
 Other files, such as the class registry, are written to a temporary file and renamed atomically.
 
+Several objects written together in a [transaction](transactions.md) are rolled back after a crash: the state of every object before the transaction is kept in a journal, and a storage opened afterwards restores it.
+
 ### fsync
 
 To survive a power loss, not only a process crash, every written file and every rename is flushed to disk with `fsync`. This makes a store considerably slower, how much depends on the disk: it takes 5 flushes to store a changed object.

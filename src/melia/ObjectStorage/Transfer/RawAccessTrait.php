@@ -144,7 +144,8 @@ trait RawAccessTrait
         } catch (Throwable $e) {
             throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
         } finally {
-            if ($lockedHere) {
+            // a transaction may have retained the lock while the object was written
+            if ($lockedHere && !$this->isLockRetained($uuid)) {
                 $lockAdapter->releaseLock($uuid);
             }
         }

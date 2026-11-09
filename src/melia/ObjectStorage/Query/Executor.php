@@ -567,7 +567,7 @@ final class Executor
                 $object = $result[2][$alias] ?? null;
                 $row[] = null === $object || !array_key_exists($property, $object['data'])
                     ? null
-                    : self::output(self::valueOf(DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow), $object));
+                    : self::output(self::valueOf(DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow), $object), $object['dateTime'] ?? null);
             }
             $rows[] = $row;
         }
@@ -730,10 +730,30 @@ final class Executor
         return DateValue::fromStored($found, $object['dateTime'] ?? null) ?? $found;
     }
 
-    /** a value as returned in a result: a date as its point in time in UTC as stored */
-    private static function output(mixed $value): mixed
+    /**
+     * A value as returned in a result: a date as its point in time in UTC as stored, also the dates in lists and maps
+     * (references there are already their UUIDs).
+     *
+     * @param string|null $dateKey The reserved key of dates of the object the value was read from (null: the default).
+     */
+    private static function output(mixed $value, ?string $dateKey = null): mixed
     {
-        return $value instanceof DateValue ? $value->utc : $value;
+        if ($value instanceof DateValue) {
+            return $value->utc;
+        }
+        if (!is_array($value)) {
+            return $value;
+        }
+        $date = DateValue::fromStored($value, $dateKey);
+        if (null !== $date) {
+            return $date->utc;
+        }
+        foreach ($value as $key => $element) {
+            if (is_array($element) || $element instanceof DateValue) {
+                $value[$key] = self::output($element, $dateKey);
+            }
+        }
+        return $value;
     }
 
     private static function equals(mixed $a, mixed $b): ?bool

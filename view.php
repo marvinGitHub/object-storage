@@ -17,7 +17,9 @@ use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Migration\AttributeToReference;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Query\Exception\ScriptException;
 use melia\ObjectStorage\Query\Oql;
+use melia\ObjectStorage\Query\Result;
 use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
@@ -636,22 +638,34 @@ try {
             $storageDir = $_REQUEST['storage'] ?? null;
             $query = (string)($_POST['q'] ?? $_GET['q'] ?? '');
             $dryRun = isset($_POST['dryRun']);
+            // Preview: the script runs and everything is rolled back at the end
+            $preview = isset($_POST['preview']);
             $storage = $buildStorage($storageDir);
-            $result = null;
+            $results = null;
+            $rolledBack = false;
             $error = null;
             $milliseconds = null;
             if ('' !== trim($query)) {
                 $started = microtime(true);
                 try {
-                    // INSERT, UPDATE and DELETE only from the form (POST): a link or the history never writes
+                    // writes and transactions only from the form (POST): a link or the history never writes
                     if (Oql::writes($query) && 'POST' !== ($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
-                        throw new QueryException('INSERT, UPDATE, DELETE and ALTER run from the form only: check the statement and press Run.');
+                        throw new QueryException('INSERT, UPDATE, DELETE, ALTER and transactions run from the form only: check the statements and press Run.');
                     }
-                    // indexes find the objects where they can; at most 1,000 rows are kept to show
-                    $result = (new Oql($storage, $searchFor($storage), $uniqueFor($storage)))->query($query, [], $dryRun, 1000);
+                    // one request is one connection: a transaction can't stay open across requests, a script left
+                    // with an open one is rolled back; indexes find the objects where they can; at most 1,000 rows
+                    // per statement are kept to show
+                    $script = (new Oql($storage, $searchFor($storage), $uniqueFor($storage)))->script($query, [], $dryRun, 1000, $preview);
+                    $results = $script->results;
+                    $rolledBack = $script->rolledBack;
+                } catch (ScriptException $e) {
+                    $error = $e->getMessage() . ($e->rolledBack ? ' The transaction was rolled back.' : '');
+                    // marked in the query (a byte offset in the whole script)
+                    $errorPosition = $e->position;
+                    // what ran before the failing statement
+                    $results = $e->results;
                 } catch (QueryException $e) {
                     $error = $e->getMessage();
-                    // marked in the query (a byte offset)
                     $errorPosition = $e->position;
                 } catch (Throwable $e) {
                     $logger->error($e);
@@ -659,11 +673,23 @@ try {
                 }
                 $milliseconds = (microtime(true) - $started) * 1000;
             }
-            // values for the table: references stay UUIDs, lists and objects JSON
+            // lists and objects as JSON, the UUIDs in it (references) linked to their records; escaped first, so only
+            // the links are HTML
+            $jsonHtml = static function (string $json) use ($storageDir): string {
+                $html = htmlspecialchars($json, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                return (string)preg_replace_callback(
+                    '/&quot;([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})&quot;/',
+                    static fn(array $match): string => UuidValidator::validate($match[1])
+                        ? sprintf('&quot;<a href="?action=view-record&amp;storage=%s&amp;uuid=%s" class="uuid">%s</a>&quot;', rawurlencode((string)$storageDir), $match[1], $match[1])
+                        : $match[0],
+                    $html
+                );
+            };
+            // values for the table: references stay UUIDs, dates are their point in time in UTC, lists and objects JSON
             $cell = static fn(mixed $value): array => match (true) {
                 null === $value => ['NULL', 'null'],
                 is_bool($value) => [$value ? 'true' : 'false', 'boolean'],
-                is_array($value) => [(string)json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'json'],
+                is_array($value) => [$json = (string)json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 'json', $jsonHtml($json)],
                 is_float($value) => [(string)json_encode($value, JSON_PRESERVE_ZERO_FRACTION), 'number'],
                 is_int($value) => [(string)$value, 'number'],
                 default => [(string)$value, is_string($value) && UuidValidator::validate($value) ? 'uuid' : 'string'],
@@ -682,15 +708,22 @@ try {
                 'classnames' => $classnames,
                 'error' => $error,
                 'errorPosition' => $errorPosition ?? null,
-                'columns' => $result?->columns ?? [],
-                // the rows; of a dry run of INSERT, the objects have no UUIDs yet
-                'rows' => null === $result ? null : array_map(
-                    static fn(array $row): array => array_map($cell, $row),
-                    null === $result->statement ? $result->rows : array_values(array_filter($result->rows, static fn(array $row): bool => null !== $row[0]))
-                ),
-                'statement' => $result?->statement,
-                'truncated' => $result?->truncated ?? false,
-                'affected' => $result?->affected() ?? 0,
+                // whether the query ran (for the history), also if a later statement of a script failed
+                'ran' => null !== $results,
+                'results' => array_map(static fn(Result $result): array => [
+                    'columns' => $result->columns,
+                    // the rows; of a dry run of INSERT, the objects have no UUIDs yet
+                    'rows' => array_map(
+                        static fn(array $row): array => array_map($cell, $row),
+                        null === $result->statement ? $result->rows : array_values(array_filter($result->rows, static fn(array $row): bool => null !== $row[0]))
+                    ),
+                    'statement' => $result->statement,
+                    'truncated' => $result->truncated,
+                    'affected' => $result->affected(),
+                    'dryRun' => $result->dryRun,
+                ], $results ?? []),
+                'rolledBack' => $rolledBack,
+                'preview' => $preview,
                 'dryRun' => $dryRun,
                 'milliseconds' => $milliseconds,
             ]);

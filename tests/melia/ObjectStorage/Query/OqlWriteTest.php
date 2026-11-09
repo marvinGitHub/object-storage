@@ -283,8 +283,10 @@ class OqlWriteTest extends TestCase
                 $this->fail('two of the same name');
             } catch (QueryException $e) {
                 $this->assertStringContainsString('Stopped after 1 of 2 objects were updated', $e->getMessage());
+                $this->assertStringContainsString('the statement was rolled back, nothing was written', $e->getMessage());
             }
-            $this->assertSame([[1]], $this->rows("SELECT COUNT(*) FROM Product WHERE name = 'Fruit'"));
+            // every statement is atomic: the object renamed before the violation is restored
+            $this->assertSame([[0]], $this->rows("SELECT COUNT(*) FROM Product WHERE name = 'Fruit'"));
             // the name of a deleted product is free again
             $this->oql->query("DELETE FROM Product WHERE name = 'Chair'");
             $this->oql->query("INSERT INTO Product (name) VALUES ('Chair')");

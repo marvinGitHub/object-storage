@@ -1,5 +1,19 @@
 # Upgrading
 
+## From 1.0.0-rc.6 to the next release
+
+Nothing has to be migrated. If you use `Transaction`, check:
+
+- **Transaction logs**: transactions now keep a journal directory `transactions/<id>/` while they run, instead of a file `transactions/<id>.txn`. A `.txn` file that remained comes from a process that died during a transaction; it holds no states to roll back to, and the storage ignores it. With all processes stopped, run `php migrations/003_004.php --dir=/path/to/storage` (`--dry-run` first): it lists the objects each log names, so you can check them, and removes the logs.
+- **`getTransactionLogPath()`** is replaced by `getJournalDirectory()`.
+- **`rollback()` after `commit()`** throws a `TransactionException`; a committed transaction can't be rolled back anymore.
+- **A rollback that can't restore an object** throws a `TransactionRollbackException` (and enables safe mode); before, the object was only logged. `commit()` throws it instead of a `TransactionCommitException` when rolling back after a failed change fails as well.
+- **Crash recovery needs a shared lock backend on several hosts**: with file locks on a network file system, a transaction running on another host can't be told from a crashed one. See [Transactions](docs/transactions.md#crashes).
+- **One transaction per storage instance**: a second `begin()` on the same `ObjectStorage` instance while one is active throws a `TransactionAlreadyActiveException`. Use another instance for a parallel transaction.
+- **Everything through the instance belongs to the transaction**: `$storage->store()`, `delete()`, `setLifetime()`, `touch()` called while a transaction is active on the instance are rolled back with it, and the objects stay locked until it ends. Code that wrote "beside" a transaction on the same instance and expected those writes to stay must use another instance.
+
+If you write with OQL *(experimental)*: a writing statement that fails no longer leaves the objects written before it; they are rolled back. Code relying on partial writes (`Stopped after N of M …`) must handle the whole statement as failed.
+
 ## From 1.0.0-rc.5 to 1.0.0-rc.6
 
 Nothing has to be migrated. `Migration\AttributeToReference` reads an attribute that isn't a plain name (with dots, brackets or quotes) as a path now: `new AttributeToReference('a.b')` links `b` within `a`, not an attribute named `a.b`; write such a name as a key, `['a.b']`. An invalid path fails in the constructor with an `InvalidPathException`.

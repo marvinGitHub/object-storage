@@ -73,6 +73,7 @@ use melia\ObjectStorage\File\WriterAwareTrait;
 use melia\ObjectStorage\File\WriterInterface;
 use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
+use melia\ObjectStorage\Locking\RetainedLocksTrait;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\Metadata\Cache\AwareTrait as MetadataCacheAwareTrait;
 use melia\ObjectStorage\Metadata\Metadata;
@@ -103,6 +104,7 @@ use ReflectionType;
 use Throwable;
 use Traversable;
 use WeakMap;
+use WeakReference;
 
 /**
  * Stores, loads and deletes objects as files: one data file (the serialized object graph) and one metadata file
@@ -139,6 +141,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use ClassRenameMapAwareTrait;
 
     use RawAccessTrait;
+    use RetainedLocksTrait; // retainLock(): exclusive locks kept across store()/delete(), for transactions
     use ConstraintsTrait; // addConstraint(), checkConstraints(): rules written objects have to satisfy, e.g. unique values
 
  // readRaw(), writeRaw(): objects as stored, e.g. to copy them into another storage
@@ -209,6 +212,16 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
     /** @var array<string>|null */
     protected ?array $registeredClassNamesCache = null;
+
+    /**
+     * The transaction running on this storage instance: every change of object files through this instance is
+     * recorded in it before it is made (writeObjectFiles(), writeMetadata(), deleteObject()), see
+     * docs/transactions.md. One at a time; another instance can run another transaction. Held weakly, so a
+     * transaction that is dropped is destructed (and rolled back) as before.
+     *
+     * @var WeakReference<Transaction>|null
+     */
+    private ?WeakReference $activeTransaction = null;
 
     // ---------------------------------------------------------------------------------------------------------
     // Creating and configuring the storage
@@ -298,6 +311,27 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         // a strategy passed explicitly keeps its settings
         $factory?->apply($this, $configuration, applyStrategy: !$strategyPassed);
+
+        // transactions interrupted by a crash are rolled back; without any, this is a single directory lookup
+        TransactionRecovery::recoverAll($this);
+    }
+
+    /**
+     * The transaction running on this storage instance, null if none.
+     */
+    public function getActiveTransaction(): ?Transaction
+    {
+        return $this->activeTransaction?->get();
+    }
+
+    /**
+     * Sets the transaction running on this storage instance (Transaction::begin()), or null when it ends.
+     *
+     * @internal Not part of the public API; may change in any release.
+     */
+    public function setActiveTransaction(?Transaction $transaction): void
+    {
+        $this->activeTransaction = null === $transaction ? null : WeakReference::create($transaction);
     }
 
     /**
@@ -612,7 +646,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $this->storeObject($object, $uuid, $ttl);
 
-            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+            if (!$this->isLockRetained($uuid) && $lockAdapter?->isLockedByThisProcess($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
             }
 
@@ -624,7 +658,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             return $uuid;
         } catch (Throwable $e) {
-            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+            if (!$this->isLockRetained($uuid) && $lockAdapter?->isLockedByThisProcess($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
             }
             $eventDispatcher?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
@@ -822,7 +856,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     $this->createStub($className, $uuid);
                 }
             } finally {
-                if ($lockedHere) {
+                // a transaction may have retained the lock while the object was written (track())
+                if ($lockedHere && !$this->isLockRetained($uuid)) {
                     $lockAdapter->releaseLock($uuid);
                 }
             }
@@ -1457,6 +1492,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected function writeObjectFiles(string $uuid, string $data, Metadata $metadata): void
     {
+        // the state before is recorded first, so the transaction can restore it
+        $this->getActiveTransaction()?->track($uuid);
+
         [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
         $this->getWriter()->atomicWriteAll([
             $filePathData => $data,
@@ -1649,6 +1687,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected function writeMetadata(Metadata $metadata): void
     {
+        $uuid = $metadata->getUUID();
+        if (null !== $uuid) {
+            $this->getActiveTransaction()?->track($uuid);
+        }
+
         try {
             $this->getJsonFileWriter()->write($this->getFilePathMetadata($metadata->getUUID()), $metadata);
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
@@ -1764,7 +1807,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $this->writeMetadata($metadata);
             $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
         } finally {
-            $lockAdapter?->releaseLock($uuid);
+            if (!$this->isLockRetained($uuid)) {
+                $lockAdapter?->releaseLock($uuid);
+            }
         }
     }
 
@@ -1811,7 +1856,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $this->writeMetadata($metadata);
             $this->getEventDispatcher()?->dispatch(Events::TOUCHED, static fn() => new Context($uuid));
         } finally {
-            if ($lockedHere) {
+            if ($lockedHere && !$this->isLockRetained($uuid)) {
                 $lockAdapter->releaseLock($uuid);
             }
         }
@@ -1945,6 +1990,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 $this->reloadMetadata($uuid);
             }
 
+            // under the lock, before anything is removed: also objects deleted along by the child deletion policy
+            $this->getActiveTransaction()?->track($uuid);
+
             $className = $this->getClassName($uuid);
             $filePath = $this->getFilePathData($uuid);
 
@@ -1971,7 +2019,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $eventDispatcher?->dispatch(Events::OBJECT_DELETION_FAILURE, static fn() => new Context($uuid));
             throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
         } finally {
-            if ($lockAdapter?->isLockedByThisProcess($uuid)) {
+            if (!$this->isLockRetained($uuid) && $lockAdapter?->isLockedByThisProcess($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
             }
         }

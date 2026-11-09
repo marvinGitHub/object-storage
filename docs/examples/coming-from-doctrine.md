@@ -459,6 +459,8 @@ $transaction->store($chair, $chair->getUUID());
 $transaction->commit(); // or rollback()
 ```
 
+The objects are locked from their first change until the commit, and a commit interrupted by a crash is rolled back when the storage is opened next. Objects written along by the child persistence policy (here the customer, if it changed) aren't rolled back; see [Transactions](../transactions.md).
+
 ## Lifecycle callbacks and event subscribers
 
 `prePersist`, `postUpdate` and the like become listeners on the [events](../events.md) of the storage, e.g. `BEFORE_STORE`, `OBJECT_SAVED` (with the previous and the new state) or `AFTER_DELETE`. The search indexes use them as well. See [An audit log from events](audit-log-with-events.md).

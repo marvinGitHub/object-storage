@@ -62,6 +62,25 @@ class OqlDateTest extends TestCase
         $this->assertSame('2026-07-15T10:00:00.250000Z', $result->rows[0][array_search('at', $result->columns, true)]);
     }
 
+    public function testDatesInListsAndMapsAreReturnedAsTheirPointInTimeInUtc(): void
+    {
+        $friend = $this->events['summer'];
+        $person = new stdClass();
+        $person->name = 'Pang';
+        $uuid = $this->storage->store($person);
+        $this->oql->query("UPDATE stdClass SET newlist['today'] = DATETIME('2026-11-09T17:12:31.918708Z'), newlist['somebody'] = REF(:friend), dates[] = DATETIME('2026-01-01T10:00:00Z') WHERE UUID = :uuid", ['friend' => $friend, 'uuid' => $uuid]);
+
+        $expected = ['today' => '2026-11-09T17:12:31.918708Z', 'somebody' => $friend];
+        // a column and an expression, also of all properties (*)
+        $this->assertSame($expected, $this->value('SELECT newlist FROM stdClass'));
+        $this->assertSame([$expected, ['2026-01-01T10:00:00.000000Z']], $this->rows('SELECT newlist, dates FROM stdClass')[0]);
+        $all = $this->oql->query('SELECT * FROM stdClass')->toArray()[0];
+        ksort($all);
+        $this->assertSame(['dates' => ['2026-01-01T10:00:00.000000Z'], 'name' => 'Pang', 'newlist' => $expected], $all);
+        // the elements are still dates in conditions
+        $this->assertSame(['Pang'], $this->column("SELECT name FROM stdClass WHERE newlist['today'] > '2026-11-01'"));
+    }
+
     public function testDatesSortByTheirPointInTimeAcrossTimeZones(): void
     {
         $this->assertSame(['No date', 'New Year', 'Late UTC', 'New York', 'Summer'], $this->column('SELECT title FROM Event ORDER BY at'));

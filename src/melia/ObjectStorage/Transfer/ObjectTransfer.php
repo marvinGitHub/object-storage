@@ -152,7 +152,8 @@ final class ObjectTransfer
             $result->failed[$uuid] = ($move && $this->target->exists($uuid) && $this->source->exists($uuid) ? 'copied, but not deleted in the source: ' : '') . $message;
             return 'failed';
         } finally {
-            if ($lockedHere && $lockAdapter->isLockedByThisProcess($uuid)) {
+            // a transaction on the source retains the locks of the objects it deleted
+            if ($lockedHere && !$this->source->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
                 $lockAdapter->releaseLock($uuid);
             }
         }

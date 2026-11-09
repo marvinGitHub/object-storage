@@ -177,7 +177,7 @@ The referenced objects are deleted after the object itself, each under its own l
 Things to know:
 
 - **Shared objects are deleted too.** The storage doesn't know which other objects reference an object, so `ALWAYS` also deletes an object that another object still references, which then holds a reference to a deleted object (loaded as `null`). Use `ALWAYS` only for graphs owned by one object, and `CALLBACK` otherwise.
-- **Transactions** restore only the object passed to `delete()` on rollback, not the referenced objects deleted along with it.
+- **Transactions** restore the referenced objects deleted along on rollback as well: every change through the storage instance of a [transaction](transactions.md) is recorded.
 - A crash in the middle leaves referenced objects that are no longer referenced, never references to deleted objects.
 
 With `CALLBACK`, the strategy decides per reference. It gets the class names and the path of the reference within the stored data of the deleted object, e.g. `['lines', 0]`; the referenced objects aren't loaded. If the callback throws, the referenced object is kept.

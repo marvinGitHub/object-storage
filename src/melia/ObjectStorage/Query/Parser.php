@@ -22,6 +22,7 @@ use melia\ObjectStorage\Query\Ast\Select;
 use melia\ObjectStorage\Query\Ast\SelectItem;
 use melia\ObjectStorage\Query\Ast\Source;
 use melia\ObjectStorage\Query\Ast\Target;
+use melia\ObjectStorage\Query\Ast\TransactionControl;
 use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Ast\Update;
 use melia\ObjectStorage\Query\Exception\QueryException;
@@ -42,7 +43,7 @@ final class Parser
     /**
      * @throws QueryException
      */
-    public static function parse(string $query): Select|Insert|Update|Delete|DropAttributes
+    public static function parse(string $query): Select|Insert|Update|Delete|DropAttributes|TransactionControl
     {
         $parser = new self();
         $parser->query = $query;
@@ -50,7 +51,44 @@ final class Parser
         return $parser->statement();
     }
 
-    private function statement(): Select|Insert|Update|Delete|DropAttributes
+    /**
+     * Splits a script into its statements at the semicolons outside strings, quoted names and comments.
+     *
+     * @return list<array{start: int, end: int, positional: int}> Per statement its byte range in the script (without
+     *         the semicolon) and the number of ? parameters before it: ? are numbered across the script.
+     * @throws QueryException If the script can't be tokenized (e.g. an unterminated string) or holds no statement.
+     */
+    public static function splitScript(string $script): array
+    {
+        $statements = [];
+        $start = null;
+        $positional = 0;
+        $before = 0;
+
+        foreach (Lexer::tokenize($script) as $token) {
+            if ($token->is(Lexer::SYMBOL, ';') || $token->is(Lexer::END)) {
+                if (null !== $start) {
+                    $statements[] = ['start' => $start, 'end' => $token->position, 'positional' => $before];
+                    $start = null;
+                }
+                continue;
+            }
+            if (null === $start) {
+                $start = $token->position;
+                $before = $positional;
+            }
+            if ($token->is(Lexer::PARAMETER) && ctype_digit($token->value)) {
+                $positional++;
+            }
+        }
+
+        if ([] === $statements) {
+            throw new QueryException('No statement');
+        }
+        return $statements;
+    }
+
+    private function statement(): Select|Insert|Update|Delete|DropAttributes|TransactionControl
     {
         $token = $this->peek();
         $statement = match (true) {
@@ -58,6 +96,8 @@ final class Parser
             $token->is(Lexer::KEYWORD, 'UPDATE') => $this->update(),
             $token->is(Lexer::KEYWORD, 'DELETE') => $this->delete(),
             $this->isWord($token, 'ALTER') => $this->alter(),
+            $this->isWord($token, 'START'), $this->isWord($token, 'BEGIN'),
+            $this->isWord($token, 'COMMIT'), $this->isWord($token, 'ROLLBACK') => $this->transactionControl(),
             default => $this->select(),
         };
         $this->accept(Lexer::SYMBOL, ';');
@@ -203,6 +243,31 @@ final class Parser
         } while ($this->accept(Lexer::SYMBOL, ','));
 
         return new DropAttributes($source, $attributes);
+    }
+
+    /**
+     * START TRANSACTION, BEGIN [WORK], COMMIT [WORK], ROLLBACK [WORK]. The words are no keywords: properties may still
+     * be named start, begin, commit or rollback (a statement can't start with a property).
+     */
+    private function transactionControl(): TransactionControl
+    {
+        $word = $this->next();
+        if ($this->isWord($word, 'START')) {
+            $transaction = $this->next();
+            if (!$this->isWord($transaction, 'TRANSACTION')) {
+                throw $this->error('START TRANSACTION expected', $transaction);
+            }
+            return new TransactionControl(TransactionControl::BEGIN);
+        }
+
+        if ($this->isWord($this->peek(), 'WORK')) {
+            $this->next();
+        }
+        return new TransactionControl(match (true) {
+            $this->isWord($word, 'BEGIN') => TransactionControl::BEGIN,
+            $this->isWord($word, 'COMMIT') => TransactionControl::COMMIT,
+            default => TransactionControl::ROLLBACK,
+        });
     }
 
     /** a word that isn't a keyword, ignoring case: ALTER, CLASS, TABLE, DROP, ATTRIBUTE, COLUMN */

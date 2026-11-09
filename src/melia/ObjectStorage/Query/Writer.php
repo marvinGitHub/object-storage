@@ -32,8 +32,9 @@ use Throwable;
  *   written inline as the storage writes them (see Serialization\DateTimeValue).
  * - All values are computed and checked before the first object is written: an error writes nothing.
  * - Each object is changed under its exclusive lock: read again, its condition checked again (another process may
- *   have changed it), then written. If writing an object fails (e.g. a unique value), the objects written before
- *   stay written, and the error says how many.
+ *   have changed it), then written. If writing an object fails (e.g. a unique value), the error says how many were
+ *   written before; Oql runs every statement in a transaction (or back to a savepoint of the open one), so they are
+ *   rolled back.
  * - A dry run computes and checks everything and returns the objects that would be written, writing nothing.
  *
  * @internal Not part of the public API; may change in any release.
@@ -219,7 +220,8 @@ final class Writer
             } catch (Throwable $e) {
                 throw $this->stopped($done, $changed, count($uuids), $e);
             } finally {
-                if ($lockedHere && $lockAdapter->isLockedByThisProcess($uuid)) {
+                // a transaction retains the locks of the objects it changed
+                if ($lockedHere && !$this->storage->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
                     $lockAdapter->releaseLock($uuid);
                 }
             }
@@ -523,7 +525,8 @@ final class Writer
             } catch (Throwable $e) {
                 throw $this->stopped('deleted', $deleted, count($uuids), $e);
             } finally {
-                if ($lockedHere && $lockAdapter->isLockedByThisProcess($uuid)) {
+                // a transaction retains the locks of the objects it changed
+                if ($lockedHere && !$this->storage->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
                     $lockAdapter->releaseLock($uuid);
                 }
             }

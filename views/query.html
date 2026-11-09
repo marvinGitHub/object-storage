@@ -52,6 +52,8 @@
     </div>
     <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
         <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-play-fill"></i> Run</button>
+        <button class="btn btn-outline-primary btn-sm" type="submit" name="preview" value="1" id="preview"
+                title="Run everything and show the results, then roll it all back: nothing is kept"><i class="bi bi-eye"></i> Preview</button>
         <div class="form-check mb-0" title="INSERT, UPDATE, DELETE, ALTER: check and list the objects that would be written, write nothing">
             <input class="form-check-input" type="checkbox" id="dry-run" name="dryRun" value="1" {{ dryRun ? 'checked' : '' }}>
             <label class="form-check-label small" for="dry-run">Dry run</label>
@@ -81,6 +83,10 @@
             <strong>DELETE FROM</strong> Class [alias] [<strong>WHERE</strong> condition] |
             <strong>ALTER CLASS</strong> Class <strong>DROP ATTRIBUTE</strong> property, … (<strong>ALTER TABLE</strong> … <strong>DROP COLUMN</strong>)
             — references with <code>REF('uuid')</code>; asks before writing, <em>Dry run</em> only lists the objects.</p>
+        <p class="mb-1">Several statements separated by <code>;</code> run one after another, until one fails.
+            <strong>START TRANSACTION</strong> (or <strong>BEGIN</strong>) … <strong>COMMIT</strong> | <strong>ROLLBACK</strong>:
+            all or nothing; a transaction left open at the end is rolled back. Every writing statement is atomic on its own.
+            <em>Preview</em> runs everything and rolls it all back.</p>
         <ul class="mb-0">
             <li><code>UUID</code> is the UUID of an object: <code>WHERE UUID = '…'</code>, <code>p.UUID</code>, <code>p.category.UUID</code>; a property named uuid is <code>`uuid`</code>.</li>
             <li>Classes by their short name (<code>Product</code>) or full name in backticks (<code>`App\Entity\Product`</code>); without an alias, the short name is one.</li>
@@ -97,29 +103,48 @@
 <div class="alert alert-danger font-monospace small" id="query-error">{{ error }}</div>
 {% endif %}
 
-{% if rows is not null %}
+{% if preview and ran %}
+<div class="alert alert-info py-2" id="query-preview"><i class="bi bi-eye"></i> Preview: everything was rolled back, nothing was kept.</div>
+{% endif %}
+{% if rolledBack %}
+<div class="alert alert-warning py-2" id="query-rolled-back"><i class="bi bi-arrow-counterclockwise"></i> The script ended with an open transaction: it was rolled back, nothing of it was kept. End it with COMMIT.</div>
+{% endif %}
+
 {% set shown = 1000 %}
-{% if statement %}
-{% set done = {INSERT: 'inserted', UPDATE: 'updated', DELETE: 'deleted', ALTER: 'changed'}[statement] %}
-<div class="alert {{ dryRun ? 'alert-info' : 'alert-success' }} py-2" id="query-written">
-    {% if dryRun %}<i class="bi bi-eye"></i> Dry run: {{ affected }} object(s) would be {{ done }}, nothing was written.
-    {% else %}<i class="bi bi-check-circle"></i> {{ affected }} object(s) {{ done }}.{% endif %}
+{% set several = results|length > 1 %}
+{% for result in results %}
+{# the first result keeps the ids of a single query; the others are numbered #}
+{% set suffix = loop.first ? '' : '-' ~ loop.index %}
+{% if several %}<h6 class="small text-muted mt-3 mb-1">Statement {{ loop.index }}</h6>{% endif %}
+{% if result.statement in ['START TRANSACTION', 'COMMIT', 'ROLLBACK'] %}
+<div class="alert alert-secondary py-1 small query-transaction" id="query-transaction{{ suffix }}">
+    <i class="bi bi-arrow-left-right"></i> {{ result.statement }}{% if preview and result.statement == 'COMMIT' %} (preview: kept until the end, then rolled back){% endif %}
+</div>
+{% else %}
+{% if result.statement %}
+{% set done = {INSERT: 'inserted', UPDATE: 'updated', DELETE: 'deleted', ALTER: 'changed'}[result.statement] ?? 'written' %}
+<div class="alert {{ result.dryRun ? 'alert-info' : 'alert-success' }} py-2 query-written" id="query-written{{ suffix }}">
+    {% if result.dryRun %}<i class="bi bi-eye"></i> Dry run: {{ result.affected }} object(s) would be {{ done }}, nothing was written.
+    {% else %}<i class="bi bi-check-circle"></i> {{ result.affected }} object(s) {{ done }}.{% endif %}
 </div>
 {% endif %}
-<p class="text-muted small mb-2" id="query-summary">
-    {% if truncated %}More than {{ rows|length|number_format(0, '.', ' ') }} row(s), {{ milliseconds|number_format(0) }} ms — showing the first {{ rows|length|number_format(0, '.', ' ') }}, use LIMIT{% else %}{{ rows|length|number_format(0, '.', ' ') }} row(s), {{ milliseconds|number_format(0) }} ms{% if rows|length > shown %} — showing the first {{ shown }}, use LIMIT{% endif %}{% endif %}
+<p class="text-muted small mb-2 query-summary" id="query-summary{{ suffix }}">
+    {% set count = result.rows|length %}
+    {% if result.truncated %}More than {{ count|number_format(0, '.', ' ') }} row(s){% if not several %}, {{ milliseconds|number_format(0) }} ms{% endif %} — showing the first {{ count|number_format(0, '.', ' ') }}, use LIMIT{% else %}{{ count|number_format(0, '.', ' ') }} row(s){% if not several %}, {{ milliseconds|number_format(0) }} ms{% endif %}{% if count > shown %} — showing the first {{ shown }}, use LIMIT{% endif %}{% endif %}
 </p>
-{% if columns is not empty %}
-<div class="table-responsive card">
-    <table class="table table-sm table-striped small mb-0" id="query-result">
-        <thead><tr>{% for column in columns %}<th class="font-monospace text-nowrap">{{ column }}</th>{% endfor %}</tr></thead>
+{% if result.columns is not empty %}
+<div class="table-responsive card mb-2">
+    <table class="table table-sm table-striped small mb-0 query-result" id="query-result{{ suffix }}">
+        <thead><tr>{% for column in result.columns %}<th class="font-monospace text-nowrap">{{ column }}</th>{% endfor %}</tr></thead>
         <tbody>
-        {% for row in rows|slice(0, shown) %}
+        {% for row in result.rows|slice(0, shown) %}
         <tr>
             {% for cell in row %}
             <td class="{{ cell[1] == 'number' ? 'text-end' : '' }} {{ cell[1] in ['json', 'uuid'] ? 'font-monospace' : '' }}">
                 {% if cell[1] == 'null' %}<span class="text-muted">NULL</span>
                 {% elseif cell[1] == 'uuid' %}<a href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ cell[0]|url_encode }}" class="uuid">{{ cell[0] }}</a>
+                {# escaped in view.php, with links for the UUIDs in it #}
+                {% elseif cell[1] == 'json' %}{{ cell[2]|raw }}
                 {% else %}{{ cell[0] }}{% endif %}
             </td>
             {% endfor %}
@@ -130,6 +155,8 @@
 </div>
 {% endif %}
 {% endif %}
+{% endfor %}
+{% if several and milliseconds is not null %}<p class="text-muted small" id="query-time">{{ results|length }} statement(s), {{ milliseconds|number_format(0) }} ms</p>{% endif %}
 
 <script src="assets/oql-highlight.js"></script>
 <script>
@@ -156,17 +183,18 @@
     });
     render();
 
-    // INSERT, UPDATE, DELETE: asked before, sent by POST (the server runs them from the form only)
-    const writing = text => /^(\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(INSERT|UPDATE|DELETE|ALTER)\b/i.test(text);
+    // writes and transactions (in any statement of a script): asked before, sent by POST (the server runs them from
+    // the form only); a preview is sent by POST as well, but changes nothing, so it isn't asked
     form.addEventListener('submit', event => {
+        const preview = event.submitter?.id === 'preview';
         // setAttribute: the input named "action" hides the property
-        if (!writing(area.value)) {
+        if (!preview && !OqlHighlight.writes(area.value)) {
             form.setAttribute('method', 'get');
             form.removeAttribute('action');
             return;
         }
         const dry = document.getElementById('dry-run').checked;
-        if (!dry && !confirm('This changes objects of the storage. Run it?')) {
+        if (!preview && !dry && !confirm('This changes objects of the storage. Run it?')) {
             event.preventDefault();
             return;
         }
@@ -207,7 +235,7 @@
             // not kept
         }
     };
-    const ran = {{ (rows is not null ? query : '')|json_encode|raw }};
+    const ran = {{ (ran ? query : '')|json_encode|raw }};
     if (ran.trim() !== '') {
         write([ran, ...read().filter(q => q !== ran)].slice(0, 20));
     }

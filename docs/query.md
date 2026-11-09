@@ -145,7 +145,7 @@ Dates (`DateTimeInterface`, [stored inline](serialization.md#dates)) are values 
 
 - **Compared by their point in time**, whatever their time zone: `ORDER BY createdAt`, `MIN(createdAt)`, `createdAt BETWEEN :from AND :to`.
 - **A text that is a date** is read as one when compared with a date: `'2026-01-01'`, `'2026-01-01 10:00'`, `'2026-01-01T10:00:00.5Z'`, `'2026-01-01T10:00:00+01:00'`. **Without `Z` or offset it is UTC**: `createdAt >= '2026-01-01'` means from midnight UTC; write the offset for a local time (`'2026-01-01T00:00+01:00'`). A text that isn't a date (also `'2026-02-30'`) is compared with the date as text, as in SQLite. Parameters may be dates (`DateTimeInterface`) or texts.
-- **In results**, a date is its point in time in UTC as stored: `2026-11-09T09:00:00.123456Z`. As text (`||`, `LIKE`) too, so `LIKE '2026-11%'` matches November in UTC; in arithmetic it is the seconds since 1970-01-01 UTC (`DATE_ADD(a, 1, 'DAY') - a` is 86400).
+- **In results**, a date is its point in time in UTC as stored: `2026-11-09T09:00:00.123456Z`, also within lists and maps (`{"today": "2026-11-09T09:00:00.123456Z"}`). As text (`||`, `LIKE`) too, so `LIKE '2026-11%'` matches November in UTC; in arithmetic it is the seconds since 1970-01-01 UTC (`DATE_ADD(a, 1, 'DAY') - a` is 86400).
 - **Functions** take a date, a text that is one or a number (seconds since 1970); the time zone is UTC unless given as the last argument (an identifier like `'Europe/Berlin'` or an offset like `'+01:00'`). A value that isn't a date gives `NULL`.
 
 | function | |
@@ -182,7 +182,7 @@ The statements write the data of the objects as stored, like [copying](transfer.
 
 - **Values** are those of `SELECT` (expressions, parameters, functions); `UPDATE` computes them from the values the object had before the statement (`SET price = 10, note = 'was ' || price` uses the old price). A reference is written with `REF(uuid)`: `REF(:uuid)`, `REF(other.category.UUID)`; it must name an existing object. Lists and objects aren't values to write yet (other than references); the keys and elements of lists and maps are written with paths, see below.
 - **Checked against the class**, if it can be loaded: the types of the properties (`string`, `int`, `float`, `bool`, nullable, unions; a class for `REF()`), properties the class doesn't declare unless it allows dynamic ones (`stdClass`, `#[AllowDynamicProperties]`). A number without a fraction is an `int` (`36.0` for an `int` is 36); `7.2` for an `int` is an error, not cut off. `INSERT` needs the class; it sets the properties not given to their defaults (also those of promoted parameters of the constructor, which loading doesn't call), or `NULL` if the type allows it — a property without either needs a value. `UPDATE` and `DELETE` of objects whose class isn't loadable write without checks.
-- **All or nothing before writing**: every value of every object is computed and checked first; an error writes nothing. Then each object is written under its exclusive lock: read again, its condition checked again (another process may have changed it in the meantime), written with a new checksum and revision. If writing one fails — e.g. a [unique](unique.md) value — the objects written before stay written, and the error says how many (`Stopped after 1 of 2 objects were updated: …`).
+- **All or nothing**: every value of every object is computed and checked first; an error writes nothing. Then each object is written under its exclusive lock: read again, its condition checked again (another process may have changed it in the meantime), written with a new checksum and revision. Every writing statement runs in a [transaction](transactions.md) of its own (or, within a transaction, back to a savepoint): if writing one object fails — e.g. a [unique](unique.md) value — the objects written before are rolled back, and the error says how far it got (`Stopped after 1 of 2 objects were updated: …; the statement was rolled back, nothing was written`). See [Transactions and scripts](#transactions-and-scripts).
 - **Indexes follow**: unique indexes are checked, [search indexes](search.md) updated (`METADATA_SAVED`, `AFTER_STORE`, `AFTER_DELETE`), as for any write; events of loaded objects (`BEFORE_UPDATE`, `OBJECT_SAVED`) aren't dispatched, as no objects are loaded.
 - `UPDATE` counts the objects that changed (an object already having the new values isn't written), `DELETE` deletes with the [child deletion policy](configuration.md) of the storage.
 - **Paths in `UPDATE`** change the lists and maps (arrays) an object holds: `UPDATE stdClass SET newlist['today'] = NOW()`, `SET tags[0] = 'a', settings.mail.enabled = TRUE`, `SET friends.*.active = TRUE`, `SET tags[] = 'new'`, `REMOVE tags[-1], phones['fax']`, also together: `SET a = 1 REMOVE b['x'] WHERE …`. A path may start with the alias (`p.tags[0]`). As in PHP:
@@ -194,6 +194,46 @@ The statements write the data of the objects as stored, like [copying](transfer.
 - **Adding a property** (e.g. a date) has no statement of its own, as objects have no schema: declare it in the class with a default (`public ?DateTimeImmutable $paidAt = null;`, not as a promoted parameter: loading doesn't call the constructor), then fill it for the objects stored before: `UPDATE Purchase SET paidAt = NOW() WHERE paidAt IS NULL`. See [OQL by example](examples/oql-by-example.md#adding-a-property-eg-a-date).
 - **Dry run**: `query($query, dryRun: true)` computes and checks everything and returns the objects that would be written (for `INSERT` without UUIDs), writing nothing.
 
+## Transactions and scripts
+
+An `Oql` instance is a connection, as in SQL: `START TRANSACTION` (or `BEGIN`, optionally `WORK`) starts a transaction, `COMMIT` keeps its changes, `ROLLBACK` undoes them.
+
+```php
+$oql = new Oql($storage);
+$oql->query('START TRANSACTION');
+$oql->query('UPDATE Product SET stock = stock - 1 WHERE UUID = ?', [$uuid]);
+$oql->query('INSERT INTO OrderLine (product, quantity) VALUES (REF(?), 1)', [$uuid]);
+$oql->query('SELECT stock FROM Product WHERE UUID = ?', [$uuid]); // sees the new stock
+$oql->query('COMMIT');   // or ROLLBACK
+$oql->inTransaction();   // false again
+```
+
+- **Written at once, undone if needed**: statements in a transaction write right away, after recording the state of each object before its first change (the [journal](transactions.md)). The connection sees its own changes; `ROLLBACK` restores the recorded states. A crash in the middle is rolled back when the storage is opened next.
+- **Everything through the storage instance** is part of the transaction while it is open: the statements of the connection, but also `$storage->store()`, `delete()`, `setLifetime()`, `touch()` of PHP code in between, and the objects written or deleted along by the policies of the storage. One transaction per storage instance; a second connection on the same instance can't start one, a connection on another `ObjectStorage` instance runs its own.
+- **Locks**: every object changed stays locked exclusively until `COMMIT` or `ROLLBACK`; other processes (and other storage instances) wait for it, at most the timeout of their locks. Keep transactions short. `SELECT` locks nothing.
+- **A failing statement** is rolled back alone; the transaction stays open, as in MySQL. Without a transaction, every writing statement is atomic on its own.
+- `COMMIT` and `ROLLBACK` without a transaction do nothing. `START TRANSACTION` in an open transaction is an error (MySQL would commit the open one implicitly).
+- A transaction left open when the `Oql` instance is dropped (or the process ends) is rolled back. It can't stay open across requests of a web application: each request is a connection of its own.
+- `START`, `BEGIN`, `COMMIT`, `ROLLBACK`, `TRANSACTION` and `WORK` aren't reserved: properties may be named so.
+
+**Scripts** — several statements separated by semicolons — run with `script()`, one after another, until one fails:
+
+```php
+$result = $oql->script(<<<'OQL'
+    START TRANSACTION;
+    UPDATE Product SET price = price * 1.1 WHERE category.title = :category;
+    DELETE FROM Product WHERE active = FALSE;
+    COMMIT;
+    OQL, ['category' => 'Fruit']);
+
+foreach ($result->results as $statement) { /* a Result per statement */ }
+$result->rolledBack; // true if the script left a transaction open: it was rolled back
+```
+
+- Semicolons in texts, quoted names and comments don't separate statements. `?` parameters are numbered across the script, `:name` parameters are shared.
+- A failing statement throws a `ScriptException` (a `QueryException`): `$e->statement` (its index), `$e->results` (those of the statements before), `$e->rolledBack`; its position and line are those in the script. A transaction the script started is rolled back.
+- **Preview**: `script($script, preview: true)` runs everything and rolls it all back at the end: the results, `SELECT`s after the changes included, without keeping anything. Within the preview, `START TRANSACTION`, `COMMIT` and `ROLLBACK` work as usual, but `COMMIT` keeps the changes only until the end of the preview.
+
 ## Command line and viewer
 
 ```bash
@@ -204,7 +244,9 @@ echo "SELECT COUNT(*) FROM Product" | object-storage query --dir ./data
 
 `--param name=value` sets `:name`, `--param value` the next `?`; numbers, `true`, `false` and `null` are taken as such, `"quoted"` as text. `INSERT`, `UPDATE` and `DELETE` print the UUIDs written and their number (`--json`: `{"statement", "dryRun", "affected", "uuids"}`); `--dry-run` writes nothing.
 
-In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE`, `DELETE` and `ALTER` ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing.
+The command runs [scripts](#transactions-and-scripts) as well (`--file`, STDIN or the argument): the results are printed per statement; with `--json`, a script of several statements gives an array of one object per statement (`{"statement": "SELECT", "rows": […]}`, the object of a write, `{"statement": "COMMIT"}`). A script ending with an open transaction is rolled back and the command fails (exit code 1). `--preview` runs everything and rolls it back.
+
+In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE`, `DELETE`, `ALTER` and transactions ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing. The console runs scripts, showing the result of each statement. A request is a connection: a transaction can't stay open from one run to the next — a script ending with an open one is rolled back. **Preview** runs the script and rolls everything back, to see what it would do before running it.
 
 ## Performance and memory
 

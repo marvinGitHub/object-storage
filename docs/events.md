@@ -83,6 +83,15 @@ The constants are defined in `melia\ObjectStorage\Event\Events`, the context cla
 | `SAFE_MODE_ENABLED` | the storage switched to safe mode, see [Durability](durability.md#safe-mode) | none |
 | `SAFE_MODE_DISABLED` | safe mode was disabled | none |
 
+## Transactions
+
+| Event | When | Context |
+|---|---|---|
+| `TRANSACTION_RECOVERED` | a [transaction](transactions.md#crashes) interrupted by a crash was rolled back when the storage was opened | `TransactionContext` with `getTransactionId()` and `getUuids()` (the objects it had changed or meant to change) |
+| `TRANSACTION_RECOVERY_FAILED` | rolling back an interrupted transaction failed; safe mode is enabled and the journal kept | `TransactionContext`, with the cause in `getError()` |
+
+Both are dispatched while the storage is constructed: pass the dispatcher with the listeners to the constructor (`eventDispatcher:`) to receive them.
+
 ## Failures
 
 | Event | When | Context |

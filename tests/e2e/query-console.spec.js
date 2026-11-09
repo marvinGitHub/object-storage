@@ -103,6 +103,55 @@ test('writing: asked before, a dry run, and never by a link', async ({page}) => 
     await expect(page.locator('#query-written')).toContainText('4 object(s) updated.');
 });
 
+test('lists and maps: dates as their point in time, references linked', async ({page}) => {
+    // a preview: nothing is kept
+    await page.goto(consoleUrl());
+    await page.locator('#q').fill("UPDATE stdClass SET newlist['today'] = DATETIME('2026-11-09T17:12:31.918708Z'), newlist['somebody'] = REF(friend.UUID) WHERE name = 'Anna';\nSELECT newlist FROM stdClass WHERE name = 'Anna'");
+    await page.getByRole('button', {name: 'Preview'}).click();
+    const cell = page.locator('#query-result-2 tbody td');
+    await expect(cell).toContainText('"today":"2026-11-09T17:12:31.918708Z"');
+    await expect(cell).not.toContainText('__datetime');
+    await expect(cell.locator('a.uuid')).toHaveCount(1);
+    await cell.locator('a.uuid').click();
+    await expect(page).toHaveURL(/action=view-record/);
+});
+
+test('scripts: a transaction, a preview, an open transaction rolled back', async ({page}) => {
+    const dialogs = [];
+    page.on('dialog', dialog => {
+        dialogs.push(dialog.message());
+        dialog.accept();
+    });
+
+    // a preview: not asked, everything rolled back, the results of every statement shown
+    await page.goto(consoleUrl());
+    await page.locator('#q').fill("START TRANSACTION;\nUPDATE stdClass SET city = 'Nowhere' WHERE age > 20;\nSELECT COUNT(*) FROM stdClass WHERE city = 'Nowhere';\nCOMMIT;");
+    await page.getByRole('button', {name: 'Preview'}).click();
+    await expect(page.locator('#query-preview')).toContainText('everything was rolled back');
+    await expect(page.locator('#query-transaction')).toContainText('START TRANSACTION');
+    await expect(page.locator('#query-written-2')).toContainText('4 object(s) updated.');
+    await expect(page.locator('#query-result-3 tbody td')).toHaveText('4');
+    await expect(page.locator('#query-transaction-4')).toContainText('COMMIT (preview');
+    expect(dialogs).toEqual([]);
+    await page.goto(consoleUrl("SELECT COUNT(*) FROM stdClass WHERE city = 'Nowhere'"));
+    expect(await table(page)).toEqual([['0']]);
+
+    // a script ending with an open transaction: asked, rolled back
+    await page.locator('#q').fill("SELECT COUNT(*) FROM stdClass; BEGIN; UPDATE stdClass SET city = 'Nowhere'");
+    await page.getByRole('button', {name: 'Run'}).click();
+    expect(dialogs).toHaveLength(1);
+    await expect(page.locator('#query-rolled-back')).toContainText('it was rolled back');
+    await page.goto(consoleUrl("SELECT COUNT(*) FROM stdClass WHERE city = 'Nowhere'"));
+    expect(await table(page)).toEqual([['0']]);
+
+    // a failing statement: the error at its place in the script, the statements before it shown
+    await page.locator('#q').fill("SELECT COUNT(*) FROM stdClass;\nSELECT name FROM");
+    await page.getByRole('button', {name: 'Run'}).click();
+    await expect(page.locator('#query-error')).toContainText('Statement 2:');
+    await expect(page.locator('#query-error')).toContainText('line 2');
+    await expect(page.locator('#query-result')).toBeVisible();
+});
+
 test('syntax highlighting, the error marked, scrolling together', async ({page}) => {
     await page.goto(consoleUrl());
     const area = page.locator('#q');

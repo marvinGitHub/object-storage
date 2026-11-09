@@ -77,6 +77,39 @@ final class QueryCommandTest extends TestCase
         $this->assertSame([[2]], (new \melia\ObjectStorage\Query\Oql($this->storage))->query('SELECT COUNT(*) FROM Product')->rows);
     }
 
+    public function testAScript(): void
+    {
+        $tester = $this->runQuery(['query' => "START TRANSACTION;\nUPDATE Product SET price = 3 WHERE name = 'Chair';\nSELECT name, price FROM Product WHERE name = 'Chair';\nCOMMIT;"]);
+        $this->assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        $display = $tester->getDisplay();
+        $this->assertStringContainsString('Statement 4', $display);
+        $this->assertStringContainsString('START TRANSACTION.', $display);
+        $this->assertStringContainsString('1 object(s) updated.', $display);
+        $this->assertMatchesRegularExpression('/Chair\s+3/', $display);
+        $this->assertStringContainsString('COMMIT.', $display);
+
+        $json = $this->runQuery(['query' => "SELECT COUNT(*) AS n FROM Product; DELETE FROM Product WHERE name = 'Chair'", '--json' => true]);
+        $items = json_decode($json->getDisplay(), true);
+        $this->assertSame(['statement' => 'SELECT', 'rows' => [['n' => 3]]], $items[0]);
+        $this->assertSame(['statement' => 'DELETE', 'dryRun' => false, 'affected' => 1], array_slice($items[1], 0, 3));
+    }
+
+    public function testAScriptLeavingATransactionOpenFails(): void
+    {
+        $tester = $this->runQuery(['query' => 'START TRANSACTION; UPDATE Product SET price = 0']);
+        $this->assertSame(Command::FAILURE, $tester->getStatusCode());
+        $this->assertStringContainsString('open transaction: it was rolled back', $tester->getDisplay());
+        $this->assertSame([[0]], (new \melia\ObjectStorage\Query\Oql($this->storage))->query('SELECT COUNT(*) FROM Product WHERE price = 0')->rows);
+    }
+
+    public function testAPreview(): void
+    {
+        $tester = $this->runQuery(['query' => "DELETE FROM Product; SELECT COUNT(*) AS n FROM Product", '--preview' => true, '--json' => true]);
+        $this->assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        $this->assertSame([['n' => 0]], json_decode($tester->getDisplay(), true)[1]['rows']);
+        $this->assertSame([[3]], (new \melia\ObjectStorage\Query\Oql($this->storage))->query('SELECT COUNT(*) FROM Product')->rows);
+    }
+
     public function testErrors(): void
     {
         $tester = $this->runQuery(['query' => 'SELECT name FROM Product WHERE']);

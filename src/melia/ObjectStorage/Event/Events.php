@@ -49,4 +49,6 @@ interface Events
     public const OBJECT_CORRUPTION_DETECTED = 'object-storage.object_corruption_detected';
     public const REVISION_CONFLICT = 'object-storage.revision_conflict';
     public const CONSTRAINT_VIOLATION = 'object-storage.constraint_violation';
+    public const TRANSACTION_RECOVERED = 'object-storage.transaction_recovered';
+    public const TRANSACTION_RECOVERY_FAILED = 'object-storage.transaction_recovery_failed';
 }

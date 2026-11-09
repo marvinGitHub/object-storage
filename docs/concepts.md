@@ -96,6 +96,7 @@ var/storage/
 ├── stubs/             one directory per class, with an empty file per object: the index for listing by class
 │   └── classnames.json            the registry of all stored classes
 ├── locks/             lock files (only with the default file locks)
+├── transactions/      journals of running transactions, see Transactions
 └── safeMode           exists while the storage is in safe mode
 ```
 

@@ -111,5 +111,31 @@
         return index;
     }
 
-    return {KEYWORDS, FUNCTIONS, tokenize, highlight, indexOfByte};
+    /** the words that start a statement that writes or controls a transaction */
+    const WRITING = ['INSERT', 'UPDATE', 'DELETE', 'ALTER', 'START', 'BEGIN', 'COMMIT', 'ROLLBACK'];
+
+    /**
+     * Whether a query or a script (statements separated by semicolons) writes or controls a transaction, as
+     * Oql::writes() decides: one of its statements starts with INSERT, UPDATE, DELETE, ALTER, START, BEGIN, COMMIT
+     * or ROLLBACK. Semicolons in strings, quoted names and comments don't separate statements.
+     */
+    function writes(query) {
+        let first = true;
+        for (const token of tokenize(query)) {
+            if ('space' === token.type || 'comment' === token.type) {
+                continue;
+            }
+            if ('punctuation' === token.type && ';' === token.text) {
+                first = true;
+                continue;
+            }
+            if (first && ['keyword', 'identifier'].includes(token.type) && WRITING.includes(token.text.toUpperCase())) {
+                return true;
+            }
+            first = false;
+        }
+        return false;
+    }
+
+    return {KEYWORDS, FUNCTIONS, tokenize, highlight, indexOfByte, writes};
 });

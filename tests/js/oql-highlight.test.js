@@ -70,3 +70,14 @@ test('byte offsets as character indexes', () => {
     assert.equal(H.indexOfByte('😀x', 4), 2, 'four bytes, two UTF-16 units');
     assert.equal(H.indexOfByte('ab', 10), 2);
 });
+
+test('whether a query or script writes or controls a transaction', () => {
+    assert.equal(H.writes('SELECT name FROM Product'), false);
+    assert.equal(H.writes('-- a comment\n/* another */ update Product SET a = 1'), true);
+    assert.equal(H.writes("SELECT 'x; DELETE FROM T' FROM T; SELECT 1 FROM T -- ; DELETE"), false, 'semicolons in strings and comments');
+    assert.equal(H.writes('SELECT a FROM T; DELETE FROM T'), true, 'a later statement');
+    assert.equal(H.writes('START TRANSACTION; SELECT a FROM T; ROLLBACK'), true);
+    assert.equal(H.writes('begin'), true);
+    assert.equal(H.writes('SELECT begin, commit FROM T'), false, 'names, not statements');
+    assert.equal(H.writes(''), false);
+});

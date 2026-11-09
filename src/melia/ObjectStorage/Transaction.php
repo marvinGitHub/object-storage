@@ -10,7 +10,6 @@ namespace melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidOperationException;
-use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\TransactionAlreadyActiveException;
@@ -19,7 +18,7 @@ use melia\ObjectStorage\Exception\TransactionException;
 use melia\ObjectStorage\Exception\TransactionLockException;
 use melia\ObjectStorage\Exception\TransactionNotActiveException;
 use melia\ObjectStorage\Exception\TransactionRollbackException;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\Journal\Journal;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
 use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\Generator\AwareTrait;
@@ -27,21 +26,42 @@ use melia\ObjectStorage\UUID\Generator\Generator;
 use Throwable;
 
 /**
- * Class Transaction
+ * Stores and deletes several objects together: either all changes are written, or none.
  *
- * Handles a series of operations within a transactional context, providing atomicity, consistency, and isolation
- * for object storage interactions. Operations within a transaction can either all be committed or rolled back.
+ * The changes are collected and written by commit(). Every object is locked exclusively from its first change in
+ * the transaction until the commit or rollback. Its state before the transaction is recorded in a journal
+ * (<storage dir>/transactions/<transaction id>/, see TransactionRecovery) before anything is written, so a failed
+ * commit is rolled back exactly (data, revision, checksum and expiration as they were), and a commit interrupted by a
+ * crash is rolled back when the storage is opened next.
+ *
+ * While it runs, the transaction is the active transaction of its storage instance: every change of object files
+ * through that instance is recorded before it is made (track()) — objects written along by the child persistence
+ * policy, objects deleted along by the child deletion policy, store() and delete() of the storage itself, OQL
+ * statements — and rolled back with the rest. One transaction per storage instance; another instance can run
+ * another transaction. See docs/transactions.md.
  */
 class Transaction
 {
     use AwareTrait;
     use StorageAwareTrait;
 
-    private const TRANSACTION_FILE_SUFFIX = '.txn';
+    private const string OPERATION_STORE = 'store';
+    private const string OPERATION_DELETE = 'delete';
 
     private string $transactionId;
+
+    /** @var list<array{type: string, uuid: string, object?: object, timestamp: float}> */
     private array $operations = [];
+
+    /** @var array<string, string> the objects locked (and retained) for the transaction */
     private array $lockedObjects = [];
+
+    /** @var array<string, true> the objects whose state before the transaction is in the journal */
+    private array $recorded = [];
+
+    private ?Journal $journal = null;
+    private bool $transactionLocked = false;
+    private bool $undoing = false;
     private bool $isActive = false;
     private bool $isCommitted = false;
     private bool $isRolledBack = false;
@@ -56,19 +76,19 @@ class Transaction
     }
 
     /**
-     * Generates a unique transaction ID.
-     *
-     * @return string A unique transaction ID composed of a prefix, a unique identifier, and the process ID.
+     * Generates a unique transaction ID, usable as a directory name.
      */
     private function generateTransactionId(): string
     {
-        return 'txn_' . uniqid('', true) . '_' . getmypid();
+        return 'txn_' . str_replace('.', '_', uniqid('', true)) . '_' . getmypid();
     }
 
     /**
-     * @throws TransactionException
+     * Starts the transaction: takes its lock (so a storage opened meanwhile doesn't take it for interrupted) and
+     * starts its journal.
      *
-     * @throws IOException
+     * @throws TransactionException If it is already active, the storage is in safe mode, or the journal can't be
+     *         written.
      */
     public function begin(): self
     {
@@ -76,118 +96,178 @@ class Transaction
             throw new TransactionAlreadyActiveException('Transaction is already active');
         }
 
-        if ($this->getStorage()->getStateHandler()?->safeModeEnabled()) {
+        $storage = $this->getStorage();
+        if (null !== $storage->getActiveTransaction()) {
+            // every change through the instance belongs to its transaction: two would be ambiguous
+            throw new TransactionAlreadyActiveException('Another transaction is active on this storage instance; use another ObjectStorage instance for a parallel transaction');
+        }
+        if ($storage->getStateHandler()?->safeModeEnabled()) {
             throw new TransactionException('Cannot start transaction in safe mode');
         }
 
+        try {
+            $lockAdapter = $storage->getLockAdapter();
+            if (null !== $lockAdapter) {
+                $lockAdapter->acquireExclusiveLock(TransactionRecovery::lockUuid($this->transactionId), $this->timeout);
+                $this->transactionLocked = true;
+            }
+
+            $this->journal = TransactionRecovery::openJournal($storage, $this->transactionId);
+            $this->journal->append(TransactionRecovery::ENTRY_BEGIN, [
+                'id' => $this->transactionId,
+                'pid' => getmypid(),
+                'host' => (string)gethostname(),
+                'startedAt' => microtime(true),
+            ]);
+        } catch (Throwable $e) {
+            $this->discardJournal();
+            $this->releaseTransactionLock();
+            throw new TransactionException('The transaction can\'t be started: ' . $e->getMessage(), 0, $e);
+        }
+
         $this->isActive = true;
-        $this->createTransactionLog();
+        $this->isCommitted = false;
+        $this->isRolledBack = false;
+        $storage->setActiveTransaction($this);
 
         return $this;
     }
 
     /**
-     * Retrieves the current object storage.
+     * Records an object before it is changed through the storage instance of the transaction: locks it until the
+     * end of the transaction and records its state before the transaction, if not yet done. Called by the storage
+     * under the exclusive lock of the object, before its files are written or deleted, so every change through the
+     * instance is part of the transaction: OQL statements, store() and delete() of the storage, referenced objects
+     * written or deleted along.
      *
-     * @return ObjectStorage|null The current instance of object storage, or null if not initialized.
+     * @throws TransactionLockException
+     * @throws TransactionException If the state can't be recorded; the change must not be made then.
+     * @internal Not part of the public API; may change in any release.
      */
-    public function getStorage(): ?ObjectStorage
+    public function track(string $uuid): void
     {
-        return $this->storage instanceof ObjectStorage ? $this->storage : null;
+        // restoring objects while rolling back records nothing
+        if (!$this->isActive || $this->undoing) {
+            return;
+        }
+
+        $this->lockObject($uuid);
+        $this->recordBefore($uuid);
     }
 
     /**
-     * Creates a transaction log
-     * @throws IOException
-     */
-    private function createTransactionLog(): void
-    {
-        $logData = [
-            'transaction_id' => $this->transactionId,
-            'start_time' => microtime(true),
-            'status' => 'active',
-            'operations' => []
-        ];
-
-        $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData));
-    }
-
-    /**
-     * Retrieves the file path for the transaction log.
+     * Marks the current point of the transaction, to roll back to it with rollbackTo(), e.g. before a statement.
      *
-     * @return string The full path to the transaction log file.
-     */
-    public function getTransactionLogPath(): string
-    {
-        return $this->getStorage()->getStorageDir() . DIRECTORY_SEPARATOR . 'transactions' . DIRECTORY_SEPARATOR . $this->transactionId . self::TRANSACTION_FILE_SUFFIX;
-    }
-
-    /**
-     * Commits the transaction
-     *
-     * @return bool
-     * @throws Throwable
-     * @throws TransactionCommitException
-     * @throws TransactionException
+     * @return int The point: the sequence number of the last entry of the journal.
      * @throws TransactionNotActiveException
+     * @throws TransactionException If the journal can't be read.
+     * @internal Not part of the public API; may change in any release.
+     */
+    public function savepoint(): int
+    {
+        $this->ensureTransactionActive();
+
+        try {
+            $savepoint = $this->journal?->lastSequence() ?? 0;
+        } catch (Throwable $e) {
+            throw new TransactionException('The journal of the transaction can\'t be read: ' . $e->getMessage(), 0, $e);
+        }
+
+        // objects changed after the savepoint are recorded again, with their state at the savepoint
+        $this->recorded = [];
+
+        return $savepoint;
+    }
+
+    /**
+     * Rolls back the changes made since a savepoint(); the transaction stays active and keeps its locks (as a
+     * failed statement in MySQL).
+     *
+     * @throws TransactionNotActiveException
+     * @throws TransactionRollbackException If an object can't be restored; the transaction ends as a failed
+     *         rollback() does: safe mode, the journal is kept.
+     * @internal Not part of the public API; may change in any release.
+     */
+    public function rollbackTo(int $savepoint): void
+    {
+        $this->ensureTransactionActive();
+
+        try {
+            $this->undo($savepoint);
+        } catch (Throwable $e) {
+            $this->failRollback($e);
+        }
+
+        // as at the savepoint: the next change of an object records its state again
+        $this->recorded = [];
+    }
+
+    /**
+     * Retrieves the current object storage.
+     */
+    public function getStorage(): ObjectStorage
+    {
+        if (!$this->storage instanceof ObjectStorage) {
+            throw new InvalidOperationException('A transaction needs an ObjectStorage.');
+        }
+
+        return $this->storage;
+    }
+
+    /**
+     * The directory of the journal of the transaction; it exists from begin() to the end of the commit or rollback.
+     */
+    public function getJournalDirectory(): string
+    {
+        return TransactionRecovery::directory($this->getStorage()) . DIRECTORY_SEPARATOR . $this->transactionId;
+    }
+
+    /**
+     * Writes all changes of the transaction. If one of them fails, those written so far are rolled back.
+     *
+     * @throws TransactionCommitException If a change failed; the transaction is rolled back.
+     * @throws TransactionNotActiveException
+     * @throws TransactionRollbackException If rolling back after a failure failed too; safe mode is enabled.
      */
     public function commit(): bool
     {
         $this->ensureTransactionActive();
 
         try {
-            // Execute all operations
             foreach ($this->operations as $operation) {
                 $this->executeOperation($operation);
             }
 
-            $this->isCommitted = true;
-            $this->isActive = false;
-
-            // Cleanup
-            $this->cleanup();
-
-            return true;
-
+            // from here on, the changes stay even if the process crashes before the journal is removed
+            $this->journal?->append(TransactionRecovery::ENTRY_COMMIT);
         } catch (Throwable $e) {
-            // Automatic rollback on error. Catching Throwable (not just the library's own
-            // Exception type) matters here: store()/delete() are documented to also throw
-            // core exceptions such as ReflectionException or Psr\SimpleCache\InvalidArgumentException,
-            // which do not extend melia\ObjectStorage\Exception\Exception. With the narrower
-            // catch, those failures skipped the rollback below entirely, leaving the
-            // transaction "active" with its locks still held and any already-executed
-            // operations un-reverted.
+            // Throwable, not only the library's own exceptions: store() and delete() may also throw core
+            // exceptions (e.g. ReflectionException), which must roll back and release the locks as well
             $this->rollback();
             throw new TransactionCommitException('Transaction commit failed: ' . $e->getMessage(), 0, $e);
         }
+
+        $this->isCommitted = true;
+        $this->isActive = false;
+        $this->cleanup();
+
+        return true;
     }
 
     /**
-     * Helper methods
+     * Executes an operation.
      *
-     * @throws TransactionNotActiveException
-     */
-    private function ensureTransactionActive(): void
-    {
-        if (!$this->isActive) {
-            throw new TransactionNotActiveException('No active transaction');
-        }
-    }
-
-    /**
-     * Executes an operation
-     *
+     * @param array{type: string, uuid: string, object?: object} $operation
      * @throws Throwable
      */
     private function executeOperation(array $operation): void
     {
         switch ($operation['type']) {
-            case 'store':
+            case self::OPERATION_STORE:
                 $this->getStorage()->store($operation['object'], $operation['uuid']);
                 break;
 
-            case 'delete':
+            case self::OPERATION_DELETE:
                 $this->getStorage()->delete($operation['uuid']);
                 break;
 
@@ -197,8 +277,12 @@ class Transaction
     }
 
     /**
-     * Stores an object within the transaction
-     * @throws Throwable
+     * Stores an object within the transaction: it is written by commit().
+     *
+     * @return string The UUID of the object.
+     * @throws TransactionNotActiveException
+     * @throws TransactionLockException If the object can't be locked.
+     * @throws TransactionException If its current state can't be recorded.
      */
     public function store(object $object, ?string $uuid = null): string
     {
@@ -206,31 +290,21 @@ class Transaction
 
         $uuid = $uuid ?? ($object instanceof AwareInterface ? $object->getUUID() ?? $this->getGenerator()->generate() : $this->getGenerator()->generate());
 
-        // Lock object for transaction
         $this->lockObject($uuid);
+        $this->recordBefore($uuid);
 
-        // Create a backup of an existing object (if exists)
-        $backup = null;
-        if ($this->getStorage()->exists($uuid)) {
-            $backup = $this->createBackup($uuid);
-        }
-
-        // Add operation to a transaction list
         $this->operations[] = [
-            'type' => 'store',
+            'type' => self::OPERATION_STORE,
             'uuid' => $uuid,
             'object' => clone $object,
-            'backup' => $backup,
-            'timestamp' => microtime(true)
+            'timestamp' => microtime(true),
         ];
-
-        $this->updateTransactionLog();
 
         return $uuid;
     }
 
     /**
-     * Locks an object for the transaction
+     * Locks an object for the transaction, until its end.
      *
      * @throws TransactionLockException
      */
@@ -241,7 +315,7 @@ class Transaction
         }
 
         try {
-            $this->getStorage()->getLockAdapter()->acquireExclusiveLock($uuid, $this->timeout);
+            $this->getStorage()->retainLock($uuid, $this->timeout);
             $this->lockedObjects[$uuid] = $uuid;
         } catch (Throwable $e) {
             throw new TransactionLockException("Could not lock object {$uuid}: " . $e->getMessage(), 0, $e);
@@ -249,247 +323,237 @@ class Transaction
     }
 
     /**
-     * Creates a backup of an object
+     * Records the state of an object as stored, before the transaction changes it, in the journal: read from the
+     * files under the lock, not from the cache, so it is the state another process may have stored meanwhile.
      *
-     * @throws Throwable
+     * @throws TransactionException
      */
-    private function createBackup(string $uuid): ?array
+    private function recordBefore(string $uuid): void
     {
-        if (!$this->getStorage()->exists($uuid)) {
-            return null;
+        if (isset($this->recorded[$uuid])) {
+            return;
         }
 
-        $object = $this->getStorage()->load($uuid);
-        if (null === $object) {
-            return null;
+        try {
+            try {
+                $raw = $this->getStorage()->readRaw($uuid);
+            } catch (ObjectNotFoundException) {
+                $raw = null;
+            }
+
+            $this->journal?->append(TransactionRecovery::ENTRY_BEFORE, TransactionRecovery::encodeBefore($uuid, $raw));
+        } catch (Throwable $e) {
+            throw new TransactionException(sprintf('The state of the object %s can\'t be recorded: %s', $uuid, $e->getMessage()), 0, $e);
         }
 
-        return [
-            'uuid' => $uuid,
-            'object' => clone $object,
-            'timestamp' => microtime(true)
-        ];
+        $this->recorded[$uuid] = true;
     }
 
     /**
-     * Loads an object within the transaction
+     * Loads an object within the transaction: as stored or deleted in it, otherwise from the storage.
+     *
      * @throws Throwable
      */
     public function load(string $uuid): ?object
     {
         $this->ensureTransactionActive();
 
-        // Check if there is a pending store operation for this UUID
-        $pendingStore = $this->findPendingOperation('store', $uuid);
-        if ($pendingStore) {
-            return clone $pendingStore['object'];
+        // the last operation on the object counts
+        foreach (array_reverse($this->operations) as $operation) {
+            if ($operation['uuid'] !== $uuid) {
+                continue;
+            }
+
+            return self::OPERATION_STORE === $operation['type'] ? clone $operation['object'] : null;
         }
 
-        // Check if there is a pending delete operation
-        $pendingDelete = $this->findPendingOperation('delete', $uuid);
-        if ($pendingDelete) {
-            return null; // Object was deleted in this transaction
-        }
-
-        // Normal load operation
         return $this->getStorage()->load($uuid);
     }
 
     /**
-     * Finds a pending operation based on its type and UUID.
+     * Deletes an object within the transaction: it is deleted by commit().
      *
-     * @param string $type The type of the operation to find.
-     * @param string $uuid The UUID of the operation to find.
-     * @return array|null An array representing the pending operation if found, or null if no matching operation exists.
-     */
-    private function findPendingOperation(string $type, string $uuid): ?array
-    {
-        foreach ($this->operations as $operation) {
-            if ($operation['type'] === $type && $operation['uuid'] === $uuid) {
-                return $operation;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Updates the transaction log
-     * @throws IOException
-     */
-    private function updateTransactionLog(): void
-    {
-        $logData = [
-            'transaction_id' => $this->transactionId,
-            'start_time' => microtime(true),
-            'status' => $this->isCommitted ? 'committed' : ($this->isRolledBack ? 'rolled_back' : 'active'),
-            'operations' => array_map(static function ($operation) {
-                return [
-                    'type' => $operation['type'],
-                    'uuid' => $operation['uuid'],
-                    'timestamp' => $operation['timestamp']
-                ];
-            }, $this->operations)
-        ];
-
-        $logFile = $this->getTransactionLogPath();
-        (new Writer())->atomicWrite($logFile, serialize($logData));
-    }
-
-    /**
-     * Deletes an object within the transaction
-     *
-     * @param string $uuid
-     * @return bool
-     * @throws ObjectNotFoundException
-     * @throws Throwable
+     * @throws ObjectNotFoundException If the object doesn't exist, neither stored nor stored in the transaction.
      * @throws TransactionLockException
      * @throws TransactionNotActiveException
+     * @throws TransactionException
      */
     public function delete(string $uuid): bool
     {
         $this->ensureTransactionActive();
 
-        // If there is a pending store for this UUID in the same transaction,
-        // the object should be considered present within the txn context.
-        // We allow scheduling a delete without requiring physical existence.
-        $pendingStore = $this->findPendingOperation('store', $uuid);
-        if (null === $pendingStore) {
-            // No pending store: ensure it exists in storage, otherwise this is truly missing
-            if (!$this->getStorage()->exists($uuid)) {
-                throw new ObjectNotFoundException("Object with UUID {$uuid} not found");
+        $storedInTransaction = false;
+        foreach ($this->operations as $operation) {
+            if ($operation['uuid'] === $uuid && self::OPERATION_STORE === $operation['type']) {
+                $storedInTransaction = true;
             }
         }
 
-        // Lock object for transaction
-        $this->lockObject($uuid);
-
-        // Create a backup only if the object actually exists in storage.
-        // If it's only pending in this transaction, there is nothing to back up.
-        $backup = null;
-        if (null === $pendingStore) {
-            $backup = $this->createBackup($uuid);
+        if (!$storedInTransaction && !$this->getStorage()->exists($uuid)) {
+            throw new ObjectNotFoundException("Object with UUID {$uuid} not found");
         }
 
-        // Add operation to a transaction list
-        $this->operations[] = [
-            'type' => 'delete',
-            'uuid' => $uuid,
-            'backup' => $backup,
-            'timestamp' => microtime(true)
-        ];
+        $this->lockObject($uuid);
+        $this->recordBefore($uuid);
 
-        $this->updateTransactionLog();
+        $this->operations[] = [
+            'type' => self::OPERATION_DELETE,
+            'uuid' => $uuid,
+            'timestamp' => microtime(true),
+        ];
 
         return true;
     }
 
     /**
-     * Cleanup after transaction
+     * Rolls back the transaction: before commit(), nothing has been written and the changes are discarded; after a
+     * failed commit, the objects are restored to their state before the transaction.
+     *
+     * @throws TransactionException If the transaction isn't active.
+     * @throws TransactionRollbackException If an object can't be restored; safe mode is enabled, and the journal is
+     *         kept, so the rollback is tried again when the storage is opened next (after disabling safe mode).
+     * @throws SafeModeActivationFailedException
      */
-    private function cleanup(): void
+    public function rollback(): bool
     {
-        $this->unlockAllObjects();
-
-        // Delete transaction log
-        $logFile = $this->getTransactionLogPath();
-        if (file_exists($logFile)) {
-            unlink($logFile);
+        if (!$this->isActive) {
+            throw new TransactionException($this->isCommitted ? 'The transaction is committed and can\'t be rolled back' : 'No active transaction to rollback');
         }
 
-        $this->operations = [];
+        try {
+            $this->undo(0);
+        } catch (Throwable $e) {
+            $this->failRollback($e);
+        }
+
+        $this->isRolledBack = true;
+        $this->isActive = false;
+        $this->cleanup();
+
+        return true;
     }
 
     /**
-     * Unlocks all objects
+     * Restores the objects recorded after a point of the journal (0: all), without recording the restoring writes.
+     *
+     * @throws TransactionRollbackException
      */
-    private function unlockAllObjects(): void
+    private function undo(int $afterSequence): void
+    {
+        if (null === $this->journal) {
+            return;
+        }
+
+        $this->undoing = true;
+        try {
+            TransactionRecovery::undo($this->getStorage(), $this->journal, $afterSequence);
+        } finally {
+            $this->undoing = false;
+        }
+    }
+
+    /**
+     * Ends the transaction after a rollback that couldn't restore every object: safe mode is enabled, the journal
+     * stays for the next attempt (when the storage is opened again), and the locks are released, so another process
+     * can make it.
+     *
+     * @throws TransactionRollbackException Always.
+     * @throws SafeModeActivationFailedException
+     */
+    private function failRollback(Throwable $e): never
+    {
+        $this->isActive = false;
+        $this->journal = null;
+        $this->releaseLocks();
+        $this->detach();
+        $this->getStorage()->getStateHandler()?->enableSafeMode();
+
+        throw new TransactionRollbackException('Transaction rollback failed, enable safe mode. Reason: ' . $e->getMessage(), 0, $e);
+    }
+
+    /**
+     * Removes the journal and releases the locks, after a commit or rollback.
+     */
+    private function cleanup(): void
+    {
+        $this->discardJournal();
+        $this->releaseLocks();
+        $this->detach();
+        $this->operations = [];
+        $this->recorded = [];
+    }
+
+    /**
+     * Ends recording the changes through the storage instance.
+     */
+    private function detach(): void
+    {
+        $storage = $this->getStorage();
+        if ($storage->getActiveTransaction() === $this) {
+            $storage->setActiveTransaction(null);
+        }
+    }
+
+    /**
+     * Removes the journal; a journal that can't be removed is ignored (committed) or rolled back (nothing written)
+     * when the storage is opened next.
+     */
+    private function discardJournal(): void
+    {
+        if (null === $this->journal) {
+            return;
+        }
+
+        try {
+            $this->journal->remove();
+        } catch (Throwable $e) {
+            $this->getStorage()->getLogger()?->log(new Exception(message: 'Failed to remove the journal of transaction ' . $this->transactionId, previous: $e));
+        }
+        $this->journal = null;
+    }
+
+    /**
+     * Releases the locks of the objects and of the transaction.
+     */
+    private function releaseLocks(): void
     {
         foreach ($this->lockedObjects as $uuid) {
             try {
-                if ($this->getStorage()->getLockAdapter()->isLockedByThisProcess($uuid)) {
-                    $this->getStorage()->getLockAdapter()->releaseLock($uuid);
-                }
+                $this->getStorage()->releaseRetainedLock($uuid);
             } catch (Throwable $e) {
                 $this->getStorage()->getLogger()?->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
             }
         }
         $this->lockedObjects = [];
+
+        $this->releaseTransactionLock();
     }
 
-    /**
-     * Rolls back the transaction
-     *
-     * @throws TransactionException
-     * @throws SafeModeActivationFailedException
-     */
-    public function rollback(): bool
+    private function releaseTransactionLock(): void
     {
-        if (!$this->isActive && !$this->isCommitted) {
-            throw new TransactionException('No active transaction to rollback');
+        if (!$this->transactionLocked) {
+            return;
         }
 
+        $this->transactionLocked = false;
+        $lockUuid = TransactionRecovery::lockUuid($this->transactionId);
         try {
-            // Execute rollback operations
-            $this->executeRollback();
-
-            $this->isRolledBack = true;
-            $this->isActive = false;
-
-            // Cleanup
-            $this->cleanup();
-
-            return true;
-
-        } catch (Throwable $e) {
-            $this->getStorage()->getStateHandler()?->enableSafeMode();
-            throw new TransactionRollbackException('Transaction rollback failed, enable safe mode. Reason: ' . $e->getMessage(), 0, $e);
-        }
-    }
-
-    /**
-     * Executes rollback operations
-     */
-    private function executeRollback(): void
-    {
-        // Reverse operations in reverse order
-        $operations = array_reverse($this->operations);
-
-        foreach ($operations as $operation) {
-            try {
-                switch ($operation['type']) {
-                    case 'store':
-                        if ($operation['backup']) {
-                            // Restore backup
-                            $this->restoreBackup($operation['uuid'], $operation['backup']);
-                        } else {
-                            // Delete an object (was newly created)
-                            $this->getStorage()->delete($operation['uuid']);
-                        }
-                        break;
-
-                    case 'delete':
-                        // Restore backup
-                        if ($operation['backup']) {
-                            $this->restoreBackup($operation['uuid'], $operation['backup']);
-                        }
-                        break;
-                }
-            } catch (Throwable $e) {
-                // Log rollback errors, but continue
-                $this->getStorage()->getLogger()?->log(new Exception(message: sprintf("Rollback operation failed for %s", $operation['uuid']), previous: $e));
+            $lockAdapter = $this->getStorage()->getLockAdapter();
+            if (null !== $lockAdapter && $lockAdapter->isLockedByThisProcess($lockUuid)) {
+                $lockAdapter->releaseLock($lockUuid);
             }
+        } catch (Throwable $e) {
+            $this->getStorage()->getLogger()?->log(new Exception(message: 'Failed to release the lock of transaction ' . $this->transactionId, previous: $e));
         }
     }
 
     /**
-     * Restores a backup
-     *
-     * @throws Throwable
+     * @throws TransactionNotActiveException
      */
-    private function restoreBackup(string $uuid, array $backup): void
+    private function ensureTransactionActive(): void
     {
-        if ($backup && isset($backup['object'])) {
-            $this->getStorage()->store($backup['object'], $uuid);
+        if (!$this->isActive) {
+            throw new TransactionNotActiveException('No active transaction');
         }
     }
 
@@ -503,7 +567,7 @@ class Transaction
                 $this->rollback();
             } catch (Throwable $e) {
                 // Must not let anything escape a destructor (fatal); catch Throwable, not just
-                // the library's own Exception type, for the same reason as in commit() above.
+                // the library's own Exception type.
                 $this->getStorage()->getLogger()?->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
             }
         }
