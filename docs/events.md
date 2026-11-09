@@ -63,6 +63,7 @@ The constants are defined in `melia\ObjectStorage\Event\Events`, the context cla
 | Event | When | Context |
 |---|---|---|
 | `LIFETIME_CHANGED` | `setLifetime()` or `setExpiration()` changed the lifetime | `LifetimeContext` with `getExpiresAt()` (Unix timestamp or `null`) |
+| `TOUCHED` | `touch()` set when the object was modified, without changing its data | `Context` |
 
 ## Caching
 

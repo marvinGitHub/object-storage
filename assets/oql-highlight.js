@@ -15,11 +15,11 @@
     'use strict';
 
     const KEYWORDS = ['SELECT', 'DISTINCT', 'FROM', 'AS', 'JOIN', 'INNER', 'LEFT', 'OUTER', 'ON', 'WHERE', 'GROUP', 'BY',
-        'HAVING', 'ORDER', 'ASC', 'DESC', 'LIMIT', 'OFFSET', 'AND', 'OR', 'NOT', 'IS', 'NULL', 'IN', 'BETWEEN', 'LIKE',
+        'HAVING', 'ORDER', 'ASC', 'DESC', 'LIMIT', 'OFFSET', 'AND', 'OR', 'NOT', 'IS', 'NULL', 'IN', 'BETWEEN', 'LIKE', 'REGEXP',
         'TRUE', 'FALSE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'UUID'];
     const LITERALS = ['NULL', 'TRUE', 'FALSE'];
     const FUNCTIONS = ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'LOWER', 'UPPER', 'LENGTH', 'TRIM', 'ABS', 'ROUND', 'SUBSTR',
-        'COALESCE', 'IFNULL', 'REF', 'NOW', 'DATETIME', 'DATE', 'DATE_ADD', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE',
+        'COALESCE', 'IFNULL', 'CEIL', 'CEILING', 'FLOOR', 'TRUNCATE', 'MOD', 'SIGN', 'POW', 'POWER', 'SQRT', 'EXP', 'LN', 'LOG', 'LOG10', 'LOG2', 'PI', 'RAND', 'SIN', 'COS', 'TAN', 'COT', 'ASIN', 'ACOS', 'ATAN', 'ATAN2', 'DEGREES', 'RADIANS', 'CRC32', 'CONV', 'CREATED', 'MODIFIED', 'CONCAT', 'CONCAT_WS', 'REGEXP_SUBSTR', 'REGEXP_REPLACE', 'REF', 'NOW', 'DATETIME', 'DATE', 'DATE_ADD', 'DATE_SUB', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE',
         'SECOND'];
 
     /**
@@ -37,7 +37,7 @@
             '((?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)', // 5 numbers
             '(\\?|:[A-Za-z_][A-Za-z0-9_]*)',                 // 6 parameters
             '([A-Za-z_\\\\][A-Za-z0-9_\\\\]*)',              // 7 words: keywords, functions, names
-            '(<>|!=|<=|>=|\\|\\||[=<>+\\-*/])',              // 8 operators
+            '(<>|!=|<=|>=|\\|\\||[=<>+\\-*/%])',             // 8 operators
             '([(),.;])',                                     // 9 punctuation
             '([\\s\\S])',                                    // 10 anything else
         ].join('|'), 'gy');

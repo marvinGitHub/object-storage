@@ -686,14 +686,17 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $metadata = new Metadata();
             $metadata->setChecksumAlgorithm($this->getStrategy()?->getChecksumAlgorithm() ?? static::CHECKSUM_ALGORITHM_DEFAULT);
-            $metadata->setTimestampCreation($timestampCreation = microtime(true));
+            $now = microtime(true);
             $metadata->setUuid($uuid);
             $metadata->setClassName($className = get_class($object));
             $metadata->setVersion(Metadata::VERSION);
-            $metadata->setTimestampExpiresAt($ttl ? $timestampCreation + $ttl : null);
+            $metadata->setTimestampExpiresAt($ttl ? $now + $ttl : null);
 
             $loadedMetadata = $this->loadMetadata($uuid);
             $exists = null !== $loadedMetadata;
+            // created when first stored; modified when its data is written (below)
+            $metadata->setTimestampCreation($loadedMetadata?->getTimestampCreation() ?? $now);
+            $metadata->setTimestampModification($loadedMetadata?->getTimestampModification() ?? $now);
 
             if (false === $exists) {
                 $eventDispatcher?->dispatch(Events::BEFORE_INITIAL_STORE, static fn() => new ObjectPersistenceContext($uuid, $object));
@@ -756,6 +759,15 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                     }
 
                     $metadata->setRevision($writeGraph ? $currentRevision + 1 : $currentRevision);
+                    // as on disk (the cache may be outdated); a write of the data is a modification
+                    if (null !== $currentMetadata) {
+                        $metadata->setTimestampCreation($currentMetadata->getTimestampCreation());
+                        $metadata->setTimestampModification($currentMetadata->getTimestampModification());
+                    }
+                    if ($writeGraph) {
+                        // a new object: modified when created
+                        $metadata->setTimestampModification(null === $currentMetadata ? $metadata->getTimestampCreation() : microtime(true));
+                    }
                 }
 
                 if ($writeGraph) {
@@ -1806,6 +1818,66 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     public function setExpiration(string $uuid, ?DateTimeInterface $expiresAt): void
     {
         $this->setLifetime($uuid, $expiresAt ? $expiresAt->getTimestamp() - microtime(true) : null);
+    }
+
+    /**
+     * Touches an object, like touch on a file: sets when it was modified (now, or the point in time given), without
+     * changing its data, revision or lifetime. Only the metadata is written; METADATA_SAVED and TOUCHED are
+     * dispatched. Expired objects can be touched too (it doesn't extend the lifetime: setLifetime() does).
+     *
+     * @throws MetadataNotFoundException If there is no such object.
+     * @throws MetadataSavingFailureException
+     */
+    public function touch(string $uuid, ?DateTimeInterface $at = null): void
+    {
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+        if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
+            $lockAdapter->acquireExclusiveLock($uuid);
+            $lockedHere = true;
+        }
+
+        try {
+            // read from disk under the lock, as setLifetime() does
+            $metadata = $this->reloadMetadata($uuid);
+            if (null === $metadata) {
+                throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
+            }
+            $timestamp = null === $at ? microtime(true) : (float)$at->format('U.u');
+            $metadata->setTimestampModification($timestamp);
+            $this->writeMetadata($metadata);
+            $this->getEventDispatcher()?->dispatch(Events::TOUCHED, static fn() => new Context($uuid));
+        } finally {
+            if ($lockedHere) {
+                $lockAdapter->releaseLock($uuid);
+            }
+        }
+    }
+
+    /**
+     * When the object was first stored; null if there is no such object.
+     */
+    public function getCreatedAt(string $uuid): ?DateTimeImmutable
+    {
+        $metadata = $this->loadMetadata($uuid);
+        return null === $metadata ? null : self::dateOfTimestamp($metadata->getTimestampCreation());
+    }
+
+    /**
+     * When the data of the object was written last, or it was touched; null if there is no such object.
+     */
+    public function getModifiedAt(string $uuid): ?DateTimeImmutable
+    {
+        $metadata = $this->loadMetadata($uuid);
+        return null === $metadata ? null : self::dateOfTimestamp($metadata->getTimestampModification());
+    }
+
+    /** a timestamp with microseconds as a date in UTC */
+    private static function dateOfTimestamp(float $timestamp): DateTimeImmutable
+    {
+        // "U" ignores the time zone given: +00:00, set to UTC by name
+        $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $timestamp)) ?: new DateTimeImmutable('@' . (int)$timestamp);
+        return $date->setTimezone(new \DateTimeZone('UTC'));
     }
 
     /**

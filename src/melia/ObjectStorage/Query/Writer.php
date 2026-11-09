@@ -90,7 +90,8 @@ final class Writer
                 $metadata->setUuid($uuid);
                 $metadata->setClassName($class);
                 $metadata->setVersion(Metadata::VERSION);
-                $metadata->setTimestampCreation(microtime(true));
+                $metadata->setTimestampCreation($now = microtime(true));
+                $metadata->setTimestampModification($now);
                 foreach ($reservedNames as $kind => $name) {
                     $metadata->setReservedName($kind, $name);
                 }
@@ -212,6 +213,7 @@ final class Writer
                 }
                 $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
                 $metadata->setRevision($metadata->getRevision() + 1);
+                $metadata->setTimestampModification(microtime(true));
                 $this->storage->writeRaw(new RawObject($uuid, $json, $metadata), true);
                 $changed[] = $uuid;
             } catch (Throwable $e) {

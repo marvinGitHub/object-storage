@@ -2,6 +2,8 @@
 
 > **Experimental.** OQL is new in 1.0 and marked `@experimental`: its syntax, its semantics and the API of `Oql`, `Result`, `Reference` and `QueryException` may change in a minor release of 1.x, not only in a major one. Such changes are listed in the [Changelog](../Changelog.md) under **Breaking (experimental)**. Feedback on the language is welcome before it is declared stable.
 
+> **New to OQL?** [OQL by example](examples/oql-by-example.md) teaches it step by step on a small shop, with the result of every query. This page is the reference.
+
 OQL is a small query language like SQL for the objects of a storage: `SELECT` with joins, `WHERE`, `GROUP BY` with aggregates, `HAVING`, `ORDER BY`, `LIMIT` and `OFFSET`, `INSERT`, `UPDATE` and `DELETE`, and `ALTER CLASS … DROP ATTRIBUTE`. It works on the objects as stored, so the classes aren't needed to read (the [viewer](maintenance.md#the-web-viewer) queries any storage), and paths lead into referenced objects.
 
 ```php
@@ -34,7 +36,7 @@ $oql->query('DELETE FROM Product WHERE UUID = ?', [$uuid]);
 $oql->query('DELETE FROM Product WHERE active = FALSE', dryRun: true)->column(0);       // what would be deleted
 ```
 
-Planned: using [search indexes](search.md) to find the objects instead of reading all objects of a class.
+Conditions on indexed properties don't read all objects of a class: [unique indexes](unique.md) and Loupe [search indexes](search.md) name the objects to read (`=`, `IN`, `<`, `>`, `BETWEEN` on texts, numbers, dates and booleans), see [Indexes](#performance-and-memory).
 
 ## Syntax
 
@@ -80,17 +82,50 @@ Keywords ignore case; `--` starts a comment up to the end of the line, `/* … *
 |---|---|
 | values | `'text'` (`''` for a quote), `12`, `-1.5`, `1e3`, `TRUE`, `FALSE`, `NULL` |
 | parameters | `?` (by position, from 0) and `:name`: texts, numbers, booleans, `NULL` and dates (`DateTimeInterface`); the values are never read as part of the query |
-| arithmetic | `+ - * /`; `7 / 2` is `3.5`, a division by 0 is `NULL` |
-| text | `a \|\| b` joins texts |
+| arithmetic | `+ - * /`, `%` (remainder), `DIV` (integer quotient); `7 / 2` is `3.5`, `7 DIV 2` is `3`, `-7 % 3` is `-1` (the sign of the dividend); a division by 0 is `NULL` |
+| text | `a \|\| b` joins texts (`NULL` if one is `NULL`); `CONCAT(a, b, …)` leaves `NULL` out, `CONCAT_WS(', ', a, b, …)` with a separator between |
 | comparison | `= != <> < <= > >=` |
-| conditions | `IS [NOT] NULL`, `[NOT] IN (a, b, …)`, `[NOT] BETWEEN low AND high`, `[NOT] LIKE pattern`, `AND`, `OR`, `NOT` |
-| functions | `LOWER`, `UPPER`, `LENGTH` (characters), `TRIM`, `SUBSTR(text, start [, length])` (from 1), `ABS`, `ROUND(number [, digits])`, `COALESCE(a, b, …)`, `IFNULL(a, b)` |
-| dates | `NOW()`, `DATETIME(x [, zone])`, `DATE(x [, zone])`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND(x [, zone])`, `DATE_ADD(x, amount, unit)`, see [Dates](#dates) |
+| conditions | `IS [NOT] NULL`, `[NOT] IN (a, b, …)`, `[NOT] BETWEEN low AND high`, `[NOT] LIKE pattern`, `[NOT] REGEXP pattern`, `AND`, `OR`, `NOT` |
+| functions | `LOWER`, `UPPER`, `LENGTH` (characters), `TRIM`, `SUBSTR(text, start [, length])` (from 1), `ABS`, `ROUND(number [, digits])`, `COALESCE(a, b, …)`, `IFNULL(a, b)`, `CONCAT(a, b, …)`, `CONCAT_WS(separator, a, b, …)`, `REGEXP_SUBSTR(text, pattern)`, `REGEXP_REPLACE(text, pattern, replacement)` |
+| math | `CEIL`/`CEILING`, `FLOOR`, `TRUNCATE(x, digits)`, `MOD(a, b)`, `SIGN`, `POW`/`POWER(x, y)`, `SQRT`, `EXP`, `LN`, `LOG(x)`, `LOG(base, x)`, `LOG10`, `LOG2`, `PI()`, `RAND()`, `SIN`, `COS`, `TAN`, `COT`, `ASIN`, `ACOS`, `ATAN(x)`, `ATAN(y, x)`, `ATAN2(y, x)`, `DEGREES`, `RADIANS`, `CRC32(text)`, `CONV(number, from base, to base)`; see [Math](#math) |
+| metadata | `CREATED(alias)`, `MODIFIED(alias)` (without alias: of the only source), see [Dates](#dates) |
+| dates | `NOW()`, `DATETIME(x [, zone])`, `DATE(x [, zone])`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND(x [, zone])`, `DATE_ADD(x, amount, unit)`, `DATE_SUB(x, amount, unit)`, see [Dates](#dates) |
 | aggregates | `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM([DISTINCT] x)`, `AVG`, `MIN`, `MAX` |
 
-The precedence of the operators, from the lowest, is that of SQLite: `OR`, `AND`, `NOT`, `= != IS IN LIKE BETWEEN`, `< <= > >=`, `+ -`, `* /`, `||`, unary `-`.
+The precedence of the operators, from the lowest, is that of SQLite: `OR`, `AND`, `NOT`, `= != IS IN LIKE REGEXP BETWEEN`, `< <= > >=`, `+ -`, `* / % DIV`, `||`, unary `-`.
 
 `LIKE` matches the whole value: `%` any characters, `_` one character, a backslash takes the next character as it is (`'50\%'`); it ignores case, of all letters (`'äp%'` matches `ÄPFEL`).
+
+`REGEXP` matches a regular expression ([PCRE](https://www.php.net/manual/en/reference.pcre.pattern.syntax.php), with Unicode) **anywhere** in the value, as in MySQL and SQLite; `^` and `$` anchor it. Unlike `LIKE` it **minds case**; `(?i)` at the start ignores it. The pattern is written without delimiters, in a text (`'` doubled) or as a parameter; numbers and dates are matched as their text, `NULL` gives `NULL`. A pattern that isn't valid is an error (written in the query: before running).
+
+```sql
+SELECT email FROM Customer WHERE email REGEXP '@example\.(com|org)$'
+SELECT name FROM Customer WHERE name REGEXP '(?i)^h'                   -- ignoring case
+SELECT number FROM Purchase WHERE number NOT REGEXP '^A-\d+$'
+SELECT name FROM Product WHERE labels.* REGEXP '^reg'                  -- any element of a list
+SELECT REGEXP_SUBSTR(email, '@(.+)$') AS domain FROM Customer          -- the first match, NULL if none
+SELECT REGEXP_REPLACE(phone, '[^0-9+]', '') AS digits FROM Customer    -- all matches replaced; $1 for groups
+```
+
+### Math
+
+As in MySQL. Arguments are numbers (a text is read as the number it starts with, as everywhere: `'12.5'` is 12.5, `'abc'` 0); `NULL` gives `NULL`, and so does a result that isn't a number: a division by 0, `SQRT(-1)`, `LN(0)`, `LOG(1, x)`, `ACOS(2)`, `COT(0)`, `POW(0, -1)`.
+
+| | |
+|---|---|
+| `CEIL(x)`, `CEILING(x)`, `FLOOR(x)` | rounded up, down, as integers: `CEIL(-1.59)` is `-1`, `FLOOR(-1.59)` is `-2` |
+| `ROUND(x [, digits])` | rounded, halves away from zero |
+| `TRUNCATE(x, digits)` | cut off after `digits` digits, not rounded: `TRUNCATE(1.555, 2)` is `1.55`; negative digits set those before the point to 0: `TRUNCATE(199.99, -2)` is `100` |
+| `a % b`, `MOD(a, b)` | the remainder, with the sign of `a`: `MOD(-11, 3)` is `-2`, `MOD(10.5, 3)` is `1.5` |
+| `a DIV b` | the integer quotient, cut off: `-7 DIV 2` is `-3`. `DIV` isn't reserved: `SELECT qty div` names the column `div` |
+| `ABS(x)`, `SIGN(x)` | the absolute value; `-1`, `0` or `1` |
+| `POW(x, y)`, `POWER(x, y)`, `SQRT(x)`, `EXP(x)` | `POW(2, 10)` is `1024` |
+| `LN(x)`, `LOG(x)`, `LOG(base, x)`, `LOG10(x)`, `LOG2(x)` | logarithms; `LOG(x)` is the natural one, `LOG(2, 8)` is `3` |
+| `PI()`, `RAND()` | π; a random number from 0 up to 1, new for every row |
+| `SIN`, `COS`, `TAN`, `COT`, `ASIN`, `ACOS`, `ATAN(x)`, `ATAN(y, x)`, `ATAN2(y, x)`, `DEGREES`, `RADIANS` | in radians |
+| `CRC32(text)`, `CONV(n, from, to)` | the checksum as an unsigned number; a number written in another base (2 to 36): `CONV('ff', 16, 10)` is `'255'` |
+
+`+ - * /` are operators, as in SQL (there are no functions `ADD()` or `DIVIDE()`): `SELECT price * qty AS total, ROUND(price / 1.19, 2) AS net, qty DIV 6 AS boxes, qty % 6 AS left FROM Line`.
 
 ### NULL and types
 
@@ -115,13 +150,15 @@ Dates (`DateTimeInterface`, [stored inline](serialization.md#dates)) are values 
 | function | |
 |---|---|
 | `NOW()` | the current time, the same for the whole statement |
+| `CREATED(p)`, `MODIFIED(p)` | when the object of the alias `p` was first stored, and when its data was written last or it was [touched](getting-started.md#when-an-object-was-created-and-modified); without alias of the only source: `WHERE MODIFIED() < DATE_SUB(NOW(), 30, 'DAY')` |
 | `DATETIME(x [, zone])` | `x` as a date; a text without offset in the zone: `DATETIME('2026-01-01 10:00', 'Europe/Berlin')` |
 | `DATE(x [, zone])` | the day as text, `'2026-11-09'` |
 | `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND(x [, zone])` | the part as a number: `GROUP BY YEAR(createdAt, 'Europe/Berlin'), MONTH(createdAt, 'Europe/Berlin')` |
+| `DATE_SUB(x, amount, unit)` | minus, the same as `DATE_ADD(x, -amount, unit)`: `DATE_SUB(NOW(), 7, 'DAY')` |
 | `DATE_ADD(x, amount, unit)` | plus a whole number of `SECOND`, `MINUTE`, `HOUR`, `DAY`, `WEEK`, `MONTH` or `YEAR` (also plural, negative to subtract), in the time zone of the date: a day is a day of its calendar, also across daylight saving time. A month that doesn't have the day goes on into the next (`DATE_ADD('2026-01-31', 1, 'MONTH')` is March 3), as in PHP and SQLite. |
 
 ```sql
-SELECT title, createdAt FROM Post WHERE createdAt >= DATE_ADD(NOW(), -7, 'DAY') ORDER BY createdAt DESC
+SELECT title, createdAt FROM Post WHERE createdAt >= DATE_SUB(NOW(), 7, 'DAY') ORDER BY createdAt DESC
 SELECT YEAR(createdAt) AS y, MONTH(createdAt) AS m, COUNT(*) FROM Post GROUP BY y, m ORDER BY y, m
 ```
 
@@ -148,6 +185,7 @@ The statements write the data of the objects as stored, like [copying](transfer.
 - **Indexes follow**: unique indexes are checked, [search indexes](search.md) updated (`METADATA_SAVED`, `AFTER_STORE`, `AFTER_DELETE`), as for any write; events of loaded objects (`BEFORE_UPDATE`, `OBJECT_SAVED`) aren't dispatched, as no objects are loaded.
 - `UPDATE` counts the objects that changed (an object already having the new values isn't written), `DELETE` deletes with the [child deletion policy](configuration.md) of the storage.
 - **`ALTER CLASS Class DROP ATTRIBUTE property`** removes properties from the stored data of all objects of the class, e.g. after removing them from the class: `ALTER CLASS Product DROP ATTRIBUTE discount, DROP ATTRIBUTE legacyCode`. For those coming from SQL, `ALTER TABLE Product DROP COLUMN discount` (or `DROP discount`) is the same. The objects are written like those of `UPDATE` (under their locks, new checksum and revision, indexes follow); the result lists those that had one of the properties. A property the class still declares isn't dropped (loading would leave it at its default or uninitialized): remove it from the class first; classes allowing dynamic properties (`stdClass`) and classes that aren't loadable aren't checked. Only properties of the object itself, no paths. A referenced object the property pointed to stays stored. `ALTER`, `CLASS`, `TABLE`, `DROP`, `ATTRIBUTE` and `COLUMN` aren't reserved: properties may be named so.
+- **Adding a property** (e.g. a date) has no statement of its own, as objects have no schema: declare it in the class with a default (`public ?DateTimeImmutable $paidAt = null;`, not as a promoted parameter: loading doesn't call the constructor), then fill it for the objects stored before: `UPDATE Purchase SET paidAt = NOW() WHERE paidAt IS NULL`. See [OQL by example](examples/oql-by-example.md#adding-a-property-eg-a-date).
 - **Dry run**: `query($query, dryRun: true)` computes and checks everything and returns the objects that would be written (for `INSERT` without UUIDs), writing nothing.
 
 ## Command line and viewer
@@ -181,7 +219,12 @@ The caches of the storage are bounded: `ObjectStorage` and configurations of typ
 |---|---|
 | `UUID = ?`, `UUID IN (…)` | none needed |
 | `path = 'text'`, `path IN ('text', …)` | a [unique index](unique.md) on exactly this path (`emails[0]` too, not with `*`) |
-| the same, on a filterable `string` field | a Loupe [search index](search.md) of the class that is built and has no pending changes, passed as `new Oql($storage, $searchManager)` |
+| the same | a filterable `STRING` field with this path of a Loupe [search index](search.md); for a path with `*` (`tags.* = 'x'`) a `STRING_ARRAY` field |
+| `path = 12`, `IN (…)`, `<`, `<=`, `>`, `>=`, `BETWEEN` with numbers | a filterable `NUMBER` field: `price > 10`, `10 < price`, `price BETWEEN 2 AND 30` |
+| the same with dates (parameters) or texts that are dates | a filterable `DATE` field: `createdAt >= '2026-01-01'`, `createdAt BETWEEN :from AND :to` |
+| `path = TRUE`, `= FALSE` (`= 1`, `= 0`) | a filterable `BOOLEAN` field |
+
+A search index is used if it is of the class, built, has no pending changes, and is passed as `new Oql($storage, $searchManager)`; several conditions are searched together (`price > 10 AND active = TRUE AND category = 'x'`). The values are literals or parameters, the path that of a field (written the same way: `friends[0].name`).
 
 ```php
 $oql = new Oql($storage, $searchManager);          // the unique indexes of the storage are found by themselves
@@ -189,12 +232,19 @@ $oql->query("SELECT * FROM User WHERE name = ?", ['Homa']);
 $oql->query("EXPLAIN SELECT * FROM User WHERE name = ?", ['Homa']);
 // source | class | access       | details
 // User   | User  | search index | users: name IN ('Homa'), 1 object(s)
+
+$oql->query("EXPLAIN SELECT * FROM Product WHERE price BETWEEN 2 AND 30 AND active = TRUE")->rows[0][3];
+// products: ((price >= 2 AND price <= 30) OR price IS NULL) AND (active = true OR active IS NULL), 12 object(s)
 ```
 
+**Why `OR … IS NULL`?** Objects have no schema: a property may hold a number in one object and a text in another. OQL compares values of every type (a text is greater than any number, `'12'` equals 12), while a field only has the values it could convert to its type — the others are `NULL` there. So a number, date or boolean condition also names the objects whose value the field doesn't have; OQL checks them and drops those that don't match.
+
+**The one assumption**: a `NUMBER` field holds numbers (or texts that are numbers), a `DATE` field dates (or texts that are dates) — as suggested fields do. A field converting values of the other kind (a date in a number field becomes its seconds, a number in a date field is taken as seconds) can miss objects: in OQL any number is less than any date, so `price > 2000000000` is true for a date in `price` and `createdAt < '2020-01-01'` for a number in `createdAt`, but not in the index. Turn indexes off for such data (`useIndexes: false`).
+
 An index is only used when it names *every* object the condition can be true for; the whole condition is still checked on each object it names, so results are the same with or without indexes (`new Oql($storage, useIndexes: false)` to compare). That's why these aren't looked up and read all objects:
-- `OR`, `NOT`, `!=`, `LIKE`, `<`, `>`;
-- number fields;
-- texts that look like numbers (`'12'` equals the number 12 in OQL, the index keeps them apart);
+- `OR`, `NOT`, `!=`, `NOT IN`, `LIKE`, `REGEXP`, `IS NULL`; comparisons of texts (`name < 'M'`);
+- a number given as text (`price > '10'`) and texts that look like numbers for text fields (`'12'` equals the number 12 in OQL, the index keeps them apart); dates compared with text fields;
+- comparisons on paths with `*` other than `=` and `IN` on texts;
 - search indexes with pending changes, or naming more than 999 objects.
 
 A search index only knows the writes made while its manager was attached (the viewer attaches it). `EXPLAIN SELECT …` returns, per source, how its objects are found. In the viewer, the console uses the search and unique indexes of the storage.

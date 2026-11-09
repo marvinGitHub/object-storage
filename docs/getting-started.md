@@ -50,6 +50,24 @@ $storage->store($note, $uuid);
 
 The storage only writes if something changed: storing an unchanged object costs a checksum comparison, no write.
 
+## When an object was created and modified
+
+The metadata of every object records when it was first stored and when its data was written last:
+
+```php
+$storage->getCreatedAt($uuid);    // DateTimeImmutable in UTC: the first store()
+$storage->getModifiedAt($uuid);   // the last write of its data, or the last touch()
+
+$storage->touch($uuid);                                   // modified now, like touch on a file
+$storage->touch($uuid, new DateTimeImmutable('-1 hour')); // or at a point in time
+```
+
+- **Modified** is set by every write of the data: `store()` of a changed object, OQL `INSERT`, `UPDATE` and `ALTER … DROP ATTRIBUTE`. Storing an unchanged object writes nothing and keeps it. Changing the lifetime doesn't change it.
+- **`touch()`** sets it without changing the data, the revision or the lifetime: only the metadata is written (events `METADATA_SAVED` and `TOUCHED`). Use it to mark an object as used or seen, e.g. for "least recently used" clean-ups.
+- **Created** stays from the first `store()`. Copying objects into another storage keeps both.
+- In OQL: `CREATED(p)` and `MODIFIED(p)`, see [OQL](query.md#dates); on the CLI `object-storage touch <uuid> [--at …]`; the viewer shows both on the page of a record, with **Touch**.
+- Metadata written before 1.0.0-rc.3 has no modification time: it is the creation time (which earlier versions set on every write) until the next write or touch.
+
 ## Knowing the UUID of an object
 
 Passing the UUID around works, but it is easier when objects know their own UUID. Implement `AwareInterface` with the `AwareTrait`, and the storage writes the UUID into the object on `store()` and `load()`:

@@ -85,9 +85,9 @@
             <li><code>UUID</code> is the UUID of an object: <code>WHERE UUID = '…'</code>, <code>p.UUID</code>, <code>p.category.UUID</code>; a property named uuid is <code>`uuid`</code>.</li>
             <li>Classes by their short name (<code>Product</code>) or full name in backticks (<code>`App\Entity\Product`</code>); without an alias, the short name is one.</li>
             <li>Paths lead into referenced objects: <code>p.category.title</code>; the alias alone is the UUID of the object: <code>JOIN Category c ON c = p.category</code>.</li>
-            <li>Conditions: <code>= != &lt; &lt;= &gt; &gt;=</code>, <code>IS [NOT] NULL</code>, <code>[NOT] IN (…)</code>, <code>[NOT] BETWEEN a AND b</code>, <code>[NOT] LIKE 'Ho%'</code> (ignoring case), <code>AND OR NOT</code>; NULL is unknown, as in SQL.</li>
+            <li>Conditions: <code>= != &lt; &lt;= &gt; &gt;=</code>, <code>IS [NOT] NULL</code>, <code>[NOT] IN (…)</code>, <code>[NOT] BETWEEN a AND b</code>, <code>[NOT] LIKE 'Ho%'</code> (ignoring case), <code>[NOT] REGEXP '^Ho'</code> (PCRE, anywhere, <code>(?i)</code> to ignore case), <code>AND OR NOT</code>; NULL is unknown, as in SQL.</li>
             <li>Values: <code>'text'</code> (<code>''</code> for a quote), numbers, <code>TRUE FALSE NULL</code>; <code>+ - * /</code>, <code>||</code> joins texts.</li>
-            <li>Functions: <code>LOWER UPPER LENGTH TRIM SUBSTR ABS ROUND COALESCE IFNULL</code>; aggregates: <code>COUNT(*) COUNT([DISTINCT] x) SUM AVG MIN MAX</code>.</li>
+            <li>Functions: <code>LOWER UPPER LENGTH TRIM SUBSTR ABS ROUND COALESCE IFNULL CONCAT CONCAT_WS REGEXP_SUBSTR REGEXP_REPLACE</code>; math: <code>CEIL FLOOR TRUNCATE MOD POW SQRT EXP LN LOG LOG10 LOG2 SIGN PI RAND SIN COS TAN ATAN2 DEGREES RADIANS CRC32 CONV</code>, operators <code>% DIV</code>; metadata: <code>CREATED(p) MODIFIED(p)</code>; aggregates: <code>COUNT(*) COUNT([DISTINCT] x) SUM AVG MIN MAX</code>.</li>
             <li>ORDER BY, GROUP BY and HAVING take the names of the selection, ORDER BY and GROUP BY its positions (1, 2, …).</li>
         </ul>
     </div>

@@ -104,7 +104,7 @@ Continue with [Getting started](docs/getting-started.md) for the details of stor
 | [Getting started](docs/getting-started.md) | Creating a storage, storing, loading, updating and deleting objects, UUIDs |
 | [Concepts](docs/concepts.md) | Object graphs, lazy loading, caching and what is stored on disk |
 | [Querying](docs/querying.md) | Listing, counting and filtering objects |
-| [OQL](docs/query.md) | Querying objects with SQL: `SELECT` with joins, paths into referenced objects, `GROUP BY`, aggregates, `ORDER BY`; in code, the CLI and the viewer |
+| [OQL](docs/query.md) | Querying objects with SQL: `SELECT` with joins, paths into referenced objects, `GROUP BY`, aggregates, `ORDER BY`, dates and `NOW()`, `INSERT`/`UPDATE`/`DELETE`, `ALTER … DROP`; in code, the CLI and the viewer. Learn it with [OQL by example](docs/examples/oql-by-example.md) |
 | [Unique indexes](docs/unique.md) | Values no two objects of a class may share, like a UNIQUE constraint; finding objects by them |
 | [Search indexes](docs/search.md) | Full-text search, filters and facets with exchangeable engines (Loupe included), managed in the viewer |
 | [Lifetime](docs/lifetime.md) | Expiring objects, e.g. for caches |
@@ -127,6 +127,7 @@ Complete scenarios, each runnable as is:
 - [An audit log from events](docs/examples/audit-log-with-events.md) — events with the previous and the new state
 - [Product search](docs/examples/product-search.md) — a search index with full text, filters, sorting and facets
 - [Coming from Doctrine ORM](docs/examples/coming-from-doctrine.md) — a shop with entities, repositories, cascades, unique keys, queries and full-text search, compared with Doctrine
+- [OQL by example](docs/examples/oql-by-example.md) — the query language step by step: conditions, paths, joins, lists, grouping, dates and `NOW()`, writing, adding and dropping properties; every query tested
 - [Renaming classes](docs/examples/renaming-classes.md) — keeping stored data loadable after a refactoring
 
 ## Versioning and stability

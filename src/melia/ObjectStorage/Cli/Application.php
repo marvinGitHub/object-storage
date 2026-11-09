@@ -22,6 +22,7 @@ use melia\ObjectStorage\Cli\Command\Unique\UniqueRebuildCommand;
 use melia\ObjectStorage\Cli\Command\DeleteCommand;
 use melia\ObjectStorage\Cli\Command\GetCommand;
 use melia\ObjectStorage\Cli\Command\LifetimeCommand;
+use melia\ObjectStorage\Cli\Command\TouchCommand;
 use melia\ObjectStorage\Cli\Command\ListCommand;
 use melia\ObjectStorage\Cli\Command\Maintenance\PurgeExpiredCommand;
 use melia\ObjectStorage\Cli\Command\Maintenance\RebuildShardsCommand;
@@ -48,6 +49,7 @@ final class Application extends SymfonyApplication
             new StatsCommand(),
             new SafeModeCommand(),
             new LifetimeCommand(),
+            new TouchCommand(),
             new RebuildShardsCommand(),
             new RebuildStubsCommand(),
             new ConfigureShardDepthCommand(),

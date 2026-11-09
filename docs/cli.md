@@ -137,6 +137,14 @@ echo '{"name": "shared", "lock": {"type": "redis", "dsn": "redis://redis:6379", 
 - ./object-storage/bin/object-storage ttl --json
 - ./object-storage/bin/object-storage ttl --json --pretty
 
+1. touch
+
+- Set when an object was modified — now, or the point in time given — without changing its data, revision or lifetime (`ObjectStorage::touch()`), like touch on a file.
+- Examples:
+- ./object-storage/bin/object-storage touch <uuid>
+- ./object-storage/bin/object-storage touch <uuid> --at 2026-11-09T10:00:00+01:00
+- ./object-storage/bin/object-storage touch <uuid> --json
+
 1. query
 
 - *Experimental.* Run an [OQL](query.md) query (`SELECT … FROM Class …`) and print the result as a table, or as JSON with `--json`.

@@ -1,5 +1,13 @@
 # Upgrading
 
+## From 1.0.0-rc.2 to 1.0.0-rc.3
+
+Nothing has to be migrated: metadata without a modification time is read with its creation time instead. Check:
+
+- **Paths with `[`, `]` or `*`**: in the paths of search index fields and unique indexes, `friends[0]`, `friends['alex']` and a segment `*` are syntax now (see [Paths into lists and keys](docs/search.md#paths-into-lists-and-keys)). A path naming a key that contains `[`, `]` or quotes, or a key that is exactly `*`, is written in brackets: `['a[1]']`, `['*']`. Rebuild indexes whose paths changed.
+- **Creation times**: `timestampCreation` was the time of the last write of an object, now it is that of its first `store()`. Objects stored before keep the value they have (the time of their last write) as their creation time; it doesn't change anymore. Their modification time (`getModifiedAt()`, OQL `MODIFIED()`) is the same until they are written or touched.
+- **OQL** *(experimental)*: a property named `regexp` is written in backticks. Queries on number, date and boolean fields of Loupe search indexes may now use those indexes; the results are the same, except for a number field holding dates or a date field holding numbers (see [Indexes](docs/query.md#performance-and-memory)) — pass `useIndexes: false` for such data.
+
 ## From 1.0.0-rc.1 to 1.0.0-rc.2
 
 **Dates are stored inline.** `DateTimeInterface` values are no longer records of their own, but stored in the object holding them (see [Serialization](docs/serialization.md#dates)). Nothing has to be migrated: dates stored as records still load, and the object holding them stores them inline the next time it is stored (in a property without type, a date that wasn't accessed is still a `LazyLoadReference` and keeps its reference until it is loaded). Check:

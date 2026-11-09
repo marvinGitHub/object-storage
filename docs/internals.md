@@ -9,7 +9,7 @@ Every object is two files in the shard directory of its UUID (`shards/<a>/<b>/â€
 | File | Contents |
 |---|---|
 | `<uuid>.obj` | the data: the serialized object graph as JSON, references to other objects as `{"__reference": "<uuid>"}` |
-| `<uuid>.metadata` | the metadata: class, checksum of the data and its algorithm, revision, expiration, UUID |
+| `<uuid>.metadata` | the metadata: class, checksum of the data and its algorithm, revision, created (`timestampCreation`), modified (`timestampModification`: the last write of the data or `touch()`), expiration, UUID |
 
 The two files are written together as a group (`writeObjectFiles()`), so a crash can't leave data without matching metadata; `recoverInterruptedWrite()` completes or discards an interrupted group. Besides them, a stub per object in `stubs/<md5 of the class>/` lists the objects of a class (`createStub()`), and `stubs/classnames.json` the classes.
 

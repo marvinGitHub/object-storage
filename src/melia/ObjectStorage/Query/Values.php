@@ -2,6 +2,8 @@
 
 namespace melia\ObjectStorage\Query;
 
+use melia\ObjectStorage\Query\Exception\QueryException;
+
 /**
  * The values of queries as in SQL (SQLite): NULL is unknown, so comparisons with it are unknown (null) and logic is
  * three-valued; booleans are the numbers 1 and 0; numbers are compared as numbers (1 = 1.0), strings by their bytes,
@@ -217,6 +219,46 @@ final class Values
      * Whether a value matches a LIKE pattern: % any characters, _ one, a backslash takes the next one as it is;
      * ignoring case (also of letters beyond ASCII).
      */
+    /**
+     * A pattern of REGEXP as a regular expression of PCRE (with Unicode), checked: the pattern is written without
+     * delimiters, (?i) at its start ignores case.
+     *
+     * @throws QueryException If it isn't a valid pattern.
+     */
+    public static function regexp(string $pattern, ?int $position = null): string
+    {
+        static $checked = [];
+        if (isset($checked[$pattern])) {
+            return $checked[$pattern];
+        }
+        if (str_contains($pattern, "\x01")) {
+            throw new QueryException('A regular expression can\'t contain the character \\x01', $position);
+        }
+        $regex = "\x01" . $pattern . "\x01u";
+        set_error_handler(static fn(): bool => true);
+        try {
+            $valid = false !== preg_match($regex, '');
+        } finally {
+            restore_error_handler();
+        }
+        if (!$valid) {
+            throw new QueryException(sprintf("Invalid regular expression '%s': %s", $pattern, preg_last_error_msg()), $position);
+        }
+        if (count($checked) > 1000) {
+            $checked = [];
+        }
+        return $checked[$pattern] = $regex;
+    }
+
+    /**
+     * Whether a text matches a regular expression anywhere (^ and $ anchor it); null for a text that isn't valid UTF-8.
+     */
+    public static function matches(string $value, string $pattern): ?bool
+    {
+        $result = @preg_match(self::regexp($pattern), $value);
+        return false === $result ? null : 1 === $result;
+    }
+
     public static function like(string $value, string $pattern): bool
     {
         static $regexes = [];

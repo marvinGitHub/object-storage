@@ -41,11 +41,17 @@ final class Planner
     public const array FUNCTIONS = [
         'LOWER' => [1, 1], 'UPPER' => [1, 1], 'LENGTH' => [1, 1], 'TRIM' => [1, 1], 'ABS' => [1, 1],
         'ROUND' => [1, 2], 'SUBSTR' => [2, 3], 'COALESCE' => [1, null], 'IFNULL' => [2, 2],
+        // texts joined, NULL left out; CONCAT_WS with a separator first
+        'CONCAT' => [1, null], 'CONCAT_WS' => [2, null],
+        // regular expressions (PCRE): the first match, the text with the matches replaced
+        'REGEXP_SUBSTR' => [2, 2], 'REGEXP_REPLACE' => [3, 3],
         // dates: the time zone (second argument) is UTC if not given
-        'NOW' => [0, 0], 'DATETIME' => [1, 2], 'DATE' => [1, 2], 'DATE_ADD' => [3, 3],
+        'NOW' => [0, 0], 'DATETIME' => [1, 2], 'DATE' => [1, 2], 'DATE_ADD' => [3, 3], 'DATE_SUB' => [3, 3],
         'YEAR' => [1, 2], 'MONTH' => [1, 2], 'DAY' => [1, 2], 'HOUR' => [1, 2], 'MINUTE' => [1, 2], 'SECOND' => [1, 2],
         // a reference to the object of the UUID, for INSERT and UPDATE
         'REF' => [1, 1],
+        // when the object of an alias was created, and modified (written or touched); without alias: of the only source
+        'CREATED' => [0, 1], 'MODIFIED' => [0, 1],
     ];
 
     private const string PLAIN = 'plain';
@@ -206,7 +212,7 @@ final class Planner
             $expression instanceof Column => $this->column($expression, $mode, $visible),
             $expression instanceof FunctionCall => $this->function($expression, $mode, $aggregates, $visible, $inAggregate),
             $expression instanceof Unary => new Unary($expression->operator, $bind($expression->operand)),
-            $expression instanceof Binary => new Binary($expression->operator, $bind($expression->left), $bind($expression->right)),
+            $expression instanceof Binary => self::checkedRegexp(new Binary($expression->operator, $bind($expression->left), $bind($expression->right))),
             $expression instanceof IsNull => new IsNull($bind($expression->operand), $expression->negated),
             $expression instanceof InList => new InList($bind($expression->operand), array_map($bind, $expression->values), $expression->negated),
             $expression instanceof Between => new Between($bind($expression->operand), $bind($expression->low), $bind($expression->high), $expression->negated),
@@ -355,19 +361,60 @@ final class Planner
             return new FunctionCall($call->name, $arguments, $call->distinct, $call->star, $call->position);
         }
 
-        if (!isset(self::FUNCTIONS[$call->name])) {
+        if (!isset(self::FUNCTIONS[$call->name]) && !isset(Math::FUNCTIONS[$call->name])) {
             throw new QueryException(sprintf('Unknown function %s', $call->name), $call->position);
         }
         if ($call->distinct) {
             throw new QueryException(sprintf('DISTINCT is possible in aggregates only, not in %s', $call->name), $call->position);
         }
-        [$min, $max] = self::FUNCTIONS[$call->name];
+        [$min, $max] = self::FUNCTIONS[$call->name] ?? Math::FUNCTIONS[$call->name];
         $count = count($call->arguments);
         if ($count < $min || (null !== $max && $count > $max)) {
             throw new QueryException(sprintf('%s takes %s', $call->name, $min === $max ? "$min argument" . (1 === $min ? '' : 's') : ($max ? "$min to $max arguments" : "at least $min argument" . (1 === $min ? '' : 's'))), $call->position);
         }
+        if ('CREATED' === $call->name || 'MODIFIED' === $call->name) {
+            return new FunctionCall($call->name, [$this->sourceOf($call, $visible)], false, false, $call->position);
+        }
         $arguments = array_map(fn(Expr $argument) => $this->bind($argument, $mode, $aggregates, $visible, $inAggregate), $call->arguments);
+        if (in_array($call->name, ['REGEXP_SUBSTR', 'REGEXP_REPLACE'], true) && $arguments[1] instanceof Literal && is_string($arguments[1]->value)) {
+            Values::regexp($arguments[1]->value, $call->position);
+        }
         return new FunctionCall($call->name, $arguments, false, false, $call->position);
+    }
+
+    /**
+     * The source CREATED() and MODIFIED() read: the alias given, or the only source.
+     *
+     * @throws QueryException
+     */
+    private function sourceOf(FunctionCall $call, array $visible): BoundColumn
+    {
+        if ([] === $this->aliases) {
+            throw new QueryException(sprintf('%s() isn\'t possible here: there is no object to read it of', $call->name), $call->position);
+        }
+        if ([] === $call->arguments) {
+            if (1 !== count($this->aliases)) {
+                throw new QueryException(sprintf('%1$s() needs the alias of its source, e.g. %1$s(%2$s)', $call->name, $this->aliases[0]), $call->position);
+            }
+            return new BoundColumn($this->aliases[0], []);
+        }
+        $argument = $call->arguments[0];
+        if (!$argument instanceof Column || 1 !== count($argument->segments) || $argument->uuid || !in_array($argument->segments[0], $this->aliases, true)) {
+            throw new QueryException(sprintf('%1$s() takes the alias of a source, e.g. %1$s(%2$s)', $call->name, $this->aliases[0]), $call->position);
+        }
+        if (!in_array($argument->segments[0], $visible, true)) {
+            throw new QueryException(sprintf('"%s" isn\'t joined yet here: ON sees the sources joined before', $argument->segments[0]), $argument->position);
+        }
+        return new BoundColumn($argument->segments[0], []);
+    }
+
+    /** a pattern of REGEXP written in the query is checked before running */
+    private static function checkedRegexp(Binary $binary): Binary
+    {
+        if ('REGEXP' === $binary->operator && $binary->right instanceof Literal && is_string($binary->right->value)) {
+            Values::regexp($binary->right->value);
+        }
+        return $binary;
     }
 
     private function hasAggregate(Expr $expression): bool

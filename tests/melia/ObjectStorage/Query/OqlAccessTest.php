@@ -173,6 +173,8 @@ class OqlAccessTest extends TestCase
                      "SELECT name FROM stdClass WHERE city = 'Köln' AND name IN ('user002', 'user003')",
                      "SELECT name FROM stdClass WHERE city = 'Berlin' AND age > 22",
                      "SELECT name FROM stdClass WHERE name = 'it''s'",
+                     // number fields
+                     "SELECT name FROM stdClass WHERE age = 21",
                      "SELECT COUNT(*), city FROM stdClass WHERE city IN ('Berlin', 'Hamburg') GROUP BY city",
                  ] as $query) {
             $this->assertSame('search index', $this->assertSameRows($oql, $query, ['user005']), $query);
@@ -183,7 +185,6 @@ class OqlAccessTest extends TestCase
                      "SELECT name FROM stdClass WHERE code = '10'",
                      "SELECT name FROM stdClass WHERE code IN ('c11', '20')",
                      // not looked up
-                     "SELECT name FROM stdClass WHERE age = 21",
                      "SELECT name FROM stdClass WHERE city LIKE 'B%'",
                      "SELECT name FROM stdClass WHERE city = 'Berlin' OR city = 'Köln'",
                      "SELECT name FROM stdClass WHERE city != 'Berlin'",

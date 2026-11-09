@@ -27,7 +27,7 @@ use melia\ObjectStorage\Query\Exception\QueryException;
 
 /**
  * Parses a query into a syntax tree. The precedence of the operators, from the lowest: OR, AND, NOT,
- * equality (= != IS IN LIKE BETWEEN), comparison (< <= > >=), + -, * /, ||, unary - and +; as in SQLite.
+ * equality (= != IS IN LIKE REGEXP BETWEEN), comparison (< <= > >=), + -, * / % DIV, ||, unary - and +; as in SQLite.
  *
  * @internal Not part of the public API; may change in any release.
  */
@@ -322,9 +322,9 @@ final class Parser
                 $left = new IsNull($left, $negated);
                 continue;
             }
-            // [NOT] IN, BETWEEN, LIKE
+            // [NOT] IN, BETWEEN, LIKE, REGEXP
             $negated = false;
-            if ($this->peek()->is(Lexer::KEYWORD, 'NOT') && ($this->peek(1)->is(Lexer::KEYWORD, 'IN') || $this->peek(1)->is(Lexer::KEYWORD, 'BETWEEN') || $this->peek(1)->is(Lexer::KEYWORD, 'LIKE'))) {
+            if ($this->peek()->is(Lexer::KEYWORD, 'NOT') && ($this->peek(1)->is(Lexer::KEYWORD, 'IN') || $this->peek(1)->is(Lexer::KEYWORD, 'BETWEEN') || $this->peek(1)->is(Lexer::KEYWORD, 'LIKE') || $this->peek(1)->is(Lexer::KEYWORD, 'REGEXP'))) {
                 $this->next();
                 $negated = true;
             }
@@ -347,6 +347,12 @@ final class Parser
             }
             if ($this->accept(Lexer::KEYWORD, 'LIKE')) {
                 $left = new Like($left, $this->comparison(), $negated);
+                continue;
+            }
+            // a regular expression (PCRE), anywhere in the text: x REGEXP '^Ho', NOT REGEXP as NOT (x REGEXP …)
+            if ($this->accept(Lexer::KEYWORD, 'REGEXP')) {
+                $regexp = new Binary('REGEXP', $left, $this->comparison());
+                $left = $negated ? new Unary('NOT', $regexp) : $regexp;
                 continue;
             }
             return $left;
@@ -376,11 +382,28 @@ final class Parser
     private function multiplicative(): Expr
     {
         $left = $this->concatenation();
-        while (($this->peek()->is(Lexer::SYMBOL, '*') || $this->peek()->is(Lexer::SYMBOL, '/'))) {
-            $operator = $this->next()->value;
-            $left = new Binary($operator, $left, $this->concatenation());
+        while (true) {
+            if ($this->peek()->is(Lexer::SYMBOL, '*') || $this->peek()->is(Lexer::SYMBOL, '/') || $this->peek()->is(Lexer::SYMBOL, '%')) {
+                $operator = $this->next()->value;
+                $left = new Binary($operator, $left, $this->concatenation());
+                continue;
+            }
+            // a DIV b, the integer quotient; DIV isn't a keyword: a name followed by something else is an alias
+            if ($this->isWord($this->peek(), 'DIV') && $this->startsOperand($this->peek(1))) {
+                $this->next();
+                $left = new Binary('DIV', $left, $this->concatenation());
+                continue;
+            }
+            return $left;
         }
-        return $left;
+    }
+
+    /** whether a token can start an operand: a value, a name, a parameter, ( or a sign */
+    private function startsOperand(Token $token): bool
+    {
+        return $token->is(Lexer::NUMBER) || $token->is(Lexer::STRING) || $token->is(Lexer::IDENTIFIER) || $token->is(Lexer::PARAMETER)
+            || $token->is(Lexer::SYMBOL, '(') || $token->is(Lexer::SYMBOL, '-') || $token->is(Lexer::SYMBOL, '+')
+            || $token->is(Lexer::KEYWORD, 'NULL') || $token->is(Lexer::KEYWORD, 'TRUE') || $token->is(Lexer::KEYWORD, 'FALSE') || $token->is(Lexer::KEYWORD, 'UUID');
     }
 
     private function concatenation(): Expr

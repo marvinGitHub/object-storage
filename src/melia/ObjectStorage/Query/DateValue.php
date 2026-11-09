@@ -34,6 +34,13 @@ final readonly class DateValue
         $this->utc = DateTimeValue::utc($date);
     }
 
+    /** seconds since 1970-01-01 UTC (with microseconds) as a date in UTC */
+    public static function ofTimestamp(float $timestamp): self
+    {
+        $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $timestamp), new \DateTimeZone('UTC'));
+        return new self(false === $date ? new DateTimeImmutable('@' . (int)$timestamp) : $date);
+    }
+
     public static function of(DateTimeInterface $date): self
     {
         return new self(DateTimeImmutable::createFromInterface($date), $date::class);

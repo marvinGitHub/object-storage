@@ -1147,10 +1147,31 @@ try {
                 'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited',
                 // seconds since the epoch, shown in the time zone of the browser; null without expiration
                 'expiresAt' => $metadata?->getTimestampExpiresAt(),
+                'createdAt' => null === $metadata ? '' : $storage->getCreatedAt($uuid)?->format('Y-m-d\\TH:i:s.v\\Z'),
+                'modifiedAt' => null === $metadata ? '' : $storage->getModifiedAt($uuid)?->format('Y-m-d\\TH:i:s.v\\Z'),
+                'revision' => $metadata?->getRevision() ?? 0,
                 'shard' => $storage->buildShardedDirectory($uuid),
                 'message' => $_GET['message'] ?? null,
                 'error' => $_GET['error'] ?? null,
             ]);
+            break;
+        case 'touch-record':
+            $storageDir = $_POST['storage'] ?? null;
+            $uuid = (string)($_POST['uuid'] ?? '');
+            $result = [];
+            try {
+                $requirePost();
+                $storage = $buildStorage($storageDir);
+                if (!$storage->exists($uuid)) {
+                    throw new RuntimeException('Record not found.');
+                }
+                $storage->touch($uuid);
+                $result['message'] = 'The record has been touched: modified now, its data unchanged.';
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $result['error'] = 'The record couldn\'t be touched: ' . $e->getMessage();
+            }
+            header('Location: ?' . http_build_query(['action' => 'view-record', 'storage' => $storageDir, 'uuid' => $uuid] + $result));
             break;
         case 'set-lifetime':
             $storageDir = $_POST['storage'] ?? null;

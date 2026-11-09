@@ -216,13 +216,18 @@ final class Executor
      * An object of a row: its UUID, data, reserved reference name and reserved key of dates; null if expired or not
      * readable.
      *
-     * @return array{uuid: string, data: array, reserved: string, dateTime: string}|null
+     * Also when it was created and modified (seconds since 1970, for CREATED() and MODIFIED()).
+     *
+     * @return array{uuid: string, data: array, reserved: string, dateTime: string, created: float, modified: float}|null
      */
     public static function objectOf(RawObject $raw): ?array
     {
         $data = $raw->isExpired() ? null : json_decode($raw->data, true);
         return is_array($data)
-            ? ['uuid' => $raw->uuid, 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName()]
+            ? [
+                'uuid' => $raw->uuid, 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName(),
+                'created' => $raw->metadata->getTimestampCreation(), 'modified' => $raw->metadata->getTimestampModification(),
+            ]
             : null;
     }
 
@@ -610,6 +615,12 @@ final class Executor
                     $uuid = Values::text($value($expression->arguments[0]));
                     return null === $uuid ? null : new Reference($uuid);
                 }
+                // CREATED(p), MODIFIED(p): of the metadata of the object of the alias
+                if ('CREATED' === $expression->name || 'MODIFIED' === $expression->name) {
+                    $column = $expression->arguments[0];
+                    $timestamp = $column instanceof BoundColumn ? ($row[$column->alias][strtolower($expression->name)] ?? null) : null;
+                    return null === $timestamp ? null : DateValue::ofTimestamp((float)$timestamp);
+                }
                 return $expression->isAggregate()
                     ? $this->aggregate($expression, $group ?? throw new QueryException(sprintf('%s needs a group', $expression->name)))
                     : $this->function($expression->name, array_map($value, $expression->arguments));
@@ -661,7 +672,7 @@ final class Executor
     private static function wildcardOperand(Expr $expression): ?BoundColumn
     {
         $operands = match (true) {
-            $expression instanceof Binary && in_array($expression->operator, ['=', '!=', '<', '<=', '>', '>='], true) => [$expression->left, $expression->right],
+            $expression instanceof Binary && in_array($expression->operator, ['=', '!=', '<', '<=', '>', '>=', 'REGEXP'], true) => [$expression->left, $expression->right],
             $expression instanceof InList, $expression instanceof Between, $expression instanceof Like => [$expression->operand],
             default => [],
         };
@@ -756,6 +767,11 @@ final class Executor
                 '>=' => $order >= 0,
             };
         }
+        if ('REGEXP' === $operator) {
+            $left = Values::text($left);
+            $right = Values::text($right);
+            return null === $left || null === $right ? null : Values::matches($left, $right);
+        }
         if ('||' === $operator) {
             $left = Values::text($left);
             $right = Values::text($right);
@@ -773,6 +789,9 @@ final class Executor
             '*' => $left * $right,
             // as in MySQL: 7 / 2 is 3.5; NULL for a division by 0
             '/' => 0 == $right ? null : $left / $right,
+            // the remainder with the sign of the dividend, the integer quotient
+            '%' => Math::mod($left, $right),
+            'DIV' => Math::div($left, $right),
             default => throw new QueryException('Unknown operator ' . $operator),
         };
     }
@@ -781,6 +800,15 @@ final class Executor
     {
         [$first] = $arguments + [null];
         switch ($name) {
+            case 'CONCAT':
+                // as in PostgreSQL and SQLite: NULL is left out (|| gives NULL)
+                return implode('', array_map([Values::class, 'text'], array_values(array_filter($arguments, static fn(mixed $v): bool => null !== $v))));
+            case 'CONCAT_WS':
+                $separator = Values::text($first);
+                if (null === $separator) {
+                    return null;
+                }
+                return implode($separator, array_map([Values::class, 'text'], array_values(array_filter(array_slice($arguments, 1), static fn(mixed $v): bool => null !== $v))));
             case 'COALESCE':
                 foreach ($arguments as $argument) {
                     if (null !== $argument) {
@@ -790,6 +818,9 @@ final class Executor
                 return null;
             case 'IFNULL':
                 return $arguments[0] ?? $arguments[1];
+            case 'PI':
+            case 'RAND':
+                return Math::call($name, []);
             case 'NOW':
                 // the same for the whole statement
                 return $this->now ??= new DateValue(new DateTimeImmutable('now', new DateTimeZone('UTC')));
@@ -813,6 +844,21 @@ final class Executor
                 $number = Values::number($first);
                 $digits = isset($arguments[1]) ? (int)Values::number($arguments[1]) : 0;
                 return null === $number ? null : round($number, $digits);
+            case 'REGEXP_SUBSTR':
+                $pattern = Values::text($arguments[1]);
+                if (null === $pattern) {
+                    return null;
+                }
+                $found = @preg_match(Values::regexp($pattern), Values::text($first), $match);
+                return 1 === $found ? $match[0] : null;
+            case 'REGEXP_REPLACE':
+                $pattern = Values::text($arguments[1]);
+                $replacement = Values::text($arguments[2]);
+                if (null === $pattern || null === $replacement) {
+                    return null;
+                }
+                // $1 or \1 for the groups
+                return @preg_replace(Values::regexp($pattern), $replacement, Values::text($first));
             case 'SUBSTR':
                 // from 1; a negative start counts from the end
                 $text = Values::text($first);
@@ -850,6 +896,11 @@ final class Executor
                 };
             case 'DATE_ADD':
                 return $this->dateAdd($first, $arguments[1], $arguments[2]);
+            case 'DATE_SUB':
+                return $this->dateAdd($first, $arguments[1], $arguments[2], true);
+        }
+        if (isset(Math::FUNCTIONS[$name])) {
+            return Math::call($name, $arguments);
         }
         throw new QueryException('Unknown function ' . $name);
     }
@@ -892,10 +943,11 @@ final class Executor
      * DATE_ADD(date, amount, unit): the date plus a whole number of seconds, minutes, hours, days, weeks, months or
      * years (negative to subtract), in the time zone of the date (a day is a day of the calendar, also across daylight
      * saving time). As in PHP and SQLite, a month that doesn't have the day goes on into the next (January 31 plus a
-     * month is March 3, or 2 in a leap year).
+     * month is March 3, or 2 in a leap year). DATE_SUB(date, amount, unit) subtracts ($subtract).
      */
-    private function dateAdd(mixed $value, mixed $amount, mixed $unit): ?DateValue
+    private function dateAdd(mixed $value, mixed $amount, mixed $unit, bool $subtract = false): ?DateValue
     {
+        $function = $subtract ? 'DATE_SUB' : 'DATE_ADD';
         $date = $this->date($value);
         $number = Values::number($amount);
         $unitName = Values::text($unit);
@@ -905,10 +957,13 @@ final class Executor
         $units = ['SECOND' => 'second', 'MINUTE' => 'minute', 'HOUR' => 'hour', 'DAY' => 'day', 'WEEK' => 'week', 'MONTH' => 'month', 'YEAR' => 'year'];
         $key = rtrim(strtoupper(trim($unitName)), 'S');
         if (!isset($units[$key])) {
-            throw new QueryException(sprintf("Unknown unit '%s' for DATE_ADD: SECOND, MINUTE, HOUR, DAY, WEEK, MONTH or YEAR", $unitName));
+            throw new QueryException(sprintf("Unknown unit '%s' for %s: SECOND, MINUTE, HOUR, DAY, WEEK, MONTH or YEAR", $unitName, $function));
         }
         if (floor($number) != $number || abs($number) > 1e9) {
-            throw new QueryException(sprintf('DATE_ADD adds whole %ss, not %s', strtolower($key), $number));
+            throw new QueryException(sprintf('%s %s whole %ss, not %s', $function, $subtract ? 'subtracts' : 'adds', strtolower($key), $number));
+        }
+        if ($subtract) {
+            $number = -$number;
         }
         $changed = $date->date->modify(sprintf('%+d %s', (int)$number, $units[$key]));
         return new DateValue($changed, $date->class);

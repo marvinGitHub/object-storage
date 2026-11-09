@@ -4,13 +4,31 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] - 2026-11-09
+
+The third release candidate of 1.0: paths into lists and keys, when objects were modified (`touch()`), and much more of OQL — search indexes for numbers, dates and booleans, `REGEXP`, math, `CONCAT`, `DATE_SUB`, `ALTER … DROP ATTRIBUTE` — taught by the new [OQL by example](docs/examples/oql-by-example.md). **Read [UPGRADE.md](UPGRADE.md#from-100-rc2-to-100-rc3) before upgrading.**
+
 ### Added
 - Paths into lists and keys (`docs/search.md`, "Paths into lists and keys"), the same for search indexes, unique indexes and OQL, also across referenced objects: `friends.*.name` / `friends[*].name` (all elements), `friends[0].name`, `friends[-1].name` (by position), `friends['alex'].name` (by key, also keys with dots), `friends.*.friends.*.name`. `melia\ObjectStorage\Path\Path` parses and writes them (`PathSegment`, `InvalidPathException`); `Field::getPathSegments()` and `DocumentBuilder::extract()` take its segments. Suggested fields write keys that aren't plain names in brackets.
-- OQL *(experimental)*: `ALTER CLASS Class DROP ATTRIBUTE property [, DROP ATTRIBUTE …]` removes properties from the stored objects of a class, with `ALTER TABLE Class DROP [COLUMN] property` as the same for SQL (`docs/query.md`, "INSERT, UPDATE, DELETE and ALTER"). Written like `UPDATE`, also as a dry run; properties the class still declares are refused. The words aren't reserved. The CLI, the viewer (asks before running, POST only) and `Oql::writes()` treat it as a write.
 - OQL *(experimental)*: the same paths in columns; a condition comparing a path with `*` directly is true if it is true for any element (`WHERE u.friends.*.name = 'Alex'`), negated for none; `JOIN … ON f = u.friends.*`; a search index field of a list of strings with the same path answers `=`/`IN` on a path with `*`.
+- When objects were modified (`docs/getting-started.md`, "When an object was created and modified"): the metadata records `timestampModification`, set by every write of the data (`store()` of a changed object, OQL `INSERT`, `UPDATE`, `ALTER … DROP ATTRIBUTE`), not by lifetime changes. `ObjectStorage::touch($uuid, ?DateTimeInterface $at)` sets it without changing the data, revision or lifetime (only the metadata is written; event `TOUCHED`), also on the CLI (`touch <uuid> [--at …]`) and in the viewer (**Touch** on the page of a record, which shows created, modified and the revision). `getCreatedAt()`, `getModifiedAt()`, `Metadata::getTimestampModification()` (the creation time for metadata written before).
+- OQL *(experimental)*: `CREATED(alias)` and `MODIFIED(alias)` (without alias: of the only source) give the timestamps of the metadata as dates.
+- OQL *(experimental)*: `ALTER CLASS Class DROP ATTRIBUTE property [, DROP ATTRIBUTE …]` removes properties from the stored objects of a class, with `ALTER TABLE Class DROP [COLUMN] property` as the same for SQL (`docs/query.md`, "INSERT, UPDATE, DELETE and ALTER"). Written like `UPDATE`, also as a dry run; properties the class still declares are refused. The words aren't reserved. The CLI, the viewer (asks before running, POST only) and `Oql::writes()` treat it as a write.
+- OQL *(experimental)*: search indexes for numbers, dates and booleans (`docs/query.md`, "Indexes"). Besides `=`/`IN` on string fields, a Loupe search index now answers `=`, `IN`, `<`, `<=`, `>`, `>=` and `BETWEEN` with numbers on `NUMBER` fields, with dates or texts that are dates on `DATE` fields, and `= TRUE`/`= FALSE` on `BOOLEAN` fields, also with the value on the left (`10 < price`); the filter also names the objects whose value the field couldn't convert (`OR field IS NULL`), so results stay those without indexes. Assumed: number fields hold numbers and date fields dates (a date in a number field, or a number in a date field, compares otherwise in OQL). `OqlSearchAccessTest` compares the rows with and without indexes on values of mixed types. The "Planned" note is gone.
+- OQL *(experimental)*: `[NOT] REGEXP pattern` — a regular expression (PCRE, Unicode) matching anywhere in the value, minding case unless `(?i)`; also on paths with `*` (any element); `REGEXP_SUBSTR(text, pattern)` and `REGEXP_REPLACE(text, pattern, replacement)`. Patterns written in the query are checked before running. Highlighted in the query console.
+- OQL *(experimental)*: `CONCAT(a, b, …)` and `CONCAT_WS(separator, a, b, …)` join texts, leaving `NULL` out (as in PostgreSQL and SQLite; `||` stays `NULL` with a `NULL`); `DATE_SUB(date, amount, unit)`, the same as `DATE_ADD` with the amount negated. Highlighted in the query console.
+- OQL *(experimental)*: math as in MySQL — operators `%` and `DIV`; `CEIL`/`CEILING`, `FLOOR`, `TRUNCATE`, `MOD`, `SIGN`, `POW`/`POWER`, `SQRT`, `EXP`, `LN`, `LOG` (also with a base), `LOG10`, `LOG2`, `PI`, `RAND`, `SIN`, `COS`, `TAN`, `COT`, `ASIN`, `ACOS`, `ATAN`, `ATAN2`, `DEGREES`, `RADIANS`, `CRC32`, `CONV` (`docs/query.md`, "Math"). Results that aren't numbers are `NULL`. `DIV` isn't reserved.
+- Documentation: [OQL by example](docs/examples/oql-by-example.md), the query language step by step on a small shop — conditions, `NULL`, computed values, paths, joins (also over the elements of lists), lists and keys, grouping, dates and `NOW()`, `INSERT`/`UPDATE`/`DELETE`, adding a date property and filling it, renaming and dropping properties, `EXPLAIN`, the CLI, and a comparison with SQL. `OqlByExampleTest` runs every SQL block of the page and compares the results shown (`OQL_EXAMPLES_UPDATE=1` writes them).
 
 ### Changed
 - **Breaking:** in paths of fields and unique indexes, `[`, `]` and a segment that is exactly `*` are syntax now; a key containing them is written in brackets: `['a[1]']`.
+- The creation time of an object (`timestampCreation`) stays the time of its first `store()` (see Fixed); it was the time of the last write before.
+
+### Breaking (experimental)
+- OQL: `REGEXP` is a keyword: a property named so is written in backticks (`` `regexp` ``). `%` is an operator.
+
+### Fixed
+- `timestampCreation` in the metadata was set to the time of every write; it now stays the time of the first `store()`.
 
 ## [1.0.0-rc.2] - 2026-11-09
 

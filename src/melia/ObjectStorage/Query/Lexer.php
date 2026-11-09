@@ -23,11 +23,11 @@ final class Lexer
 
     public const array KEYWORDS = [
         'SELECT', 'DISTINCT', 'FROM', 'AS', 'JOIN', 'INNER', 'LEFT', 'OUTER', 'ON', 'WHERE', 'GROUP', 'BY', 'HAVING',
-        'ORDER', 'ASC', 'DESC', 'LIMIT', 'OFFSET', 'AND', 'OR', 'NOT', 'IS', 'NULL', 'IN', 'BETWEEN', 'LIKE', 'TRUE',
+        'ORDER', 'ASC', 'DESC', 'LIMIT', 'OFFSET', 'AND', 'OR', 'NOT', 'IS', 'NULL', 'IN', 'BETWEEN', 'LIKE', 'REGEXP', 'TRUE',
         'FALSE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'UUID',
     ];
 
-    private const array SYMBOLS = ['<>', '!=', '<=', '>=', '||', '=', '<', '>', '+', '-', '*', '/', '(', ')', '[', ']', ',', '.', ';'];
+    private const array SYMBOLS = ['<>', '!=', '<=', '>=', '||', '=', '<', '>', '+', '-', '*', '/', '%', '(', ')', '[', ']', ',', '.', ';'];
 
     /**
      * @return list<Token>

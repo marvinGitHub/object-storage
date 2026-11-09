@@ -27,6 +27,9 @@ class Metadata implements JsonSerializable
 
     private ?float $timestampExpiresAt = null;
 
+    /** when the data was written last, or the object touched (ObjectStorage::touch()); null: as created */
+    private ?float $timestampModification = null;
+
     /**
      * @throws InvalidUUIDException
      */
@@ -40,6 +43,10 @@ class Metadata implements JsonSerializable
 
         if (isset($data['timestampCreation'])) {
             $metadata->setTimestampCreation($data['timestampCreation']);
+        }
+
+        if (isset($data['timestampModification'])) {
+            $metadata->setTimestampModification($data['timestampModification']);
         }
 
         if (isset($data['version'])) {
@@ -137,6 +144,20 @@ class Metadata implements JsonSerializable
     }
 
     /**
+     * When the data of the object was written last (store() with changed data, OQL INSERT and UPDATE) or the object
+     * was touched (ObjectStorage::touch()). Metadata written before it existed: the creation timestamp.
+     */
+    public function getTimestampModification(): float
+    {
+        return $this->timestampModification ?? $this->timestampCreation ?? microtime(true);
+    }
+
+    public function setTimestampModification(int|float $timestampModification): void
+    {
+        $this->timestampModification = (float)$timestampModification;
+    }
+
+    /**
      * Retrieves the version of the instance.
      *
      * @return int The current version number.
@@ -223,6 +244,7 @@ class Metadata implements JsonSerializable
         return [
             'className' => $this->className ?? '',
             'timestampCreation' => $this->timestampCreation ?? microtime(true),
+            'timestampModification' => $this->timestampModification ?? $this->timestampCreation ?? microtime(true),
             'version' => $this->version ?? self::VERSION,
             'revision' => $this->revision,
             'checksum' => $this->checksum ?? '',

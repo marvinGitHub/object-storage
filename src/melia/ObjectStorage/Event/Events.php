@@ -24,6 +24,8 @@ interface Events
     public const SAFE_MODE_ENABLED = 'object-storage.safe_mode_enabled';
     public const SAFE_MODE_DISABLED = 'object-storage.safe_mode_disabled';
     public const LIFETIME_CHANGED = 'object-storage.lifetime_changed';
+    /** touch() set when the object was modified, without changing its data */
+    public const TOUCHED = 'object-storage.touched';
     public const OBJECT_EXPIRED = 'object-storage.object_expired';
     public const CLASS_ALIAS_CREATED = 'object-storage.class_alias_created';
     public const CLASSNAME_CHANGED = 'object-storage.classname_changed';
