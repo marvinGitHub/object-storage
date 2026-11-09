@@ -1,5 +1,11 @@
 # Upgrading
 
+## From 1.0.0-rc.5 to 1.0.0-rc.6
+
+Nothing has to be migrated. `Migration\AttributeToReference` reads an attribute that isn't a plain name (with dots, brackets or quotes) as a path now: `new AttributeToReference('a.b')` links `b` within `a`, not an attribute named `a.b`; write such a name as a key, `['a.b']`. An invalid path fails in the constructor with an `InvalidPathException`.
+
+Records holding an attribute created by the **Link** of the viewer from a path (e.g. `newlist['somebody']`) keep it; remove it in the JSON of the record and link the path again.
+
 ## From 1.0.0-rc.4 to 1.0.0-rc.5
 
 Nothing has to be migrated. OQL *(experimental)*: `UPDATE` takes paths as targets and a `REMOVE` clause; `REMOVE` isn't reserved, so properties and aliases named so keep working. An `UPDATE` without `SET` now says "SET or REMOVE expected".

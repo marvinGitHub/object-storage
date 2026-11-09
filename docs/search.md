@@ -137,7 +137,7 @@ $search->get('products')->search(new Request('oak', filter: "category = 'Chairs'
   }
   ```
 
-  The attribute must accept an object (untyped like the properties of a `stdClass`, a list, `object`, `mixed`); with the manager attached, the indexes follow. In the viewer: **Link** on a record, or **Link objects** in the list of a class for all of its objects.
+  The attribute must accept an object (untyped like the properties of a `stdClass`, a list, `object`, `mixed`); with the manager attached, the indexes follow. It can be a [path](#paths-into-lists-and-keys) to a value nested in the lists and maps of the object: `address.owner`, `contacts['alex']`, `friends[0]`, `friends[-1]`, `friends[*].partner` (all elements); a path can't lead into a referenced object. An attribute whose name isn't plain (dots, brackets, quotes) is written as a key: `['a.b']`. `linkTo($object, $targetUuid, $uuid)` sets the value at a path to a reference to the given object, whatever it held; the last key may be new (`contacts['alex']` adds the key). In the viewer: **Link** on a record, or **Link objects** in the list of a class for all of its objects.
 
 ### Types
 

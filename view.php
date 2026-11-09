@@ -18,7 +18,7 @@ use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Migration\AttributeToReference;
 use melia\ObjectStorage\Query\Exception\QueryException;
 use melia\ObjectStorage\Query\Oql;
-use melia\ObjectStorage\Reflection\Reflection;
+use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
@@ -853,7 +853,8 @@ try {
                     throw new RuntimeException('Name the attribute.');
                 }
                 $object = $storage->load($uuid) ?? throw new RuntimeException('Record not found.');
-                // the attached search and unique indexes follow the change
+                // the attached search and unique indexes follow the change; the attribute is a name or a path into
+                // nested values (address.owner, contacts['alex'], friends[0])
                 $migration = new AttributeToReference($attribute);
                 $migration->setStorage($storage);
 
@@ -867,9 +868,7 @@ try {
                     if (!$storage->exists($target)) {
                         throw new RuntimeException(sprintf('There is no object %s.', $target));
                     }
-                    // the UUID as text first, which then becomes the reference
-                    (new Reflection($object))->set($attribute, $target);
-                    $migration->apply($object, $uuid);
+                    $migration->linkTo($object, $target, $uuid);
                     $result['message'] = sprintf('"%s" refers to %s now.', $attribute, $target);
                 } else {
                     $linked = $migration->apply($object, $uuid);
@@ -909,7 +908,8 @@ try {
                 foreach (is_array($sample) ? $sample : [] as $attribute => $value) {
                     foreach (is_array($value) && array_is_list($value) ? $value : [$value] as $element) {
                         if (is_string($element) && UuidValidator::validate($element)) {
-                            $suggested[(string)$attribute] = ($suggested[(string)$attribute] ?? 0) + 1;
+                            $name = Path::toString([(string)$attribute]);
+                            $suggested[$name] = ($suggested[$name] ?? 0) + 1;
                             break;
                         }
                     }
@@ -1073,7 +1073,7 @@ try {
                     static fn(mixed $v): bool => is_string($v) && UuidValidator::validate($v)));
                 if ([] !== $uuids) {
                     $linkCandidates[] = [
-                        'attribute' => (string)$attribute,
+                        'attribute' => Path::toString([(string)$attribute]),
                         'uuids' => array_map(static fn(string $v): array => ['uuid' => $v, 'exists' => $storage->exists($v)], $uuids),
                     ];
                 }

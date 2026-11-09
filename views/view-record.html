@@ -104,7 +104,7 @@
                 <input type="hidden" name="storage" value="{{ storage }}">
                 <input type="hidden" name="uuid" value="{{ uuid }}">
                 <label class="small" for="link-attribute">Attribute</label>
-                <input class="form-control form-control-sm font-monospace" style="width: 12rem" type="text" name="attribute" id="link-attribute" required placeholder="friend">
+                <input class="form-control form-control-sm font-monospace" style="width: 14rem" type="text" name="attribute" id="link-attribute" required placeholder="friend or contacts['alex']" title="A name or a path to a nested value: address.owner, contacts['alex'], friends[0]">
                 <label class="small" for="link-target">refers to</label>
                 <input class="form-control form-control-sm font-monospace" style="width: 22rem" type="text" name="target" id="link-target" required placeholder="UUID of the object" pattern="[0-9a-fA-F\-]{36}">
                 <button class="btn btn-outline-primary btn-sm" type="submit"
@@ -281,7 +281,7 @@
         const objectView = document.getElementById('object-view');
         const jsonView = document.getElementById('json-view');
 
-        jsonView.innerHTML = ReferenceLinkGenerator.generate('{{ data | json_encode | raw }}');
+        jsonView.innerHTML = ReferenceLinkGenerator.generate('{{ data | json_encode | e('js') }}');
 
         const script = document.createElement('script');
         script.src = window.href + '/../assets/index.js';

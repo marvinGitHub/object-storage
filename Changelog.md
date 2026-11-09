@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.6] - 2026-11-09
+
+The sixth release candidate of 1.0: linking afterwards follows paths into lists and maps, and the viewer shows records with quotes in keys again. **Read [UPGRADE.md](UPGRADE.md#from-100-rc5-to-100-rc6) before upgrading** if you link attributes whose names contain dots, brackets or quotes.
+
+### Added
+- Linking afterwards with paths (`docs/search.md`, "Joins"): `Migration\AttributeToReference` takes a path to a value nested in the lists and maps of an object, `address.owner`, `contacts['alex']`, `friends[0]`, `friends[*].partner`; paths into referenced objects are refused. `linkTo($object, $target, $uuid)` sets the value at a path to a reference to an object (the last key may be new). In the viewer, **Link** on a record and **Link objects** take paths; attributes whose names aren't plain are listed as keys (`['a.b']`).
+
+### Fixed
+- Viewer: a record with a quote in a key or value (e.g. an attribute `newlist['somebody']`) was shown empty: its JSON was written unescaped into a JavaScript string. The **Link** of a record created an attribute named like the path given instead of following it.
+
 ## [1.0.0-rc.5] - 2026-11-09
 
 The fifth release candidate of 1.0: `UPDATE` in OQL writes into lists and maps with paths (`SET newlist['today'] = NOW()`, `tags[]`, `friends.*.active`) and removes keys and elements with `REMOVE`. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc4-to-100-rc5).

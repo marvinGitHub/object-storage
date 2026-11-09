@@ -95,6 +95,82 @@ class AttributeToReferenceTest extends TestCase
         $this->assertArrayNotHasKey('friend', $this->rawData($plain));
     }
 
+    public function testAKeyOfAMap(): void
+    {
+        $bob = $this->storage->store($this->person('Bob'));
+        $anna = $this->storage->store($this->person('Anna', ['best' => $bob, 'other' => 'text']));
+
+        $this->link($anna, "friend['best']");
+
+        $this->assertSame(['best' => ['__reference' => $bob], 'other' => 'text'], $this->rawData($anna)['friend']);
+        $this->assertArrayNotHasKey("friend['best']", $this->rawData($anna), 'no attribute named like the path');
+        $this->storage->clearCache();
+        $this->assertSame('Bob', $this->storage->load($anna)->friend['best']->name);
+    }
+
+    public function testNestedObjectsPositionsAndWildcards(): void
+    {
+        $bob = $this->storage->store($this->person('Bob'));
+        $carl = $this->storage->store($this->person('Carl'));
+        $anna = $this->person('Anna', [['partner' => $bob], ['partner' => $carl]]);
+        $anna->address = ['owner' => $bob, 'city' => 'Bonn'];
+        $anna->list = [$bob, $carl];
+        $anna = $this->storage->store($anna);
+
+        $this->link($anna, 'address.owner');
+        $this->link($anna, 'list[-1]');
+        $this->link($anna, 'friend[*].partner');
+
+        $data = $this->rawData($anna);
+        $this->assertSame(['__reference' => $bob], $data['address']['owner']);
+        $this->assertSame([$bob, ['__reference' => $carl]], $data['list'], 'only the last element');
+        $this->assertSame([['partner' => ['__reference' => $bob]], ['partner' => ['__reference' => $carl]]], $data['friend']);
+    }
+
+    public function testLinkToSetsAReferenceAtAPath(): void
+    {
+        $bob = $this->storage->store($this->person('Bob'));
+        $anna = $this->storage->store($this->person('Anna', ['today' => 'text']));
+
+        $migration = new AttributeToReference("friend['somebody']");
+        $migration->setStorage($this->storage);
+        $this->storage->clearCache();
+        $migration->linkTo($this->storage->load($anna), $bob, $anna);
+
+        $data = $this->rawData($anna);
+        $this->assertSame(['today' => 'text', 'somebody' => ['__reference' => $bob]], $data['friend']);
+        $this->assertArrayNotHasKey("friend['somebody']", $data);
+
+        $migration = new AttributeToReference('missing.somebody');
+        $migration->setStorage($this->storage);
+        $this->expectException(Exception::class);
+        $migration->linkTo($this->storage->load($anna), $bob, $anna);
+    }
+
+    public function testAPathDoesntLeadIntoAReferencedObject(): void
+    {
+        $carl = $this->storage->store($this->person('Carl'));
+        $bob = $this->storage->store($this->person('Bob', $carl));
+        $anna = $this->storage->store($this->person('Anna', $bob));
+        $this->link($anna, 'friend');
+
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('referenced object');
+        $this->link($anna, 'friend.friend');
+    }
+
+    public function testAnAttributeNamedLikeAPathIsWrittenAsAKey(): void
+    {
+        $bob = $this->storage->store($this->person('Bob'));
+        $anna = $this->person('Anna');
+        $anna->{"list['x']"} = $bob;
+        $anna = $this->storage->store($anna);
+
+        $this->link($anna, "['list[''x'']']");
+
+        $this->assertSame(['__reference' => $bob], $this->rawData($anna)["list['x']"]);
+    }
+
     public function testSearchIndexesFollowTheNewReference(): void
     {
         $search = new Manager($this->storage, [new ArrayEngine()]);

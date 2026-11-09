@@ -15,7 +15,9 @@
         text, or a list of them, into a reference to that object, e.g. <code>"friend": "3f2a…"</code> becomes
         <code>"friend": {"__reference": "3f2a…"}</code>. Loading the objects then yields the referenced objects, and
         search indexes can follow the attribute (paths like <code>friend.name</code>). Other values and UUIDs without an
-        object stay as they are; the attached search and unique indexes follow the changes.
+        object stay as they are; the attached search and unique indexes follow the changes. The attribute can be a path
+        to a nested value: <code>address.owner</code>, <code>contacts['alex']</code>, <code>friends[0]</code>,
+        <code>friends[*].partner</code>.
     </p>
 
     <form id="link-form" class="card card-body py-2 mb-3">
