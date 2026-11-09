@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] - 2026-11-09
+
+The fourth release candidate of 1.0: faster reflection when loading, storing and writing with OQL. **Read [UPGRADE.md](UPGRADE.md#from-100-rc3-to-100-rc4) before upgrading.**
+
+### Added
+- `Reflection::acceptsObject(ReflectionType $type, string $class)` — whether a declared type accepts an object of a class (used by OQL `REF()`), `Reflection::acceptsLazyReference(?ReflectionType $type)` — whether a declared type can hold a `LazyLoadReference`, and `Reflection::getClassProperty($class, $property)` — a declared property, cached per class.
+
+### Changed
+- Performance: `Reflection::getProperty()` takes declared properties from a cache per class instead of creating a `ReflectionObject` for every object; a `ReflectionObject` is only created for dynamic properties. `Reflection::allowsDynamicProperties()`, `acceptsObject()` and `acceptsLazyReference()` cache their results. OQL writes (`INSERT`, `UPDATE`, `ALTER … DROP ATTRIBUTE`), the graph visitor and the CLI command `put` use the cached `ReflectionClass` and properties.
+- `ObjectStorage::supportsLazyReference()` and the migration `AttributeToReference` use `Reflection::acceptsLazyReference()`; the two checks were the same. **Breaking** for subclasses of `ObjectStorage` only: the protected property `$lazyloadReferenceSupportCache` is removed.
+- OQL *(experimental)*: `INSERT` and `UPDATE` also accept properties not declared by a class whose parent class has `#[AllowDynamicProperties]` (inherited as in PHP); only the class itself was checked before.
+
 ## [1.0.0-rc.3] - 2026-11-09
 
 The third release candidate of 1.0: paths into lists and keys, when objects were modified (`touch()`), and much more of OQL — search indexes for numbers, dates and booleans, `REGEXP`, math, `CONCAT`, `DATE_SUB`, `ALTER … DROP ATTRIBUTE` — taught by the new [OQL by example](docs/examples/oql-by-example.md). **Read [UPGRADE.md](UPGRADE.md#from-100-rc2-to-100-rc3) before upgrading.**

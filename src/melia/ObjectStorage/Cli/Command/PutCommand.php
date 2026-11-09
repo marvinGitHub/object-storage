@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace melia\ObjectStorage\Cli\Command;
 
-use ReflectionClass;
+use melia\ObjectStorage\Reflection\Reflection;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -62,7 +62,7 @@ final class PutCommand extends BaseCommand
                     return $this->failure('Class not found: ' . $class, 1);
                 }
 
-                $ref = new ReflectionClass($class);
+                $ref = Reflection::getReflectionClass($class);
                 $obj = $ref->newInstanceWithoutConstructor();
 
                 foreach ($data as $k => $v) {

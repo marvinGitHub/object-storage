@@ -2,21 +2,19 @@
 
 namespace melia\ObjectStorage\Query;
 
-use AllowDynamicProperties;
 use DateTime;
 use DateTimeImmutable;
 use DateTimeInterface;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Serialization\DateTimeValue;
 use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\Transfer\RawObject;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use ReflectionClass;
 use ReflectionNamedType;
-use ReflectionProperty;
-use ReflectionType;
 use ReflectionUnionType;
 use Throwable;
 
@@ -76,7 +74,7 @@ final class Writer
             foreach ($plan->properties as $i => $property) {
                 $data[$property] = $this->executor->evaluate($values[$i], []);
             }
-            $objects[] = $this->dataOf($class, $data, $this->defaults(new ReflectionClass($class), $data), Metadata::RESERVED_NAME_DEFAULTS);
+            $objects[] = $this->dataOf($class, $data, $this->defaults(Reflection::getReflectionClass($class), $data), Metadata::RESERVED_NAME_DEFAULTS);
         }
         if ($dryRun) {
             return array_fill(0, count($objects), null);
@@ -253,7 +251,7 @@ final class Writer
     private function drop(WritePlan $plan, string $class, bool $dryRun): array
     {
         if (class_exists($class)) {
-            $reflection = new ReflectionClass($class);
+            $reflection = Reflection::getReflectionClass($class);
             foreach ($plan->properties as $property) {
                 if ($reflection->hasProperty($property) && !$reflection->getProperty($property)->isStatic()) {
                     throw new QueryException(sprintf('%s declares the property %s: remove it from the class first, then drop it from the stored objects', $class, $property), $plan->source->position);
@@ -349,7 +347,7 @@ final class Writer
      */
     private function dataOf(string $class, array $values, array $data, array $reservedNames): array
     {
-        $reflection = class_exists($class) ? new ReflectionClass($class) : null;
+        $reflection = class_exists($class) ? Reflection::getReflectionClass($class) : null;
         foreach ($values as $property => $value) {
             if ($value instanceof Reference) {
                 $this->checkReference($value, $class, $property, $reflection);
@@ -418,24 +416,10 @@ final class Writer
             throw new QueryException(sprintf('REF(\'%s\') for %s of %s: there is no such object', $reference->uuid, $property, $class));
         }
         // a typed property takes objects of its class (or a subclass)
-        $type = $reflection?->hasProperty($property) ? $reflection->getProperty($property)->getType() : null;
-        if (null !== $type && !$this->acceptsObject($type, $target->getClassName())) {
+        $type = null !== $reflection ? Reflection::getClassProperty($reflection->getName(), $property)?->getType() : null;
+        if (null !== $type && !Reflection::acceptsObject($type, $target->getClassName())) {
             throw new QueryException(sprintf('%s of %s is %s, REF(\'%s\') is a %s', $property, $class, $type, $reference->uuid, $target->getClassName()));
         }
-    }
-
-    private function acceptsObject(ReflectionType $type, string $class): bool
-    {
-        foreach ($type instanceof ReflectionUnionType ? $type->getTypes() : [$type] as $named) {
-            if (!$named instanceof ReflectionNamedType) {
-                return true; // intersection types: not checked
-            }
-            $name = $named->getName();
-            if (in_array($name, ['mixed', 'object'], true) || (class_exists($class) && is_a($class, $name, true)) || (!class_exists($class) && !$named->isBuiltin())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -443,14 +427,14 @@ final class Writer
      */
     private function checked(ReflectionClass $class, string $property, mixed $value): mixed
     {
-        if (!$class->hasProperty($property)) {
-            $dynamic = 'stdClass' === $class->getName() || $class->hasMethod('__set') || [] !== $class->getAttributes(AllowDynamicProperties::class);
+        $reflection = Reflection::getClassProperty($class->getName(), $property);
+        if (null === $reflection) {
+            $dynamic = 'stdClass' === $class->getName() || $class->hasMethod('__set') || Reflection::allowsDynamicProperties($class->getName());
             if (!$dynamic) {
                 throw new QueryException(sprintf('%s has no property %s', $class->getName(), $property));
             }
             return $value;
         }
-        $reflection = new ReflectionProperty($class->getName(), $property);
         if ($reflection->isStatic()) {
             throw new QueryException(sprintf('%s::$%s is static', $class->getName(), $property));
         }

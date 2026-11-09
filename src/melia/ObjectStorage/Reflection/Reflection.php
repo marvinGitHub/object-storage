@@ -4,12 +4,14 @@ namespace melia\ObjectStorage\Reflection;
 
 use AllowDynamicProperties;
 use melia\ObjectStorage\Exception\DynamicPropertiesNotAllowedException;
+use melia\ObjectStorage\LazyLoadReference;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionObject;
 use ReflectionProperty;
 use ReflectionType;
+use ReflectionUnionType;
 use WeakMap;
 
 /**
@@ -82,8 +84,41 @@ class Reflection
      */
     public static function getProperty(object $object, string $propertyName): ?ReflectionProperty
     {
+        // declared properties: one ReflectionProperty per class, shared by all its objects
+        $property = static::getClassProperty($object::class, $propertyName);
+        if (null !== $property) {
+            return $property;
+        }
+
+        // dynamic properties exist only on the object itself: only then a ReflectionObject is needed
+        if (!property_exists($object, $propertyName)) {
+            return null;
+        }
         $reflectionObject = static::getReflectionObject($object);
         return $reflectionObject->hasProperty($propertyName) ? $reflectionObject->getProperty($propertyName) : null;
+    }
+
+    /**
+     * Retrieves a property declared by a class (or its parents), cached per class and property.
+     *
+     * @param object|string $class The class name or an object of the class.
+     * @param string $propertyName The name of the property.
+     * @return ReflectionProperty|null The property, or null if the class doesn't declare it.
+     * @throws ReflectionException If the class doesn't exist.
+     */
+    public static function getClassProperty(object|string $class, string $propertyName): ?ReflectionProperty
+    {
+        static $cache = [];
+        $className = is_object($class) ? $class::class : $class;
+
+        if (!isset($cache[$className]) || !array_key_exists($propertyName, $cache[$className])) {
+            $reflection = static::getReflectionClass($className);
+            $cache[$className][$propertyName] = $reflection->hasProperty($propertyName)
+                ? $reflection->getProperty($propertyName)
+                : null;
+        }
+
+        return $cache[$className][$propertyName];
     }
 
     /**
@@ -285,19 +320,91 @@ class Reflection
      */
     public static function allowsDynamicProperties(object|string $class): bool
     {
-        $reflection = static::getReflectionClass($class);
+        static $cache = [];
+        $className = is_object($class) ? $class::class : $class;
 
-        do {
-            if ($reflection->getAttributes(
-                AllowDynamicProperties::class
-            )) {
-                return true;
+        return $cache[$className] ??= (static function (string $className): bool {
+            $reflection = static::getReflectionClass($className);
+
+            do {
+                if ($reflection->getAttributes(
+                    AllowDynamicProperties::class
+                )) {
+                    return true;
+                }
+
+                $reflection = $reflection->getParentClass();
+            } while ($reflection !== false);
+
+            return false;
+        })($className);
+    }
+
+    /**
+     * Determines whether a declared type can hold a LazyLoadReference, i.e. whether a reference can be assigned to
+     * it unloaded: no type, mixed, object, LazyLoadReference, or a union containing one of them.
+     *
+     * Results are cached per type.
+     *
+     * @param ReflectionType|null $type The declared type, e.g. of a property; null if untyped.
+     * @return bool True if the type accepts a LazyLoadReference.
+     */
+    public static function acceptsLazyReference(?ReflectionType $type): bool
+    {
+        if (null === $type) {
+            return true;
+        }
+
+        static $cache;
+        $cache ??= new WeakMap();
+
+        return $cache[$type] ??= (static function (ReflectionType $type): bool {
+            foreach ($type instanceof ReflectionUnionType ? $type->getTypes() : [$type] as $named) {
+                if ($named instanceof ReflectionNamedType
+                    && in_array($named->getName(), [LazyLoadReference::class, 'object', 'mixed'], true)
+                ) {
+                    return true;
+                }
             }
+            return false; // intersection types can't hold a LazyLoadReference
+        })($type);
+    }
 
-            $reflection = $reflection->getParentClass();
-        } while ($reflection !== false);
+    /**
+     * Determines whether a declared type accepts an object of the given class (e.g. as the target of a reference).
+     *
+     * - mixed and object accept every object.
+     * - A loadable class is accepted by its own class, parent classes and interfaces.
+     * - A class that isn't loadable can't be checked: every class type accepts it, builtin types don't.
+     * - Intersection types aren't checked and accept every object.
+     *
+     * Results are cached per type and class.
+     *
+     * @param ReflectionType $type The declared type, e.g. of a property.
+     * @param string $class The fully qualified class name of the object.
+     * @return bool True if the type accepts an object of the class.
+     */
+    public static function acceptsObject(ReflectionType $type, string $class): bool
+    {
+        static $cache = [];
+        $key = $type . '|' . $class;
 
-        return false;
+        return $cache[$key] ??= (static function (ReflectionType $type, string $class): bool {
+            $loadable = class_exists($class);
+            foreach ($type instanceof ReflectionUnionType ? $type->getTypes() : [$type] as $named) {
+                if (!$named instanceof ReflectionNamedType) {
+                    return true; // intersection types: not checked
+                }
+                $name = $named->getName();
+                if (in_array($name, ['mixed', 'object'], true)
+                    || ($loadable && is_a($class, $name, true))
+                    || (!$loadable && !$named->isBuiltin())
+                ) {
+                    return true;
+                }
+            }
+            return false;
+        })($type, $class);
     }
 
     /**

@@ -9,9 +9,6 @@ use melia\ObjectStorage\Storage\StorageAwareTrait;
 use melia\ObjectStorage\UUID\Helper;
 use melia\ObjectStorage\UUID\Validator;
 use ReflectionException;
-use ReflectionNamedType;
-use ReflectionType;
-use ReflectionUnionType;
 
 /**
  * Links objects afterwards: an attribute holding the UUID of a stored object as text, or a list of them, becomes a
@@ -51,7 +48,7 @@ class AttributeToReference implements MigrationInterface
         }
 
         $value = $reflection->get($this->attribute);
-        if (!is_array($value) && !self::acceptsReference(Reflection::getPropertyType($object, $this->attribute))) {
+        if (!is_array($value) && !Reflection::acceptsLazyReference(Reflection::getPropertyType($object, $this->attribute))) {
             throw new Exception(sprintf('The attribute "%s" of %s is typed and can\'t hold a reference.', $this->attribute, $object::class));
         }
 
@@ -92,19 +89,5 @@ class AttributeToReference implements MigrationInterface
     public function getMissing(): array
     {
         return $this->missing;
-    }
-
-    private static function acceptsReference(?ReflectionType $type): bool
-    {
-        if (null === $type) {
-            return true;
-        }
-        $types = $type instanceof ReflectionUnionType ? $type->getTypes() : [$type];
-        foreach ($types as $named) {
-            if ($named instanceof ReflectionNamedType && in_array($named->getName(), ['object', 'mixed', LazyLoadReference::class], true)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

@@ -1,5 +1,11 @@
 # Upgrading
 
+## From 1.0.0-rc.3 to 1.0.0-rc.4
+
+Nothing has to be migrated. Check:
+
+- **Subclasses of `ObjectStorage`**: the protected property `$lazyloadReferenceSupportCache` is removed; the results are cached by `Reflection::acceptsLazyReference()`. Override `supportsLazyReference()` to change the check.
+
 ## From 1.0.0-rc.2 to 1.0.0-rc.3
 
 Nothing has to be migrated: metadata without a modification time is read with its creation time instead. Check:

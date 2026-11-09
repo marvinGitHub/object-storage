@@ -100,7 +100,6 @@ use Psr\SimpleCache\InvalidArgumentException;
 use ReflectionException;
 use ReflectionNamedType;
 use ReflectionType;
-use ReflectionUnionType;
 use Throwable;
 use Traversable;
 use WeakMap;
@@ -201,8 +200,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     protected WeakMap $identityMap;
 
-    protected WeakMap $lazyloadReferenceSupportCache;
-
     /**
      * The revision each object was loaded or stored with by this instance, for optimistic locking.
      *
@@ -253,7 +250,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $strategyPassed = null !== $strategy;
         $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
-        $this->lazyloadReferenceSupportCache = new WeakMap();
         $this->revisions = new WeakMap();
 
         $this->setStorageDir($storageDir);
@@ -1371,44 +1367,11 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *                                  a named type, or a union type.
      *
      * @return bool Returns true if the type supports lazy references; otherwise, false.
+     * @see Reflection::acceptsLazyReference()
      */
     protected function supportsLazyReference(?ReflectionType $type): bool
     {
-        if (null === $type) {
-            return true;
-        }
-
-        if (isset($this->lazyloadReferenceSupportCache[$type])) {
-            return $this->lazyloadReferenceSupportCache[$type];
-        }
-
-        $result = match (true) {
-            $type instanceof ReflectionNamedType => in_array(
-                $type->getName(),
-                [LazyLoadReference::class, 'object', 'mixed'],
-                true
-            ),
-            $type instanceof ReflectionUnionType => (static function (ReflectionUnionType $u): bool {
-                $names = array_map(
-                    static function (ReflectionNamedType $t): string {
-                        return $t->getName();
-                    },
-                    array_filter(
-                        $u->getTypes(),
-                        static function (ReflectionType $t): bool {
-                            return $t instanceof ReflectionNamedType;
-                        }
-                    )
-                );
-                return in_array(LazyLoadReference::class, $names, true)
-                    || in_array('object', $names, true)
-                    || in_array('mixed', $names, true);
-            })($type),
-            default => false,
-        };
-
-        $this->lazyloadReferenceSupportCache[$type] = $result;
-        return $result;
+        return Reflection::acceptsLazyReference($type);
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -2579,7 +2542,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->getCache()?->clear();
         $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
-        $this->lazyloadReferenceSupportCache = new WeakMap();
         $this->revisions = new WeakMap();
         $this->registeredClassNamesCache = null;
         $this->getMetadataCache()?->clear();

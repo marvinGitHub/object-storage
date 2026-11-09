@@ -421,7 +421,7 @@ final class GraphVisitor
      */
     private function determineClassInfo(object $object, string $uuid, ?string $explicitClassName): array
     {
-        $isAnonymous = (new \ReflectionClass($object))->isAnonymous();
+        $isAnonymous = Reflection::getReflectionClass($object)->isAnonymous();
 
         $className = $explicitClassName ?? $this->lookupClassNameFromMetadata($uuid);
         $className ??= get_class($object);
@@ -712,7 +712,7 @@ final class GraphVisitor
             return true;
         }
 
-        return (new \ReflectionClass($object))->getShortName() === $this->lazyReferenceShortName;
+        return Reflection::getReflectionClass($object)->getShortName() === $this->lazyReferenceShortName;
     }
 
     /**
