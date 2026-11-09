@@ -22,8 +22,8 @@ use melia\ObjectStorage\Unique\Manager as UniqueManager;
  *
  *     $oql->query('UPDATE Product SET price = price * 1.1 WHERE category.title = ?', ['Fruit'])->affected();
  *
- * SELECT with JOIN (INNER, LEFT), WHERE, GROUP BY, HAVING, aggregates, ORDER BY, LIMIT and OFFSET; INSERT, UPDATE
- * and DELETE. Paths lead into referenced objects (p.category.title), UUID is the UUID of an object; values in
+ * SELECT with JOIN (INNER, LEFT), WHERE, GROUP BY, HAVING, aggregates, ORDER BY, LIMIT and OFFSET; INSERT, UPDATE,
+ * DELETE and ALTER CLASS … DROP ATTRIBUTE (ALTER TABLE … DROP COLUMN). Paths lead into referenced objects (p.category.title), UUID is the UUID of an object; values in
  * queries are best passed as parameters (? or :name), which are never read as part of the query.
  *
  * Objects are read one after another and only what the query needs is kept, so large classes don't fill the
@@ -52,7 +52,7 @@ final class Oql
      * EXPLAIN SELECT … returns how the objects of each source are found instead of the rows.
      *
      * @param array<int|string, mixed> $parameters Values of ? (by position, from 0) and :name parameters.
-     * @param bool $dryRun INSERT, UPDATE, DELETE: compute and check everything, return the objects that would be
+     * @param bool $dryRun INSERT, UPDATE, DELETE, ALTER: compute and check everything, return the objects that would be
      *        written, write nothing.
      * @param int|null $maxRows SELECT: return at most this many rows; Result::$truncated tells whether there were
      *        more.
@@ -81,7 +81,7 @@ final class Oql
     }
 
     /**
-     * Whether a query writes (INSERT, UPDATE, DELETE), e.g. to ask before running it.
+     * Whether a query writes (INSERT, UPDATE, DELETE, ALTER), e.g. to ask before running it.
      *
      * @throws QueryException
      */

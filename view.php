@@ -645,7 +645,7 @@ try {
                 try {
                     // INSERT, UPDATE and DELETE only from the form (POST): a link or the history never writes
                     if (Oql::writes($query) && 'POST' !== ($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
-                        throw new QueryException('INSERT, UPDATE and DELETE run from the form only: check the statement and press Run.');
+                        throw new QueryException('INSERT, UPDATE, DELETE and ALTER run from the form only: check the statement and press Run.');
                     }
                     // indexes find the objects where they can; at most 1,000 rows are kept to show
                     $result = (new Oql($storage, $searchFor($storage), $uniqueFor($storage)))->query($query, [], $dryRun, 1000);

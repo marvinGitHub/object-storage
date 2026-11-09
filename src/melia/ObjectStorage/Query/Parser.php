@@ -7,6 +7,7 @@ use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Path\PathSegment;
 use melia\ObjectStorage\Query\Ast\Column;
 use melia\ObjectStorage\Query\Ast\Delete;
+use melia\ObjectStorage\Query\Ast\DropAttributes;
 use melia\ObjectStorage\Query\Ast\Expr;
 use melia\ObjectStorage\Query\Ast\FunctionCall;
 use melia\ObjectStorage\Query\Ast\InList;
@@ -40,7 +41,7 @@ final class Parser
     /**
      * @throws QueryException
      */
-    public static function parse(string $query): Select|Insert|Update|Delete
+    public static function parse(string $query): Select|Insert|Update|Delete|DropAttributes
     {
         $parser = new self();
         $parser->query = $query;
@@ -48,13 +49,14 @@ final class Parser
         return $parser->statement();
     }
 
-    private function statement(): Select|Insert|Update|Delete
+    private function statement(): Select|Insert|Update|Delete|DropAttributes
     {
         $token = $this->peek();
         $statement = match (true) {
             $token->is(Lexer::KEYWORD, 'INSERT') => $this->insert(),
             $token->is(Lexer::KEYWORD, 'UPDATE') => $this->update(),
             $token->is(Lexer::KEYWORD, 'DELETE') => $this->delete(),
+            $this->isWord($token, 'ALTER') => $this->alter(),
             default => $this->select(),
         };
         $this->accept(Lexer::SYMBOL, ';');
@@ -116,12 +118,49 @@ final class Parser
         return new Delete($source, $where);
     }
 
+    /**
+     * ALTER CLASS Class DROP ATTRIBUTE name [, DROP ATTRIBUTE name] …; for SQL also ALTER TABLE and DROP [COLUMN].
+     * The words are no keywords: properties may still be named class, table, column or attribute.
+     */
+    private function alter(): DropAttributes
+    {
+        $this->next(); // ALTER
+        $kind = $this->next();
+        if (!$this->isWord($kind, 'CLASS') && !$this->isWord($kind, 'TABLE')) {
+            throw $this->error('ALTER CLASS (or ALTER TABLE) expected', $kind);
+        }
+        $class = $this->expect(Lexer::IDENTIFIER);
+        $source = new Source(ltrim($class->value, '\\'), substr(strrchr('\\' . $class->value, '\\'), 1), $class->position);
+
+        $attributes = [];
+        do {
+            $drop = $this->next();
+            if (!$this->isWord($drop, 'DROP')) {
+                throw $this->error('DROP ATTRIBUTE (or DROP COLUMN) expected', $drop);
+            }
+            // DROP ATTRIBUTE name, DROP COLUMN name, DROP name; a property named attribute or column: DROP ATTRIBUTE attribute
+            $next = $this->peek();
+            if (($this->isWord($next, 'ATTRIBUTE') || $this->isWord($next, 'COLUMN')) && $this->peek(1)->is(Lexer::IDENTIFIER)) {
+                $this->next();
+            }
+            $attributes[] = $this->property();
+        } while ($this->accept(Lexer::SYMBOL, ','));
+
+        return new DropAttributes($source, $attributes);
+    }
+
+    /** a word that isn't a keyword, ignoring case: ALTER, CLASS, TABLE, DROP, ATTRIBUTE, COLUMN */
+    private function isWord(Token $token, string $word): bool
+    {
+        return $token->is(Lexer::IDENTIFIER) && 0 === strcasecmp($token->value, $word);
+    }
+
     /** a property to write: a name of the object itself, no path */
     private function property(): string
     {
         $name = $this->expect(Lexer::IDENTIFIER);
         if ($this->peek()->is(Lexer::SYMBOL, '.')) {
-            throw $this->error('Only properties of the object itself can be written, not paths', $this->peek());
+            throw $this->error('Only properties of the object itself can be written or dropped, not paths', $this->peek());
         }
         return $name->value;
     }

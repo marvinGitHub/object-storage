@@ -6,7 +6,7 @@ use melia\ObjectStorage\Query\Ast\Expr;
 use melia\ObjectStorage\Query\Ast\Source;
 
 /**
- * An INSERT, UPDATE or DELETE bound to its source: the properties written and their values (INSERT: one list of
+ * An INSERT, UPDATE, DELETE or ALTER CLASS … DROP ATTRIBUTE bound to its source: the properties written and their values (INSERT: one list of
  * values per object; UPDATE: one list, evaluated for every object), the condition of UPDATE and DELETE.
  *
  * @internal Not part of the public API; may change in any release.
@@ -16,6 +16,8 @@ final readonly class WritePlan
     public const string INSERT = 'INSERT';
     public const string UPDATE = 'UPDATE';
     public const string DELETE = 'DELETE';
+    /** ALTER CLASS … DROP ATTRIBUTE: the properties are removed */
+    public const string DROP = 'ALTER';
 
     /**
      * @param list<string> $properties

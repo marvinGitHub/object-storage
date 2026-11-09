@@ -21,7 +21,7 @@ use ReflectionUnionType;
 use Throwable;
 
 /**
- * Runs INSERT, UPDATE and DELETE on the objects as stored, like copying and moving (ObjectStorage::writeRaw()): the
+ * Runs INSERT, UPDATE, DELETE and ALTER CLASS … DROP ATTRIBUTE on the objects as stored, like copying and moving (ObjectStorage::writeRaw()): the
  * classes aren't needed, and objects aren't loaded and stored again, which would write their referenced objects
  * along. The data of an object is written with a new checksum and revision; constraints (unique indexes) are checked
  * and search indexes notified as for any write.
@@ -54,6 +54,7 @@ final class Writer
             WritePlan::INSERT => $this->insert($plan, $class, $dryRun),
             WritePlan::UPDATE => $this->update($plan, $class, $dryRun),
             WritePlan::DELETE => $this->delete($plan, $dryRun),
+            WritePlan::DROP => $this->drop($plan, $class, $dryRun),
         };
         return new Result(['UUID'], array_map(static fn(?string $uuid): array => [$uuid], $uuids), $plan->statement, $dryRun);
     }
@@ -166,6 +167,25 @@ final class Writer
             return $uuids;
         }
 
+        return $this->rewrite($uuids, 'updated', function (array $object) use ($plan, $class, $alias): ?array {
+            if (null !== $plan->where && true !== Values::truth($this->executor->evaluate($plan->where, [$alias => $object]))) {
+                return null;
+            }
+            return $this->updated($plan, $class, $object);
+        });
+    }
+
+    /**
+     * Changes objects one after another, each under its exclusive lock: read again (another process may have changed
+     * or deleted it), changed, written with a new checksum and revision if its data changed.
+     *
+     * @param list<string> $uuids
+     * @param callable(array): (array{0: array, 1: array<string, string>}|null) $change The new data and reserved
+     *        names of an object (see Executor::objectOf()); null to leave it.
+     * @return list<string> the UUIDs of the objects changed
+     */
+    private function rewrite(array $uuids, string $done, callable $change): array
+    {
         $changed = [];
         $lockAdapter = $this->storage->getLockAdapter();
         foreach ($uuids as $uuid) {
@@ -175,13 +195,13 @@ final class Writer
                     $lockAdapter->acquireExclusiveLock($uuid);
                     $lockedHere = true;
                 }
-                // read again under the lock: another process may have changed or deleted it
                 $raw = $this->current($uuid);
                 $object = null === $raw ? null : Executor::objectOf($raw);
-                if (null === $object || (null !== $plan->where && true !== Values::truth($this->executor->evaluate($plan->where, [$alias => $object])))) {
+                $new = null === $object ? null : $change($object);
+                if (null === $new) {
                     continue;
                 }
-                [$data, $reservedNames] = $this->updated($plan, $class, $object);
+                [$data, $reservedNames] = $new;
                 $json = $this->serialize($data);
                 if ($json === $raw->data) {
                     continue; // nothing changes
@@ -195,7 +215,7 @@ final class Writer
                 $this->storage->writeRaw(new RawObject($uuid, $json, $metadata), true);
                 $changed[] = $uuid;
             } catch (Throwable $e) {
-                throw $this->stopped('updated', $changed, count($uuids), $e);
+                throw $this->stopped($done, $changed, count($uuids), $e);
             } finally {
                 if ($lockedHere && $lockAdapter->isLockedByThisProcess($uuid)) {
                     $lockAdapter->releaseLock($uuid);
@@ -217,6 +237,47 @@ final class Writer
             $values[$property] = $this->executor->evaluate($plan->rows[0][$i], [$plan->source->alias => $object]);
         }
         return $this->dataOf($class, $values, $object['data'], [Metadata::RESERVED_REFERENCE => $object['reserved'], Metadata::RESERVED_DATETIME => $object['dateTime']]);
+    }
+
+    // ---- ALTER CLASS … DROP ATTRIBUTE ----
+
+    /**
+     * Removes properties from the stored data of all objects of the class, e.g. after removing them from the class.
+     * A property the class (if loadable) still declares isn't dropped: loading would leave it at its default, or
+     * uninitialized.
+     *
+     * @return list<string> the UUIDs of the objects that had one of the properties
+     */
+    private function drop(WritePlan $plan, string $class, bool $dryRun): array
+    {
+        if (class_exists($class)) {
+            $reflection = new ReflectionClass($class);
+            foreach ($plan->properties as $property) {
+                if ($reflection->hasProperty($property) && !$reflection->getProperty($property)->isStatic()) {
+                    throw new QueryException(sprintf('%s declares the property %s: remove it from the class first, then drop it from the stored objects', $class, $property), $plan->source->position);
+                }
+            }
+        }
+
+        $alias = $plan->source->alias;
+        $keys = array_fill_keys($plan->properties, true);
+        $uuids = [];
+        foreach ($this->executor->matching($plan->source, null) as $row) {
+            if ([] !== array_intersect_key($row[$alias]['data'], $keys)) {
+                $uuids[] = $row[$alias]['uuid'];
+            }
+        }
+        if ($dryRun) {
+            return $uuids;
+        }
+
+        return $this->rewrite($uuids, 'changed', static function (array $object) use ($keys): ?array {
+            $data = array_diff_key($object['data'], $keys);
+            if (count($data) === count($object['data'])) {
+                return null;
+            }
+            return [$data, [Metadata::RESERVED_REFERENCE => $object['reserved'], Metadata::RESERVED_DATETIME => $object['dateTime']]];
+        });
     }
 
     // ---- DELETE ----

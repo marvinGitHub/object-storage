@@ -8,6 +8,7 @@ use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
 use melia\ObjectStorage\Query\Ast\Column;
 use melia\ObjectStorage\Query\Ast\Delete;
+use melia\ObjectStorage\Query\Ast\DropAttributes;
 use melia\ObjectStorage\Query\Ast\Insert;
 use melia\ObjectStorage\Query\Ast\Update;
 use melia\ObjectStorage\Query\Ast\Expr;
@@ -272,8 +273,15 @@ final class Planner
     /**
      * @throws QueryException
      */
-    public function planWrite(Insert|Update|Delete $statement): WritePlan
+    public function planWrite(Insert|Update|Delete|DropAttributes $statement): WritePlan
     {
+        if ($statement instanceof DropAttributes) {
+            if (count(array_unique($statement->attributes)) !== count($statement->attributes)) {
+                throw new QueryException('An attribute is dropped twice');
+            }
+            return new WritePlan(WritePlan::DROP, $statement->source, $statement->attributes);
+        }
+
         if ($statement instanceof Insert) {
             // values without objects to read
             $this->aliases = [];

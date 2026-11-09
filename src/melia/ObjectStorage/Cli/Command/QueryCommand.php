@@ -31,7 +31,7 @@ final class QueryCommand extends BaseCommand
             ->addArgument('query', InputArgument::OPTIONAL, 'The query; read from --file or STDIN if missing')
             ->addOption('file', 'f', InputOption::VALUE_REQUIRED, 'Read the query from a file')
             ->addOption('param', 'p', InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'A parameter: name=value for :name, value for ? (in order); numbers, true, false and null as such, "quoted" as text')
-            ->addOption('dry-run', null, InputOption::VALUE_NONE, 'INSERT, UPDATE, DELETE: check and list the objects that would be written, write nothing');
+            ->addOption('dry-run', null, InputOption::VALUE_NONE, 'INSERT, UPDATE, DELETE, ALTER: check and list the objects that would be written, write nothing');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -70,7 +70,7 @@ final class QueryCommand extends BaseCommand
 
             // INSERT, UPDATE, DELETE: how many, and the UUIDs
             if (null !== $result->statement) {
-                $done = ['INSERT' => 'inserted', 'UPDATE' => 'updated', 'DELETE' => 'deleted'][$result->statement];
+                $done = ['INSERT' => 'inserted', 'UPDATE' => 'updated', 'DELETE' => 'deleted', 'ALTER' => 'changed'][$result->statement];
                 if ($input->getOption('json')) {
                     $output->writeln((string)json_encode([
                         'statement' => $result->statement,

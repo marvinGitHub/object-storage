@@ -2,7 +2,7 @@
 
 > **Experimental.** OQL is new in 1.0 and marked `@experimental`: its syntax, its semantics and the API of `Oql`, `Result`, `Reference` and `QueryException` may change in a minor release of 1.x, not only in a major one. Such changes are listed in the [Changelog](../Changelog.md) under **Breaking (experimental)**. Feedback on the language is welcome before it is declared stable.
 
-OQL is a small query language like SQL for the objects of a storage: `SELECT` with joins, `WHERE`, `GROUP BY` with aggregates, `HAVING`, `ORDER BY`, `LIMIT` and `OFFSET`, and `INSERT`, `UPDATE` and `DELETE`. It works on the objects as stored, so the classes aren't needed to read (the [viewer](maintenance.md#the-web-viewer) queries any storage), and paths lead into referenced objects.
+OQL is a small query language like SQL for the objects of a storage: `SELECT` with joins, `WHERE`, `GROUP BY` with aggregates, `HAVING`, `ORDER BY`, `LIMIT` and `OFFSET`, `INSERT`, `UPDATE` and `DELETE`, and `ALTER CLASS … DROP ATTRIBUTE`. It works on the objects as stored, so the classes aren't needed to read (the [viewer](maintenance.md#the-web-viewer) queries any storage), and paths lead into referenced objects.
 
 ```php
 use melia\ObjectStorage\Query\Oql;
@@ -51,6 +51,8 @@ FROM Class [[AS] alias]
 INSERT INTO Class (property, …) VALUES (value, …) [, (value, …)] …
 UPDATE Class [[AS] alias] SET property = value [, property = value] … [WHERE condition]
 DELETE FROM Class [[AS] alias] [WHERE condition]
+ALTER CLASS Class DROP ATTRIBUTE property [, DROP ATTRIBUTE property] …
+ALTER TABLE Class DROP [COLUMN] property [, DROP [COLUMN] property] …   -- the same, as in SQL
 ```
 
 Keywords ignore case; `--` starts a comment up to the end of the line, `/* … */` is one too.
@@ -136,7 +138,7 @@ SELECT YEAR(createdAt) AS y, MONTH(createdAt) AS m, COUNT(*) FROM Post GROUP BY 
 - `NULL` sorts first ascending and last descending. Rows with equal values keep the order in which the objects were read.
 - `LIMIT` and `OFFSET` take whole numbers (or parameters); `OFFSET` works without `LIMIT`.
 
-## INSERT, UPDATE and DELETE
+## INSERT, UPDATE, DELETE and ALTER
 
 The statements write the data of the objects as stored, like [copying](transfer.md) does (`writeRaw()`): objects aren't loaded and stored again, which would write their referenced objects along. The result lists the UUIDs of the objects written (`$result->column(0)`), `$result->affected()` their number.
 
@@ -145,6 +147,7 @@ The statements write the data of the objects as stored, like [copying](transfer.
 - **All or nothing before writing**: every value of every object is computed and checked first; an error writes nothing. Then each object is written under its exclusive lock: read again, its condition checked again (another process may have changed it in the meantime), written with a new checksum and revision. If writing one fails — e.g. a [unique](unique.md) value — the objects written before stay written, and the error says how many (`Stopped after 1 of 2 objects were updated: …`).
 - **Indexes follow**: unique indexes are checked, [search indexes](search.md) updated (`METADATA_SAVED`, `AFTER_STORE`, `AFTER_DELETE`), as for any write; events of loaded objects (`BEFORE_UPDATE`, `OBJECT_SAVED`) aren't dispatched, as no objects are loaded.
 - `UPDATE` counts the objects that changed (an object already having the new values isn't written), `DELETE` deletes with the [child deletion policy](configuration.md) of the storage.
+- **`ALTER CLASS Class DROP ATTRIBUTE property`** removes properties from the stored data of all objects of the class, e.g. after removing them from the class: `ALTER CLASS Product DROP ATTRIBUTE discount, DROP ATTRIBUTE legacyCode`. For those coming from SQL, `ALTER TABLE Product DROP COLUMN discount` (or `DROP discount`) is the same. The objects are written like those of `UPDATE` (under their locks, new checksum and revision, indexes follow); the result lists those that had one of the properties. A property the class still declares isn't dropped (loading would leave it at its default or uninitialized): remove it from the class first; classes allowing dynamic properties (`stdClass`) and classes that aren't loadable aren't checked. Only properties of the object itself, no paths. A referenced object the property pointed to stays stored. `ALTER`, `CLASS`, `TABLE`, `DROP`, `ATTRIBUTE` and `COLUMN` aren't reserved: properties may be named so.
 - **Dry run**: `query($query, dryRun: true)` computes and checks everything and returns the objects that would be written (for `INSERT` without UUIDs), writing nothing.
 
 ## Command line and viewer
@@ -157,7 +160,7 @@ echo "SELECT COUNT(*) FROM Product" | object-storage query --dir ./data
 
 `--param name=value` sets `:name`, `--param value` the next `?`; numbers, `true`, `false` and `null` are taken as such, `"quoted"` as text. `INSERT`, `UPDATE` and `DELETE` print the UUIDs written and their number (`--json`: `{"statement", "dryRun", "affected", "uuids"}`); `--dry-run` writes nothing.
 
-In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE` and `DELETE` ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing.
+In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE`, `DELETE` and `ALTER` ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing.
 
 ## Performance and memory
 

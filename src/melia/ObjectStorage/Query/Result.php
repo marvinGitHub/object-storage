@@ -20,7 +20,7 @@ final readonly class Result implements IteratorAggregate, Countable
     /**
      * @param list<string> $columns
      * @param list<list<mixed>> $rows
-     * @param string|null $statement INSERT, UPDATE or DELETE: the rows are the UUIDs of the objects written (null in
+     * @param string|null $statement INSERT, UPDATE, DELETE or ALTER (DROP ATTRIBUTE): the rows are the UUIDs of the objects written (null in
      *        a dry run of INSERT); null for SELECT
      * @param bool $dryRun Whether nothing was written: the rows are the objects that would be.
      * @param bool $truncated Whether there were more rows than asked for (Oql::query() with $maxRows).
