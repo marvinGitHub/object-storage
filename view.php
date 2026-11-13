@@ -18,9 +18,11 @@ use melia\ObjectStorage\Strategy\Policy\ChildPersistence;
 use melia\ObjectStorage\Graph\GraphVisitor;
 use melia\ObjectStorage\Migration\AttributeToReference;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Query\Exception\QueryInterruptedException;
 use melia\ObjectStorage\Query\Exception\ScriptException;
 use melia\ObjectStorage\Query\Oql;
 use melia\ObjectStorage\Query\Result;
+use melia\ObjectStorage\Query\SlowQueryLog;
 use melia\ObjectStorage\Path\Path;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use melia\ObjectStorage\Util\Maintenance\ShardRebuilder;
@@ -73,6 +75,13 @@ if (!is_file($logfile = $logDir . DIRECTORY_SEPARATOR . 'error.log')) {
 
 $logger = new Logger('ObjectStorageViewer');
 $logger->pushHandler(new StreamHandler($logfile));
+
+// the slow statements of the query console (docs/query.md, "Slow query log"): those running at least this long, or
+// reading at least this many objects; set with the environment variables of the server
+$slowQueryLogFile = $logDir . DIRECTORY_SEPARATOR . 'slow-queries.log';
+// (0 too: every statement)
+$slowQueryMilliseconds = is_numeric($value = getenv('OBJECT_STORAGE_SLOW_QUERY_MS')) ? (float)$value : SlowQueryLog::DEFAULT_MILLISECONDS;
+$slowQueryObjectsRead = is_numeric($value = getenv('OBJECT_STORAGE_SLOW_QUERY_OBJECTS')) ? (int)$value : 10000;
 
 $loader = new FilesystemLoader(__DIR__ . '/views');
 $twig = new Environment($loader);
@@ -650,13 +659,45 @@ try {
             $dryRun = isset($_POST['dryRun']);
             // Preview: the script runs and everything is rolled back at the end
             $preview = isset($_POST['preview']);
+            // the maximum runtime in seconds, empty: unlimited
+            $timeout = trim((string)($_POST['timeout'] ?? $_GET['timeout'] ?? ''));
+            $timeout = is_numeric($timeout) && (float)$timeout > 0 ? (float)$timeout : null;
+            // cancelled in the page while it ran: the query is shown again, not run
+            $cancelled = isset($_GET['cancelled']);
             $storage = $buildStorage($storageDir);
-            $results = null;
-            $rolledBack = false;
-            $error = null;
-            $milliseconds = null;
-            if ('' !== trim($query)) {
+            // run by the page (query.html) after the form is sent to the browser, so it can be cancelled meanwhile
+            $slowQueryLog = new SlowQueryLog($slowQueryLogFile, $slowQueryMilliseconds, $slowQueryObjectsRead, context: ['storage' => (string)$storageDir]);
+            $run = static function () use ($query, $dryRun, $preview, $timeout, $storage, $searchFor, $uniqueFor, $logger, $slowQueryLog): array {
+                $results = null;
+                $rolledBack = false;
+                $error = null;
+                $errorPosition = null;
                 $started = microtime(true);
+                // no limit of PHP: a query runs as long as it needs, or until its maximum runtime, or until the page
+                // is cancelled (the browser closes the connection); then it stops cleanly, what it wrote is rolled back
+                set_time_limit(0);
+                ignore_user_abort(true);
+                // what the page has so far goes to the browser now
+                while (ob_get_level() > 0 && ob_end_flush()) {
+                }
+                flush();
+                $timeLimit = null === $timeout ? null : Oql::timeLimit($timeout);
+                $beat = $started;
+                $interrupt = static function () use ($timeLimit, &$beat): void {
+                    if (null !== $timeLimit) {
+                        $timeLimit();
+                    }
+                    // a closed connection shows only when writing to it: a space, twice a second, in the page
+                    $now = microtime(true);
+                    if ($now - $beat >= 0.5) {
+                        $beat = $now;
+                        echo ' ';
+                        flush();
+                        if (connection_aborted()) {
+                            throw new QueryInterruptedException('The query was cancelled');
+                        }
+                    }
+                };
                 try {
                     // writes and transactions only from the form (POST): a link or the history never writes
                     if (Oql::writes($query) && 'POST' !== ($_SERVER['REQUEST_METHOD'] ?? 'GET')) {
@@ -665,7 +706,7 @@ try {
                     // one request is one connection: a transaction can't stay open across requests, a script left
                     // with an open one is rolled back; indexes find the objects where they can; at most 1,000 rows
                     // per statement are kept to show
-                    $script = (new Oql($storage, $searchFor($storage), $uniqueFor($storage)))->script($query, [], $dryRun, 1000, $preview);
+                    $script = (new Oql($storage, $searchFor($storage), $uniqueFor($storage), interrupt: $interrupt, observer: $slowQueryLog))->script($query, [], $dryRun, 1000, $preview);
                     $results = $script->results;
                     $rolledBack = $script->rolledBack;
                 } catch (ScriptException $e) {
@@ -681,8 +722,8 @@ try {
                     $logger->error($e);
                     $error = 'The query failed: ' . $e->getMessage();
                 }
-                $milliseconds = (microtime(true) - $started) * 1000;
-            }
+                return [$results, $rolledBack, $error, $errorPosition, (microtime(true) - $started) * 1000];
+            };
             // lists and objects as JSON, the UUIDs in it (references) linked to their records; escaped first, so only
             // the links are HTML
             $jsonHtml = static function (string $json) use ($storageDir): string {
@@ -712,30 +753,54 @@ try {
                 $logger->error($e);
             }
 
-            echo $twig->render('query.html', [
+            // what the page shows of a run
+            $outcome = static function () use ($run, $cell): array {
+                [$results, $rolledBack, $error, $errorPosition, $milliseconds] = $run();
+                return [
+                    'error' => $error,
+                    'errorPosition' => $errorPosition,
+                    // whether the query ran (for the history), also if a later statement of a script failed
+                    'ran' => null !== $results,
+                    'results' => array_map(static fn(Result $result): array => [
+                        'columns' => $result->columns,
+                        // the rows; of a dry run of INSERT, the objects have no UUIDs yet
+                        'rows' => array_map(
+                            static fn(array $row): array => array_map($cell, $row),
+                            null === $result->statement ? $result->rows : array_values(array_filter($result->rows, static fn(array $row): bool => null !== $row[0]))
+                        ),
+                        'statement' => $result->statement,
+                        'truncated' => $result->truncated,
+                        'affected' => $result->affected(),
+                        'dryRun' => $result->dryRun,
+                        // what it cost: shown with the rows, all objects of a class read marked
+                        'objectsRead' => $result->statistics?->objectsRead,
+                        'fullScans' => $result->statistics?->fullScans() ?? [],
+                    ], $results ?? []),
+                    'rolledBack' => $rolledBack,
+                    'milliseconds' => $milliseconds,
+                ];
+            };
+
+            // displayed, not rendered: the page up to the results reaches the browser while the query runs
+            $twig->display('query.html', [
                 'storage' => $storageDir,
                 'query' => $query,
                 'classnames' => $classnames,
-                'error' => $error,
-                'errorPosition' => $errorPosition ?? null,
-                // whether the query ran (for the history), also if a later statement of a script failed
-                'ran' => null !== $results,
-                'results' => array_map(static fn(Result $result): array => [
-                    'columns' => $result->columns,
-                    // the rows; of a dry run of INSERT, the objects have no UUIDs yet
-                    'rows' => array_map(
-                        static fn(array $row): array => array_map($cell, $row),
-                        null === $result->statement ? $result->rows : array_values(array_filter($result->rows, static fn(array $row): bool => null !== $row[0]))
-                    ),
-                    'statement' => $result->statement,
-                    'truncated' => $result->truncated,
-                    'affected' => $result->affected(),
-                    'dryRun' => $result->dryRun,
-                ], $results ?? []),
-                'rolledBack' => $rolledBack,
                 'preview' => $preview,
                 'dryRun' => $dryRun,
-                'milliseconds' => $milliseconds,
+                'timeout' => $timeout,
+                'cancelled' => $cancelled,
+                // the template runs it (runner.run()) where the results go
+                'runner' => '' === trim($query) || $cancelled ? null : new class($outcome) {
+                    public function __construct(private readonly \Closure $outcome)
+                    {
+                    }
+
+                    public function run(): array
+                    {
+                        return ($this->outcome)();
+                    }
+                },
             ]);
             break;
         case 'list-classnames':
@@ -1461,6 +1526,64 @@ try {
                 'error' => $error,
                 'message' => $_GET['message'] ?? null,
             ]);
+            break;
+        case 'slow-queries':
+            // the slow query log of the console (docs/query.md, "Statistics and the slow query log"): by pattern (the
+            // query without its values) or the latest statements; of one storage, or of all (storage empty)
+            $storageDir = (string)($_GET['storage'] ?? '');
+            $view = 'latest' === ($_GET['view'] ?? '') ? 'latest' : 'patterns';
+            $entries = SlowQueryLog::read($slowQueryLogFile);
+            if ('' !== $storageDir) {
+                $entries = array_values(array_filter($entries, static fn(array $entry): bool => ($entry['storage'] ?? null) === $storageDir));
+            }
+            $patterns = [];
+            foreach ($entries as $entry) {
+                $key = (string)($entry['storage'] ?? '') . "\0" . (string)($entry['pattern'] ?? $entry['query'] ?? '');
+                $milliseconds = (float)($entry['milliseconds'] ?? 0);
+                $group = $patterns[$key] ?? [
+                    'storage' => (string)($entry['storage'] ?? ''),
+                    'pattern' => (string)($entry['pattern'] ?? $entry['query'] ?? ''),
+                    'statement' => $entry['statement'] ?? null,
+                    'runs' => 0, 'totalMilliseconds' => 0.0, 'maxMilliseconds' => 0.0,
+                    'maxObjectsRead' => 0, 'totalRows' => 0, 'failed' => 0, 'interrupted' => 0, 'fullScans' => [],
+                ];
+                $group['runs']++;
+                $group['totalMilliseconds'] += $milliseconds;
+                $group['maxMilliseconds'] = max($group['maxMilliseconds'], $milliseconds);
+                $group['maxObjectsRead'] = max($group['maxObjectsRead'], (int)($entry['objectsRead'] ?? 0));
+                $group['totalRows'] += (int)($entry['rows'] ?? 0);
+                $group['failed'] += null !== ($entry['error'] ?? null) && !($entry['interrupted'] ?? false) ? 1 : 0;
+                $group['interrupted'] += ($entry['interrupted'] ?? false) ? 1 : 0;
+                $group['fullScans'] += array_flip(array_values((array)($entry['fullScans'] ?? [])));
+                // the latest run: its query is the one opened
+                $group['last'] = $entry;
+                $patterns[$key] = $group;
+            }
+            // where the time went first
+            usort($patterns, static fn(array $a, array $b): int => $b['totalMilliseconds'] <=> $a['totalMilliseconds']);
+
+            echo $twig->render('slow-queries.html', [
+                'storage' => '' === $storageDir ? null : $storageDir,
+                'view' => $view,
+                'patterns' => $patterns,
+                // the newest first
+                'latest' => array_slice(array_reverse($entries), 0, 500),
+                'count' => count($entries),
+                'file' => $slowQueryLogFile,
+                'milliseconds' => $slowQueryMilliseconds,
+                'objectsRead' => $slowQueryObjectsRead,
+                'cleared' => isset($_GET['cleared']),
+            ]);
+            break;
+        case 'slow-queries-clear':
+            // the whole log, of all storages
+            $requirePost();
+            foreach ([$slowQueryLogFile, $slowQueryLogFile . '.1'] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
+            }
+            header('Location: ?' . http_build_query(array_filter(['action' => 'slow-queries', 'storage' => (string)($_POST['storage'] ?? ''), 'cleared' => '1'])));
             break;
         case 'index-errors':
             // the objects an index couldn't index ("<uuid>: <reason>"), with their classes as stored now

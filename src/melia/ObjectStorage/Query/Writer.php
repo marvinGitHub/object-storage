@@ -85,6 +85,7 @@ final class Writer
 
         $uuids = [];
         foreach ($objects as [$data, $reservedNames]) {
+            $this->executor->checkpoint();
             try {
                 $uuid = $this->storage->getNextAvailableUuid();
                 $metadata = new Metadata();
@@ -191,6 +192,7 @@ final class Writer
         $changed = [];
         $lockAdapter = $this->storage->getLockAdapter();
         foreach ($uuids as $uuid) {
+            $this->executor->checkpoint();
             $lockedHere = false;
             try {
                 if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
@@ -508,6 +510,7 @@ final class Writer
         $deleted = [];
         $lockAdapter = $this->storage->getLockAdapter();
         foreach ($uuids as $uuid) {
+            $this->executor->checkpoint();
             $lockedHere = false;
             try {
                 if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {

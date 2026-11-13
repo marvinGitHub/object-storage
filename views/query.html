@@ -30,6 +30,9 @@
     .oql-quoted { color: var(--bs-body-color); text-decoration: underline dotted var(--bs-secondary-color); }
     .oql-comment { color: var(--bs-secondary-color); font-style: italic; }
     .oql-operator, .oql-punctuation { color: var(--bs-secondary-color); }
+    /* a page stopped while the query ran: without highlighting (its script didn't run) */
+    .oql-editor.oql-plain pre { display: none; }
+    .oql-editor.oql-plain textarea.form-control { color: var(--bs-body-color); }
     .oql-error { text-decoration: underline wavy var(--bs-danger); text-decoration-skip-ink: none; background: var(--bs-danger-bg-subtle); }
 </style>
 {% embed 'page-header.html' with {crumbs: [
@@ -37,6 +40,7 @@
     {label: 'Query'},
 ]} %}
     {% block title %}Query{% endblock %}
+    {% block actions %}<a class="btn btn-outline-secondary btn-sm" id="slow-queries-link" href="?action=slow-queries&storage={{ storage|url_encode }}" title="The slow statements of the console: by query, with their runtime and the objects they read"><i class="bi bi-hourglass-split"></i> Slow queries</a>{% endblock %}
     {% block badges %}<span class="badge text-bg-warning me-2" title="OQL is experimental: its syntax and semantics may change in a minor release">experimental</span><span class="text-muted small">OQL: SELECT … FROM Class … JOIN … WHERE … GROUP BY … ORDER BY … LIMIT</span>{% endblock %}
 {% endembed %}
 
@@ -57,6 +61,12 @@
         <div class="form-check mb-0" title="INSERT, UPDATE, DELETE, ALTER: check and list the objects that would be written, write nothing">
             <input class="form-check-input" type="checkbox" id="dry-run" name="dryRun" value="1" {{ dryRun ? 'checked' : '' }}>
             <label class="form-check-label small" for="dry-run">Dry run</label>
+        </div>
+        <div class="input-group input-group-sm w-auto" title="Stop the query after this many seconds (what it wrote is rolled back); empty: no limit">
+            <label class="input-group-text" for="timeout"><i class="bi bi-stopwatch"></i>&nbsp;Max. runtime</label>
+            <input class="form-control" type="number" id="timeout" name="timeout" min="0" step="any" placeholder="unlimited" style="width: 7rem"
+                   value="{{ timeout is null ? '' : timeout }}">
+            <span class="input-group-text">s</span>
         </div>
         <div class="dropdown">
             <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-clock-history"></i> History</button>
@@ -99,6 +109,63 @@
     </div>
 </div>
 
+{% if cancelled %}
+<div class="alert alert-warning py-2" id="query-cancelled"><i class="bi bi-x-circle"></i> The query was cancelled: it was stopped, what it wrote was rolled back.</div>
+{% endif %}
+
+{% if runner %}
+{# shown while the query runs (the page up to here has reached the browser), removed when it is done #}
+<div class="alert alert-secondary py-2 align-items-center gap-2 d-none" id="query-running">
+    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+    <span>Running… <span class="font-monospace" id="query-elapsed">0 s</span>{% if timeout %} <span class="text-muted">(at most {{ timeout }} s)</span>{% endif %}</span>
+    <button type="button" class="btn btn-outline-danger btn-sm ms-auto" id="query-cancel"><i class="bi bi-x-circle"></i> Cancel</button>
+</div>
+<script>
+(() => {
+    const running = document.getElementById('query-running');
+    const started = performance.now();
+    // the query readable meanwhile: highlighting starts with the script at the end of the page
+    document.querySelector('.oql-editor').classList.add('oql-plain');
+    // not for a quick query
+    const show = setTimeout(() => running.classList.replace('d-none', 'd-flex'), 300);
+    const tick = setInterval(() => {
+        document.getElementById('query-elapsed').textContent = Math.floor((performance.now() - started) / 1000) + ' s';
+    }, 250);
+    window.queryRunning = {stop: () => { clearTimeout(show); clearInterval(tick); running.remove(); }};
+    // the browser closes the connection: the server stops the query at its next step and rolls back what it wrote;
+    // the query is shown again (not run)
+    document.getElementById('query-cancel').addEventListener('click', () => {
+        const params = new URLSearchParams({action: 'query', storage: {{ storage|json_encode|raw }}, q: document.getElementById('q').value, cancelled: '1'});
+        const timeout = document.getElementById('timeout').value;
+        if (timeout !== '') {
+            params.set('timeout', timeout);
+        }
+        const url = '?' + params;
+        // first: the page would load on until the next one arrives, which a server answering one request at a time
+        // (php -S) keeps waiting for the query
+        window.stop();
+        if (url.length <= 8000) {
+            location.href = url;
+            return;
+        }
+        // too long for a link: stopped here
+        window.queryRunning.stop();
+        running.insertAdjacentHTML('afterend', '<div class="alert alert-warning py-2" id="query-cancelled"><i class="bi bi-x-circle"></i> The query was cancelled: it was stopped, what it wrote was rolled back.</div>');
+    });
+})();
+</script>
+{% set outcome = runner.run() %}
+<script>window.queryRunning.stop();</script>
+{% else %}
+{% set outcome = {error: null, errorPosition: null, ran: false, results: [], rolledBack: false, milliseconds: null} %}
+{% endif %}
+{% set error = outcome.error %}
+{% set errorPosition = outcome.errorPosition %}
+{% set ran = outcome.ran %}
+{% set results = outcome.results %}
+{% set rolledBack = outcome.rolledBack %}
+{% set milliseconds = outcome.milliseconds %}
+
 {% if error %}
 <div class="alert alert-danger font-monospace small" id="query-error">{{ error }}</div>
 {% endif %}
@@ -131,6 +198,8 @@
 <p class="text-muted small mb-2 query-summary" id="query-summary{{ suffix }}">
     {% set count = result.rows|length %}
     {% if result.truncated %}More than {{ count|number_format(0, '.', ' ') }} row(s){% if not several %}, {{ milliseconds|number_format(0) }} ms{% endif %} — showing the first {{ count|number_format(0, '.', ' ') }}, use LIMIT{% else %}{{ count|number_format(0, '.', ' ') }} row(s){% if not several %}, {{ milliseconds|number_format(0) }} ms{% endif %}{% if count > shown %} — showing the first {{ shown }}, use LIMIT{% endif %}{% endif %}
+    {% if result.objectsRead is not null %}<span class="query-objects-read">· {{ result.objectsRead|number_format(0, '.', ' ') }} object(s) read</span>{% endif %}
+    {% for alias, class in result.fullScans %}<span class="badge text-bg-warning ms-1 query-full-scan" title="No index found the objects of {{ alias }}: all objects of {{ class }} were read. EXPLAIN tells why.">all of {{ class|split('\\')|last }} read</span>{% endfor %}
 </p>
 {% if result.columns is not empty %}
 <div class="table-responsive card mb-2">
@@ -167,6 +236,7 @@
     // syntax highlighting: rendered behind the textarea, scrolled with it; the error of the query run marked until
     // it is edited
     const highlighted = document.getElementById('q-highlighted');
+    document.querySelector('.oql-editor').classList.remove('oql-plain');
     const ranQuery = area.value;
     const errorPosition = {{ errorPosition is null ? 'null' : errorPosition }};
     const render = () => {
@@ -186,6 +256,11 @@
     // writes and transactions (in any statement of a script): asked before, sent by POST (the server runs them from
     // the form only); a preview is sent by POST as well, but changes nothing, so it isn't asked
     form.addEventListener('submit', event => {
+        // no limit: not in the link
+        const timeout = document.getElementById('timeout');
+        timeout.disabled = timeout.value.trim() === '';
+        // after the form data is taken (e.g. for the page coming back from the history of the browser)
+        setTimeout(() => timeout.disabled = false);
         const preview = event.submitter?.id === 'preview';
         // setAttribute: the input named "action" hides the property
         if (!preview && !OqlHighlight.writes(area.value)) {

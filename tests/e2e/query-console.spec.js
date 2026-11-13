@@ -185,3 +185,90 @@ test('syntax highlighting, the error marked, scrolling together', async ({page})
     expect(top).toBeGreaterThan(0);
     expect(layerTop).toBe(top);
 });
+
+/** a query that runs for minutes: every combination of the objects, 11 times */
+const SLOW = 'SELECT COUNT(*) FROM stdClass a' + [...'bcdefghijk'].map(alias => ` JOIN stdClass ${alias} ON TRUE`).join('');
+
+test('a maximum runtime stops the query', async ({page}) => {
+    await page.goto(consoleUrl());
+    await page.locator('#q').fill(SLOW);
+    await page.locator('#timeout').fill('1');
+    await page.locator('#q').press('Control+Enter');
+    await expect(page.locator('#query-error')).toHaveText('The query was stopped after its maximum runtime of 1 s');
+    await expect(page.locator('#query-running')).toHaveCount(0);
+    // kept for the next run
+    await expect(page.locator('#timeout')).toHaveValue('1');
+    // no limit: not in the link
+    await page.locator('#q').fill('SELECT COUNT(*) FROM stdClass');
+    await page.locator('#timeout').fill('');
+    await page.locator('#q').press('Control+Enter');
+    await expect(page.locator('#query-summary')).toContainText('1 row(s)');
+    expect(new URL(page.url()).searchParams.has('timeout')).toBe(false);
+});
+
+test('a running query is cancelled', async ({page}) => {
+    await page.goto(consoleUrl());
+    await page.locator('#q').fill(SLOW);
+    await page.locator('#q').press('Control+Enter');
+    await expect(page.locator('#query-running')).toBeVisible();
+    // the query stays readable meanwhile
+    expect(await page.locator('#q').evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
+    await page.locator('#query-cancel').click();
+    await expect(page.locator('#query-cancelled')).toBeVisible();
+    await expect(page.locator('#q')).toHaveValue(SLOW);
+    await expect(page.locator('#query-result')).toHaveCount(0);
+    // the server is free again: the query was stopped
+    await page.locator('#q').fill('SELECT COUNT(*) FROM stdClass');
+    await page.locator('#q').press('Control+Enter');
+    await expect(page.locator('#query-summary')).toContainText('1 row(s)', {timeout: 5000});
+});
+
+test('what a query cost: objects read, all of a class read', async ({page}) => {
+    // REGEXP: no index finds the objects
+    await page.goto(consoleUrl("SELECT name FROM stdClass WHERE name REGEXP 'a'"));
+    await expect(page.locator('#query-summary .query-objects-read')).toHaveText(/· \d+ object\(s\) read/);
+    await expect(page.locator('#query-summary .query-full-scan')).toHaveText(['all of stdClass read']);
+});
+
+test('the slow queries: by query and the latest, opened in the console, cleared', async ({page}) => {
+    page.on('dialog', dialog => dialog.accept());
+    const slowQueries = (view = null) => '/view.php?' + new URLSearchParams({action: 'slow-queries', storage: STORAGE, ...(view ? {view} : {})});
+
+    // what the tests before logged goes first
+    await page.goto(slowQueries());
+    if (await page.locator('#slow-queries-clear').count()) {
+        await page.locator('#slow-queries-clear button').click();
+        await expect(page.locator('#slow-queries-cleared')).toBeVisible();
+    }
+    await expect(page.locator('#slow-queries-none')).toBeVisible();
+
+    // stopped by its maximum runtime: always logged, twice the same query
+    for (let i = 0; i < 2; i++) {
+        await page.goto('/view.php?' + new URLSearchParams({action: 'query', storage: STORAGE, q: SLOW, timeout: '0.5'}));
+        await expect(page.locator('#query-error')).toContainText('maximum runtime');
+    }
+    // fast: not logged
+    await page.goto(consoleUrl('SELECT COUNT(*) FROM stdClass'));
+
+    // from the console
+    await page.locator('#slow-queries-link').click();
+    const rows = page.locator('#slow-queries .slow-query-pattern');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('SELECT COUNT(*) FROM stdClass a JOIN stdClass b ON TRUE');
+    await expect(rows.first().locator('td').nth(1)).toHaveText('2');
+    await expect(rows.first()).toContainText('2× stopped');
+    await expect(rows.first().locator('.slow-query-full-scan').first()).toHaveText('all of stdClass');
+
+    await page.locator('#slow-queries-latest-tab').click();
+    await expect(page.locator('#slow-queries .slow-query-entry')).toHaveCount(2);
+    await expect(page.locator('#slow-queries .slow-query-entry').first()).toContainText('stopped');
+
+    // opened in the console: the query as it ran
+    await page.locator('#slow-queries .slow-query-explain').first().click();
+    await expect(page.locator('#q')).toHaveValue('EXPLAIN ' + SLOW);
+    await expect(page.locator('#query-result')).toContainText('all objects of the class');
+
+    await page.goto(slowQueries('latest'));
+    await page.locator('#slow-queries-clear button').click();
+    await expect(page.locator('#slow-queries-none')).toBeVisible();
+});

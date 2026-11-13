@@ -24,15 +24,25 @@ final readonly class Result implements IteratorAggregate, Countable
      *        a dry run of INSERT); null for SELECT
      * @param bool $dryRun Whether nothing was written: the rows are the objects that would be.
      * @param bool $truncated Whether there were more rows than asked for (Oql::query() with $maxRows).
+     * @param Statistics|null $statistics What the statement did and cost (set by Oql).
      */
     public function __construct(
-        public array   $columns,
-        public array   $rows,
-        public ?string $statement = null,
-        public bool    $dryRun = false,
-        public bool    $truncated = false,
+        public array       $columns,
+        public array       $rows,
+        public ?string     $statement = null,
+        public bool        $dryRun = false,
+        public bool        $truncated = false,
+        public ?Statistics $statistics = null,
     )
     {
+    }
+
+    /**
+     * The result with its statistics.
+     */
+    public function withStatistics(Statistics $statistics): self
+    {
+        return new self($this->columns, $this->rows, $this->statement, $this->dryRun, $this->truncated, $statistics);
     }
 
     /**

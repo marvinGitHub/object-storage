@@ -234,6 +234,21 @@ $result->rolledBack; // true if the script left a transaction open: it was rolle
 - A failing statement throws a `ScriptException` (a `QueryException`): `$e->statement` (its index), `$e->results` (those of the statements before), `$e->rolledBack`; its position and line are those in the script. A transaction the script started is rolled back.
 - **Preview**: `script($script, preview: true)` runs everything and rolls it all back at the end: the results, `SELECT`s after the changes included, without keeping anything. Within the preview, `START TRANSACTION`, `COMMIT` and `ROLLBACK` work as usual, but `COMMIT` keeps the changes only until the end of the preview.
 
+### Maximum runtime and cancelling
+
+A statement can be stopped while it runs: the `interrupt` of the constructor is called for every object read, every pair a join tries and every object written; a `QueryInterruptedException` (a `QueryException`) thrown in it stops the statement. What the statement wrote is rolled back, as when it fails; a script stops there (`ScriptException`, the interruption as its previous exception). `Oql::timeLimit($seconds)` stops after a maximum runtime:
+
+```php
+$oql = new Oql($storage, interrupt: Oql::timeLimit(30));          // at most 30 s from now, for all statements
+$oql = new Oql($storage, interrupt: function () use ($job): void { // cancelled from elsewhere
+    if ($job->isCancelled()) {
+        throw new QueryInterruptedException('Cancelled');
+    }
+});
+```
+
+Sorting a result that is already read, and waiting for a lock, aren't interrupted.
+
 ## Command line and viewer
 
 ```bash
@@ -246,7 +261,7 @@ echo "SELECT COUNT(*) FROM Product" | object-storage query --dir ./data
 
 The command runs [scripts](#transactions-and-scripts) as well (`--file`, STDIN or the argument): the results are printed per statement; with `--json`, a script of several statements gives an array of one object per statement (`{"statement": "SELECT", "rows": […]}`, the object of a write, `{"statement": "COMMIT"}`). A script ending with an open transaction is rolled back and the command fails (exit code 1). `--preview` runs everything and rolls it back.
 
-In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE`, `DELETE`, `ALTER` and transactions ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing. The console runs scripts, showing the result of each statement. A request is a connection: a transaction can't stay open from one run to the next — a script ending with an open one is rolled back. **Preview** runs the script and rolls everything back, to see what it would do before running it.
+In the viewer, **Query** on the list of classes (or of the objects of a class) opens the console: the query is highlighted as it is typed (keywords, `UUID`, functions, texts, numbers, parameters, comments), Ctrl+Enter runs it, the result links UUIDs to the records, errors name their line and column and are underlined in the query until it is changed, and the last queries are kept in the browser (**History**). `INSERT`, `UPDATE`, `DELETE`, `ALTER` and transactions ask before running and run from the form only (POST), so a link or the history never writes; **Dry run** lists the objects without writing. The console runs scripts, showing the result of each statement. A request is a connection: a transaction can't stay open from one run to the next — a script ending with an open one is rolled back. **Preview** runs the script and rolls everything back, to see what it would do before running it. A query runs as long as it needs (no `max_execution_time` of PHP), or at most **Max. runtime** seconds if given; while it runs, **Cancel** (or the browser's stop button) stops it, what it wrote is rolled back, and the query is shown again. The page notices a closed connection by writing a space to it twice a second; behind a proxy that buffers the whole response, cancelling takes effect only when the proxy closes its connection to PHP.
 
 ## Performance and memory
 
@@ -258,6 +273,23 @@ In the viewer, **Query** on the list of classes (or of the objects of a class) o
 - Referenced objects that paths lead to are cached per query, at most 10,000 of them.
 
 What has to stay in memory is the result itself: sorting without `LIMIT`, `DISTINCT`, and the objects on the right side of a `JOIN` (only their used properties). `query(…, maxRows: 1000)` keeps at most 1,000 rows; `$result->truncated` tells whether there were more (the viewer does this).
+
+**Statistics and the slow query log.** Every result tells what its statement did and cost: `$result->statistics` (a `Statistics`) has the `milliseconds`, the `objectsRead` from the storage (of the sources, joins and referenced objects of paths), the `rows`, how the objects of each source were found (`access`, as `EXPLAIN` names it) and `fullScans()` — the sources whose objects were all read. Many objects read for few rows usually mean an index is missing. An observer gets the statistics of every statement, also of a failed one (`error`, `interrupted`):
+
+```php
+use melia\ObjectStorage\Query\SlowQueryLog;
+
+$oql = new Oql($storage, observer: new SlowQueryLog(
+    __DIR__ . '/var/slow-queries.log',
+    milliseconds: 500,      // statements running at least 500 ms
+    objectsRead: 10000,     // or reading at least 10,000 objects (null: not)
+    context: ['app' => 'shop'],
+));
+```
+
+`SlowQueryLog` writes one JSON object per line: `time` (UTC), `milliseconds`, `statement`, `objectsRead`, `rows`, `fullScans` (alias → class), `access`, `dryRun`, `inTransaction`, `error`, `interrupted`, the `query` as written and its `pattern` — the query without its values (texts and numbers `?`, a list of them `(?)`, no comments; `Statistics::pattern()`), the same for queries differing only in their values, to group them. Statements stopped by a maximum runtime or cancelled are always logged. The values of parameters are never logged, values written into the query are: pass personal data as parameters. A statement with the comment `/* no-slow-log */` isn't logged (in a script, write it in each statement). At `maxBytes` (10 MB) the log is rotated to `….1`; `SlowQueryLog::read($file)` returns the entries of both, the oldest first. An observer failing (e.g. the log can't be written) never fails the statement.
+
+The viewer logs the statements of its console to `appData/logs/slow-queries.log` (at least 1,000 ms or 10,000 objects read; the environment variables `OBJECT_STORAGE_SLOW_QUERY_MS` and `OBJECT_STORAGE_SLOW_QUERY_OBJECTS` change that) and shows, with each result, the objects read and which classes were read in full. **Slow queries** in the console opens the log of the storage (`?action=slow-queries`; without `storage`, of all storages): **By query** groups the statements by their pattern — runs, average and longest runtime, total time (the most first), the most objects read, average rows, classes read in full, how often stopped or failed — and **Latest** lists the statements, the newest first. Each opens in the console as it ran, a `SELECT` also as `EXPLAIN`. **Clear log** empties the log of all storages.
 
 The caches of the storage are bounded: `ObjectStorage` and configurations of type `memory` keep at most `InMemoryCache::DEFAULT_MAX_ENTRIES` (10,000) objects and metadata, dropping the least recently used (`new InMemoryCache(maxEntries: …)`; without `maxEntries`, unbounded as before).
 

@@ -1,0 +1,137 @@
+{% extends 'index.html' %}
+
+{% macro open(entry) %}
+{# the query in the console, as it ran (with the values written into it), and EXPLAIN of a SELECT #}
+{% set where = entry.storage|default('') %}
+{% if where %}
+<a class="btn btn-outline-primary btn-sm py-0 slow-query-open" href="?action=query&storage={{ where|url_encode }}&q={{ entry.query|url_encode }}" title="Open in the console (a write isn't run by a link: press Run there)"><i class="bi bi-terminal"></i></a>
+{% if entry.statement == 'SELECT' %}
+<a class="btn btn-outline-secondary btn-sm py-0 slow-query-explain" href="?action=query&storage={{ where|url_encode }}&q={{ ('EXPLAIN ' ~ entry.query)|url_encode }}" title="EXPLAIN: how the objects of each source are found">EXPLAIN</a>
+{% endif %}
+{% endif %}
+{% endmacro %}
+
+{% macro scans(classes) %}
+{% for class in classes %}<span class="badge text-bg-warning me-1 slow-query-full-scan" title="No index found the objects: all objects of {{ class }} were read">all of {{ class|split('\\')|last }}</span>{% endfor %}
+{% endmacro %}
+
+{% block body %}
+{% import _self as slow %}
+<style>
+    .slow-query-text { min-width: 18rem; max-width: 40rem; white-space: pre-wrap; word-break: break-word; }
+</style>
+{% embed 'page-header.html' with {crumbs: storage ? [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: 'Query', href: '?action=query&storage=' ~ storage|url_encode},
+    {label: 'Slow queries'},
+] : [{label: 'Slow queries'}]} %}
+    {% block title %}Slow queries{% endblock %}
+    {% block actions %}
+    {% if count > 0 %}
+    <form method="post" action="?action=slow-queries-clear" class="d-inline" id="slow-queries-clear"
+          onsubmit="return confirm('Clear the slow query log of all storages?')">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Clear log</button>
+    </form>
+    {% endif %}
+    {% endblock %}
+    {% block intro %}
+    <p class="page-intro">
+        The statements of the query console that ran at least {{ milliseconds|number_format(0, '.', ' ') }} ms or read
+        at least {{ objectsRead|number_format(0, '.', ' ') }} objects, and every one stopped (maximum runtime,
+        cancelled){% if storage %}, of this storage — <a href="?action=slow-queries{{ view == 'latest' ? '&view=latest' : '' }}">all storages</a>{% endif %}.
+        Many objects read for few rows, or all objects of a class read, usually mean an index is missing.
+        <span class="text-muted small d-block">{{ file }} — <code>OBJECT_STORAGE_SLOW_QUERY_MS</code> and <code>OBJECT_STORAGE_SLOW_QUERY_OBJECTS</code> of the server change the limits.</span>
+    </p>
+    {% endblock %}
+{% endembed %}
+
+{% if cleared %}<div class="alert alert-info py-2" id="slow-queries-cleared"><i class="bi bi-trash"></i> The log was cleared.</div>{% endif %}
+
+{% set base = '?action=slow-queries' ~ (storage ? '&storage=' ~ storage|url_encode : '') %}
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link {{ view == 'patterns' ? 'active' : '' }}" href="{{ base }}" id="slow-queries-patterns-tab">By query <span class="badge text-bg-secondary">{{ patterns|length }}</span></a></li>
+    <li class="nav-item"><a class="nav-link {{ view == 'latest' ? 'active' : '' }}" href="{{ base }}&view=latest" id="slow-queries-latest-tab">Latest <span class="badge text-bg-secondary">{{ count }}</span></a></li>
+</ul>
+
+{% if count == 0 %}
+<div class="alert alert-success" id="slow-queries-none"><i class="bi bi-check-circle"></i> No slow queries{% if storage %} of this storage{% endif %}.</div>
+{% elseif view == 'patterns' %}
+<p class="text-muted small">Queries differing only in their values are one row (texts and numbers are <code>?</code>); the most time spent in total first.</p>
+<div class="table-responsive">
+<table class="table table-sm align-middle small" id="slow-queries">
+    <thead>
+    <tr>
+        {% if not storage %}<th>Storage</th>{% endif %}
+        <th>Query</th>
+        <th class="text-end">Runs</th>
+        <th class="text-end" title="Average and longest runtime">Avg / max ms</th>
+        <th class="text-end" title="All runs together">Total ms</th>
+        <th class="text-end" title="The most objects one run read">Objects read</th>
+        <th class="text-end" title="Average rows of a SELECT, objects written by INSERT, UPDATE, DELETE, ALTER">Avg rows</th>
+        <th>Notes</th>
+        <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for group in patterns %}
+    <tr class="slow-query-pattern">
+        {% if not storage %}<td class="font-monospace text-break">{{ group.storage }}</td>{% endif %}
+        <td class="font-monospace slow-query-text">{{ group.pattern }}</td>
+        <td class="text-end">{{ group.runs }}</td>
+        <td class="text-end text-nowrap">{{ (group.totalMilliseconds / group.runs)|number_format(0, '.', ' ') }} / {{ group.maxMilliseconds|number_format(0, '.', ' ') }}</td>
+        <td class="text-end">{{ group.totalMilliseconds|number_format(0, '.', ' ') }}</td>
+        <td class="text-end">{{ group.maxObjectsRead|number_format(0, '.', ' ') }}</td>
+        <td class="text-end">{{ (group.totalRows / group.runs)|number_format(group.totalRows % group.runs ? 1 : 0, '.', ' ') }}</td>
+        <td>
+            {{ slow.scans(group.fullScans|keys) }}
+            {% if group.interrupted %}<span class="badge text-bg-secondary me-1" title="Stopped by the maximum runtime or cancelled">{{ group.interrupted }}× stopped</span>{% endif %}
+            {% if group.failed %}<span class="badge text-bg-danger me-1" title="{{ group.last.error }}">{{ group.failed }}× failed</span>{% endif %}
+            <span class="text-muted d-block" title="The latest run">last {{ group.last.time|date('Y-m-d H:i:s', 'UTC') }} UTC</span>
+        </td>
+        <td class="text-nowrap">{{ slow.open(group.last) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="text-muted small">The newest first{% if count > latest|length %}, the latest {{ latest|length }} of {{ count }}{% endif %}; times in UTC.</p>
+<div class="table-responsive">
+<table class="table table-sm align-middle small" id="slow-queries">
+    <thead>
+    <tr>
+        <th>Time</th>
+        {% if not storage %}<th>Storage</th>{% endif %}
+        <th>Query</th>
+        <th class="text-end">ms</th>
+        <th class="text-end">Objects read</th>
+        <th class="text-end">Rows</th>
+        <th>Notes</th>
+        <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for entry in latest %}
+    <tr class="slow-query-entry">
+        <td class="text-nowrap">{{ entry.time|date('Y-m-d H:i:s', 'UTC') }}</td>
+        {% if not storage %}<td class="font-monospace text-break">{{ entry.storage|default('') }}</td>{% endif %}
+        <td class="font-monospace slow-query-text">{{ entry.query }}</td>
+        <td class="text-end">{{ entry.milliseconds|number_format(0, '.', ' ') }}</td>
+        <td class="text-end">{{ entry.objectsRead|number_format(0, '.', ' ') }}</td>
+        <td class="text-end">{{ entry.rows }}</td>
+        <td>
+            {{ slow.scans(entry.fullScans|default({})) }}
+            {% if entry.dryRun %}<span class="badge text-bg-info me-1">dry run</span>{% endif %}
+            {% if entry.inTransaction %}<span class="badge text-bg-light border me-1" title="In a transaction (or a preview)">transaction</span>{% endif %}
+            {% if entry.interrupted %}<span class="badge text-bg-secondary me-1">stopped</span>{% endif %}
+            {% if entry.error %}<span class="d-block text-danger font-monospace">{{ entry.error }}</span>{% endif %}
+        </td>
+        <td class="text-nowrap">{{ slow.open(entry) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock body %}

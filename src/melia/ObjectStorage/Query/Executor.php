@@ -64,14 +64,21 @@ final class Executor
 
     private Access $access;
 
+    /** the objects read from the storage (Statistics::$objectsRead) */
+    private int $objectsRead = 0;
+
+    /** @var list<array{source: string, class: string, access: string}> how the objects of each source were found */
+    private array $accessed = [];
+
     public function __construct(
         private readonly ObjectStorage $storage,
         ?ManagerInterface              $search = null,
         ?UniqueManager                 $unique = null,
         bool                           $useIndexes = true,
+        private readonly ?\Closure     $interrupt = null,
     )
     {
-        $this->access = new Access($storage, $useIndexes ? $search : null, $useIndexes ? $unique : null, $useIndexes);
+        $this->access =new Access($storage, $useIndexes ? $search : null, $useIndexes ? $unique : null, $useIndexes);
         $this->follow = function (string $uuid): ?array {
             if (!array_key_exists($uuid, $this->referenced)) {
                 if (count($this->referenced) >= self::MAX_REFERENCED) {
@@ -83,6 +90,35 @@ final class Executor
             $object = $this->referenced[$uuid];
             return null === $object ? null : [$object['data'], $object['reserved']];
         };
+    }
+
+    /**
+     * Stops the statement if its $interrupt says so (throws a QueryInterruptedException); called for every object
+     * read, joined pair and object written.
+     */
+    public function checkpoint(): void
+    {
+        if (null !== $this->interrupt) {
+            ($this->interrupt)();
+        }
+    }
+
+    /**
+     * The objects read from the storage so far, by this executor (one statement).
+     */
+    public function objectsRead(): int
+    {
+        return $this->objectsRead;
+    }
+
+    /**
+     * How the objects of each source were found so far, in the order they were read.
+     *
+     * @return list<array{source: string, class: string, access: string}>
+     */
+    public function accessed(): array
+    {
+        return $this->accessed;
     }
 
     /**
@@ -173,8 +209,10 @@ final class Executor
     {
         $class = $this->classOf($source);
         $access = $this->access->choose($source, $class, $where);
+        $this->accessed[] = ['source' => $source->alias, 'class' => $class, 'access' => $access->kind];
         $uuids = $access->uuids ?? $this->storage->list($class);
         foreach ($uuids as $uuid) {
+            $this->checkpoint();
             $object = $this->read((string)$uuid);
             // an index may name an object of another class (a unique index of a parent class, a UUID)
             if (null !== $object && (null === $access->uuids || $this->storage->getClassName($object['uuid']) === $class)) {
@@ -205,6 +243,7 @@ final class Executor
      */
     private function read(string $uuid): ?array
     {
+        $this->objectsRead++;
         try {
             return self::objectOf($this->storage->readRaw($uuid));
         } catch (Throwable) {
@@ -354,6 +393,7 @@ final class Executor
             }
             $matched = false;
             foreach ($candidates as $object) {
+                $this->checkpoint();
                 $candidate = $row + [$alias => $object];
                 if (true === Values::truth($this->evaluate($join['on'], $candidate))) {
                     $matched = true;

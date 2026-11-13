@@ -4,9 +4,14 @@ namespace melia\ObjectStorage\Query;
 
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Query\Ast\Delete;
+use melia\ObjectStorage\Query\Ast\DropAttributes;
+use melia\ObjectStorage\Query\Ast\Insert;
 use melia\ObjectStorage\Query\Ast\Select;
 use melia\ObjectStorage\Query\Ast\TransactionControl;
+use melia\ObjectStorage\Query\Ast\Update;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Query\Exception\QueryInterruptedException;
 use melia\ObjectStorage\Query\Exception\ScriptException;
 use melia\ObjectStorage\Search\Index\ManagerInterface;
 use melia\ObjectStorage\Transaction;
@@ -47,18 +52,44 @@ final class Oql
     /** the transaction started with START TRANSACTION, until COMMIT or ROLLBACK */
     private ?Transaction $transaction = null;
 
+    /** @var (\Closure(Statistics): void)|null */
+    private readonly ?\Closure $observer;
+
     /**
      * @param ManagerInterface|null $search Search indexes (Loupe) to find objects by filterable string fields.
      * @param UniqueManager|null $unique Unique indexes (by default those of the storage).
      * @param bool $useIndexes Whether to use indexes at all (false: always read all objects of a class).
+     * @param (\Closure(): void)|null $interrupt Called often while a statement runs (for every object read, joined
+     *        pair, object written): throw a QueryInterruptedException in it to stop the statement, e.g. after a
+     *        maximum runtime (see timeLimit()) or when it was cancelled. What the statement wrote is rolled back, as
+     *        when it fails; a script stops there.
+     * @param (callable(Statistics): void)|null $observer Called after every statement, also a failed one, with what
+     *        it did and cost, e.g. a SlowQueryLog. An observer failing is logged and doesn't fail the statement.
      */
     public function __construct(
         private readonly ObjectStorage     $storage,
         private readonly ?ManagerInterface $search = null,
         private readonly ?UniqueManager    $unique = null,
         private readonly bool              $useIndexes = true,
+        private readonly ?\Closure         $interrupt = null,
+        ?callable                          $observer = null,
     )
     {
+        $this->observer = null === $observer ? null : $observer(...);
+    }
+
+    /**
+     * An $interrupt for the constructor: stops the statements after a runtime of $seconds, counted from now (for a
+     * script: for all of its statements together).
+     */
+    public static function timeLimit(float $seconds): \Closure
+    {
+        $deadline = microtime(true) + $seconds;
+        return static function () use ($deadline, $seconds): void {
+            if (microtime(true) > $deadline) {
+                throw new QueryInterruptedException(sprintf('The query was stopped after its maximum runtime of %g s', $seconds));
+            }
+        };
     }
 
     /**
@@ -88,12 +119,80 @@ final class Oql
      */
     public function query(string $query, array $parameters = [], bool $dryRun = false, ?int $maxRows = null): Result
     {
+        $started = microtime(true);
+        $inTransaction = $this->inTransaction() || null !== $this->storage->getActiveTransaction();
+        $kind = null;
+        $executor = null;
+        // by reference: set while the statement runs
+        $statistics = static function (int $rows, ?Throwable $error = null) use ($query, $started, $dryRun, $inTransaction, &$kind, &$executor): Statistics {
+            /** @var Executor|null $executor */
+            return new Statistics(
+                trim($query),
+                $kind,
+                (microtime(true) - $started) * 1000,
+                $executor?->objectsRead() ?? 0,
+                $rows,
+                $executor?->accessed() ?? [],
+                $dryRun,
+                $inTransaction,
+                null === $error ? null : self::message($error),
+                $error instanceof QueryInterruptedException,
+            );
+        };
+        try {
+            $result = $this->execute($query, $parameters, $dryRun, $maxRows, $kind, $executor);
+        } catch (Throwable $e) {
+            $this->observe($statistics(0, $e));
+            throw $e;
+        }
+        $result = $result->withStatistics($statistics(count($result->rows)));
+        $this->observe($result->statistics);
+        return $result;
+    }
+
+    /**
+     * Gives the statistics of a statement to the observer; an observer failing doesn't fail the statement.
+     */
+    private function observe(?Statistics $statistics): void
+    {
+        if (null === $this->observer || null === $statistics) {
+            return;
+        }
+        try {
+            ($this->observer)($statistics);
+        } catch (Throwable $e) {
+            $this->storage->getLogger()?->log(new Exception(message: 'The observer of an OQL statement failed', previous: $e));
+        }
+    }
+
+    /**
+     * Runs a statement for query().
+     *
+     * @param array<int|string, mixed> $parameters
+     * @param string|null $kind Set to the kind of statement (Statistics::$statement) once it is read.
+     * @param Executor|null $executor Set to the executor of the statement once there is one.
+     * @param-out string|null $kind
+     * @param-out Executor|null $executor
+     * @throws QueryException
+     */
+    private function execute(string $query, array $parameters, bool $dryRun, ?int $maxRows, ?string &$kind, ?Executor &$executor): Result
+    {
         $explain = self::explains($query);
         if ($explain) {
             // replaced by as many spaces, so positions in errors stay right
             $query = (string)preg_replace('/^(\s*)EXPLAIN\b/i', '$1       ', $query, 1);
         }
         $statement = Parser::parse($query);
+        $kind = match (true) {
+            $explain => 'EXPLAIN',
+            $statement instanceof TransactionControl => $statement->action,
+            $statement instanceof Select => 'SELECT',
+            $statement instanceof Insert => 'INSERT',
+            $statement instanceof Update => 'UPDATE',
+            $statement instanceof Delete => 'DELETE',
+            $statement instanceof DropAttributes => 'ALTER',
+            default => null,
+        };
         if ($statement instanceof TransactionControl) {
             if ($explain) {
                 throw new QueryException('EXPLAIN takes a SELECT');
@@ -101,7 +200,7 @@ final class Oql
             return $this->control($statement);
         }
         $planner = new Planner($parameters);
-        $executor = new Executor($this->storage, $this->search, $this->unique, $this->useIndexes);
+        $executor = new Executor($this->storage, $this->search, $this->unique, $this->useIndexes, $this->interrupt);
         if ($explain) {
             if (!$statement instanceof Select) {
                 throw new QueryException('EXPLAIN takes a SELECT');
@@ -324,6 +423,10 @@ final class Oql
     {
         if (!$wrote && $e instanceof QueryException) {
             return $e;
+        }
+        // stays recognizable as an interruption
+        if ($e instanceof QueryInterruptedException) {
+            return new QueryInterruptedException(self::message($e) . ($wrote ? '; ' . $rolledBack : ''), self::position($e), $e);
         }
         return new QueryException(self::message($e) . ($wrote ? '; ' . $rolledBack : ''), self::position($e), $e);
     }
