@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.9] - 2026-11-13
+
+The ninth release candidate of 1.0: OQL statements can be stopped (a maximum runtime, or cancelled) with what they wrote rolled back, every statement reports what it cost (time, objects read, how its objects were found), and a slow query log records the expensive ones. The viewer's console runs queries without PHP's time limit, can stop them, and shows the slow queries by query. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc8-to-100-rc9).
+
 ### Added
 - OQL *(experimental)*: running statements can be stopped (`docs/query.md`, "Maximum runtime and cancelling"). `new Oql(..., interrupt: …)` is called for every object read, joined pair and object written; a `QueryInterruptedException` thrown in it stops the statement and rolls back what it wrote. `Oql::timeLimit($seconds)` gives a maximum runtime. `OqlInterruptTest`.
 - Viewer: queries in the console run without a time limit of PHP (`set_time_limit(0)`); **Max. runtime** (seconds, empty: unlimited) stops them after that time, and **Cancel** (shown while a query runs, with the time so far) or the browser's stop button stops a running query, rolling back what it wrote. The page up to the results reaches the browser before the query runs. `tests/e2e/query-console.spec.js`.

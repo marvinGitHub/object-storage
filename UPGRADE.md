@@ -1,5 +1,11 @@
 # Upgrading
 
+## From 1.0.0-rc.8 to 1.0.0-rc.9
+
+Nothing has to be migrated. OQL *(experimental)*: the constructor of `Oql` takes `interrupt` and `observer` (both optional, after `useIndexes`; pass them by name), and `Result` has `$statistics` (`null` for a `Result` created by hand).
+
+Viewer: the query console runs a query without PHP's `max_execution_time` and sends the page up to the results before it runs; a query ends when the browser leaves the page or **Cancel** is pressed, what it wrote is rolled back. The console writes slow statements to `appData/logs/slow-queries.log` (at most about 20 MB with its rotated file).
+
 ## From 1.0.0-rc.7 to 1.0.0-rc.8
 
 Nothing has to be migrated. Check:
