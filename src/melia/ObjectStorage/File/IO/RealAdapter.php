@@ -6,6 +6,7 @@ class RealAdapter implements AdapterInterface
 {
     public function fileMTime(string $filename): int|false
     {
+        clearstatcache(true, $filename);
         return @filemtime($filename);
     }
 
@@ -110,6 +111,12 @@ class RealAdapter implements AdapterInterface
     public function fileSize(string $filename): bool|int
     {
         return @filesize($filename);
+    }
+
+    public function fileCTime(string $filename): false|int
+    {
+        clearstatcache(true, $filename);
+        return @filectime($filename);
     }
 
     public function isFile(string $filename): bool

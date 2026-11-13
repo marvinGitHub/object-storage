@@ -64,6 +64,36 @@ class IndexManagerTest extends TestCase
         return $index->search(new Request(query: $query, filter: $filter, sort: $sort, hitsPerPage: 100))->getUuids();
     }
 
+    /**
+     * An object that can't be read (here: metadata without a checksum) is an error of the index naming the cause,
+     * not only "could not be read".
+     */
+    public function testErrorsNameWhyAnObjectCouldNotBeRead(): void
+    {
+        $uuid = $this->storage->store(new Product('Chair', 'Oak', 49, []));
+        $this->storage->store(new Product('Table', 'Oak', 99, []));
+        $file = $this->storage->getFilePathMetadata($uuid);
+        $metadata = json_decode((string)file_get_contents($file), true);
+        unset($metadata['checksum']);
+        file_put_contents($file, json_encode($metadata));
+        $this->storage->clearCache();
+
+        $index = $this->search->create($this->createDefinition());
+        $index->build();
+
+        $this->assertSame(1, $index->countDocuments(), 'the others are indexed');
+        $errors = $index->getState()->errors;
+        $this->assertCount(1, $errors);
+        $this->assertStringStartsWith("$uuid: Object with uuid $uuid could not be read: The metadata of $uuid has no checksum", $errors[0]);
+
+        try {
+            $this->storage->readRaw($uuid);
+            $this->fail('no checksum');
+        } catch (\melia\ObjectStorage\Exception\ObjectLoadingFailureException $e) {
+            $this->assertInstanceOf(\melia\ObjectStorage\Exception\MissingChecksumException::class, $e->getPrevious());
+        }
+    }
+
     public function testDirectoriesAndInternalStorage(): void
     {
         $this->assertSame([], $this->search->list());

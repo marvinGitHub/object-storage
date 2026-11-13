@@ -84,6 +84,9 @@ final class DocumentBuilder
         foreach ($this->definition->fields as $field) {
             $value = static::extract($data, $field->getPathSegments(), $reserved, $follow, 0, $reservedDateTime);
             $document[$field->name] = $field->type->convert(static::dates($value, $reservedDateTime));
+            foreach ($field->patternAttributes() as $attribute => $pattern) {
+                $document[$attribute] = $pattern->terms($document[$field->name]);
+            }
         }
 
         $uuids = array_keys($referenced);

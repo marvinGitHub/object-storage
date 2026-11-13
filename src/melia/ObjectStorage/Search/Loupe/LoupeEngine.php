@@ -55,7 +55,28 @@ final class LoupeEngine implements EngineInterface
             } catch (Throwable $e) {
                 throw new InvalidIndexDefinitionException(message: sprintf('Loupe doesn\'t accept the field name "%s".', $field->name), previous: $e);
             }
+            foreach (array_keys($field->patternAttributes()) as $attribute) {
+                try {
+                    Configuration::validateAttributeName($attribute);
+                } catch (Throwable $e) {
+                    throw new InvalidIndexDefinitionException(message: sprintf('Loupe doesn\'t accept the attribute "%s" of the pattern index of the field "%s": use a shorter field name.', $attribute, $field->name), previous: $e);
+                }
+            }
         }
+    }
+
+    /**
+     * The attributes of the pattern indexes of the fields, see PatternIndex.
+     *
+     * @return list<string>
+     */
+    public static function patternAttributes(Definition $definition): array
+    {
+        $attributes = [];
+        foreach ($definition->fields as $field) {
+            array_push($attributes, ...array_keys($field->patternAttributes()));
+        }
+        return $attributes;
     }
 
     public function filterAttributes(string $filter): array
@@ -146,7 +167,7 @@ final class LoupeEngine implements EngineInterface
             ->withSearchableAttributes($definition->fieldNames(static fn(Field $field): bool => $field->searchable))
             // the UUID can always be filtered, e.g. to restrict a search to known objects; the expiration to find
             // expired objects; the referenced objects to find the documents depending on them
-            ->withFilterableAttributes(['uuid', 'expiresAt', DocumentBuilder::ATTRIBUTE_REFERENCED, ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable)])
+            ->withFilterableAttributes(['uuid', 'expiresAt', DocumentBuilder::ATTRIBUTE_REFERENCED, ...$definition->fieldNames(static fn(Field $field): bool => $field->filterable), ...static::patternAttributes($definition)])
             ->withSortableAttributes($definition->fieldNames(static fn(Field $field): bool => $field->sortable));
 
         if ([] !== $definition->languages) {

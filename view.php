@@ -10,6 +10,7 @@ use melia\ObjectStorage\Configuration\LockSettings;
 use melia\ObjectStorage\Configuration\Registry as ConfigurationRegistry;
 use melia\ObjectStorage\Strategy\Policy\ChildDeletion;
 use melia\ObjectStorage\Transfer\ObjectTransfer;
+use melia\ObjectStorage\Transfer\RawObject;
 use melia\ObjectStorage\Unique\Definition as UniqueDefinition;
 use melia\ObjectStorage\Unique\Manager as UniqueManager;
 use melia\ObjectStorage\Unique\PathIndexes as UniquePathIndexes;
@@ -42,6 +43,7 @@ use melia\ObjectStorage\Search\Index\Definition;
 use melia\ObjectStorage\Search\Index\IndexInterface;
 use melia\ObjectStorage\Search\Index\Manager;
 use melia\ObjectStorage\Search\Loupe\LoupeEngine;
+use melia\ObjectStorage\Search\PatternIndex;
 use melia\ObjectStorage\Search\Request;
 use Loupe\Loupe\LoupeFactory;
 use melia\ObjectStorage\Graph\Export\Dot\DotExporter;
@@ -224,6 +226,13 @@ $describeIndex = static function (IndexInterface $index): array {
     ];
 };
 
+/* the pattern indexes a field can have, for the form */
+$patternIndexes = [
+    ['value' => PatternIndex::TRIE->value, 'label' => 'prefix', 'title' => "trie: the beginnings of the values, for LIKE 'Ho%'"],
+    ['value' => PatternIndex::REVERSE_TRIE->value, 'label' => 'suffix', 'title' => "reverse trie: the ends of the values, for LIKE '%son'"],
+    ['value' => PatternIndex::NGRAM->value, 'label' => 'n-gram', 'title' => "n-grams: the parts of 3 characters, for LIKE '%test%' and CONTAINS"],
+];
+
 /* field suggestions from a stored object of the class: path => type */
 $suggestFields = static function (ObjectStorage $storage, string $className): array {
     foreach ($storage->list($className) as $uuid) {
@@ -278,6 +287,7 @@ $definitionFromRequest = static function (array $input): Definition {
             'searchable' => isset($field['searchable']),
             'filterable' => isset($field['filterable']),
             'sortable' => isset($field['sortable']),
+            'patterns' => array_values(array_filter((array)($field['patterns'] ?? []), 'is_string')),
         ]);
     }
 
@@ -1027,12 +1037,15 @@ try {
 
                 $uuidNew = $storage->getNextAvailableUuid();
 
-                $data = file_get_contents($storage->getFilePathData($uuid));
+                // read as stored, verified by its checksum: a damaged record isn't copied
+                $raw = $storage->readRaw($uuid);
+                $data = $raw->data;
 
                 // the copied metadata must name the duplicate, otherwise later metadata updates of the
-                // duplicate (e.g. its lifetime) would be written to the original
-                $metadata = Metadata::createFromArray(json_decode(file_get_contents($storage->getFilePathMetadata($uuid)), true, 512, JSON_THROW_ON_ERROR));
+                // duplicate (e.g. its lifetime) would be written to the original; the checksum of the data written
+                $metadata = clone $raw->metadata;
                 $metadata->setUuid($uuidNew);
+                $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $data));
 
                 // written without store(): the constraints (e.g. unique values) are checked explicitly; a
                 // duplicate of an object with unique values is refused
@@ -1174,7 +1187,14 @@ try {
                 'linkCandidates' => $linkCandidates,
                 'reservedDateTime' => $reservedDateTime,
                 'fixedOffsets' => (object)$fixedOffsets,
-                'checksum' => $metadata?->getChecksum() ?? '',
+                // metadata without a checksum (MissingChecksumException) is shown all the same
+                'checksum' => (static function () use ($metadata): string {
+                    try {
+                        return $metadata?->getChecksum() ?? '';
+                    } catch (Throwable) {
+                        return '';
+                    }
+                })(),
                 'algorithm' => $metadata?->getChecksumAlgorithm() ?? '',
                 'isLocked' => $isLocked,
                 'lifetime' => $storage->getLifetime($uuid) ?? 'unlimited',
@@ -1274,46 +1294,45 @@ try {
                     $lockAcquired = false;
                     try {
                         $storage = $buildStorage($storageDir);
+                        $storage->getLockAdapter()->acquireExclusiveLock($uuid);
+                        $lockAcquired = true;
+
+                        // as on disk now, under the lock (also metadata the object can't be read with, e.g. without
+                        // a checksum: saving repairs it)
+                        $storage->clearCache();
                         $metadata = $storage->loadMetadata($uuid);
                         if (null === $metadata) {
                             throw new RuntimeException('No metadata found for UUID: ' . $uuid);
                         }
 
-                        $storage->getLockAdapter()->acquireExclusiveLock($uuid);
-                        $lockAcquired = true;
+                        // changed by someone else since the page was loaded: not overwritten
+                        $shownRevision = isset($_POST['revision']) && is_numeric($_POST['revision']) ? (int)$_POST['revision'] : null;
+                        if (null !== $shownRevision && $shownRevision !== $metadata->getRevision()) {
+                            throw new RuntimeException(sprintf('The object was changed in the meantime (revision %d, the page showed %d): reload it and apply the changes again.', $metadata->getRevision(), $shownRevision));
+                        }
 
-                        // written without store(): the constraints (e.g. unique values) are checked explicitly
-                        $finalizeConstraints = $storage->checkConstraints($uuid, $metadata->getClassName(), $json, $metadata->getReservedReferenceName());
-                        $written = false;
+                        // written as storing does: both files as a group (crash-safe), the constraints (e.g. unique
+                        // values) checked, a new revision, modified now; the search indexes are detached meanwhile,
+                        // so only those chosen in the form are updated (below)
+                        $metadata = clone $metadata;
+                        $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
+                        $metadata->setRevision($metadata->getRevision() + 1);
+                        $metadata->setTimestampModification(microtime(true));
+                        $search = $searchFor($storage);
+                        $search?->detach();
                         try {
-                            $dataWritten = false !== file_put_contents($storage->getFilePathData($uuid), $json);
-
-                            if (!$dataWritten) {
-                                throw new RuntimeException('Unable to write object data.');
-                            }
-
-                            $metadata->setChecksum(md5($json));
-                            $metadata->setChecksumAlgorithm('md5');
-
-                            $metadataJson = json_encode($metadata, JSON_THROW_ON_ERROR);
-                            $metadataWritten = false !== file_put_contents($storage->getFilePathMetadata($uuid), $metadataJson);
-
-                            if (!$metadataWritten) {
-                                throw new RuntimeException('Unable to write metadata.');
-                            }
-                            $written = true;
+                            $storage->writeRaw(new RawObject($uuid, $json, $metadata), overwrite: true);
                         } finally {
-                            $finalizeConstraints($written);
+                            $search?->attach();
                         }
 
                         $success = true;
 
-                        // written without the storage: the chosen search indexes are notified explicitly; without
-                        // a choice in the form (e.g. no indexes when the page was loaded), all of the class
+                        // the chosen search indexes are notified explicitly; without a choice in the form (e.g. no
+                        // indexes when the page was loaded), all of the class
                         try {
                             $storage->getLockAdapter()->releaseLock($uuid);
                             $lockAcquired = false;
-                            $search = $searchFor($storage);
                             if (null !== $search) {
                                 $chosen = isset($_POST['indexSelection']) ? array_map('strval', (array)($_POST['indexes'] ?? [])) : null;
                                 $updatedIndexes = $search->notifyChanged($uuid, $metadata->getClassName(), $chosen);
@@ -1443,6 +1462,41 @@ try {
                 'message' => $_GET['message'] ?? null,
             ]);
             break;
+        case 'index-errors':
+            // the objects an index couldn't index ("<uuid>: <reason>"), with their classes as stored now
+            $storageDir = $_GET['storage'] ?? null;
+            $name = (string)($_GET['name'] ?? '');
+            $storage = $buildStorage($storageDir);
+            $errors = [];
+            $error = null;
+            try {
+                $search = $searchFor($storage) ?? throw new RuntimeException('Search is not available.');
+                foreach ($search->get($name)->getState()->errors as $text) {
+                    $uuid = preg_match('/^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}): (.*)$/s', (string)$text, $match) ? $match[1] : null;
+                    $className = null;
+                    if (null !== $uuid) {
+                        try {
+                            $className = $storage->exists($uuid) ? $storage->loadMetadata($uuid)?->getClassName() : null;
+                        } catch (Throwable $e) {
+                            $logger->error($e);
+                        }
+                    }
+                    $errors[] = ['uuid' => $uuid, 'className' => $className, 'reason' => null === $uuid ? (string)$text : $match[2]];
+                }
+            } catch (Throwable $e) {
+                $logger->error($e);
+                $error = $e->getMessage();
+            }
+
+            echo $twig->render('index-errors.html', [
+                'storage' => $storageDir,
+                'searchAvailable' => $searchAvailable,
+                'name' => $name,
+                'errors' => $errors,
+                'maxErrors' => Index::MAX_ERRORS,
+                'error' => $error,
+            ]);
+            break;
         case 'index-edit':
             // create (no name) or edit an index; with "suggest", the fields are suggested from a stored object
             $storageDir = $_GET['storage'] ?? null;
@@ -1507,6 +1561,7 @@ try {
                 'languages' => implode(', ', $definition['languages'] ?? []),
                 'fields' => $fields,
                 'types' => array_map(static fn(FieldType $type): string => $type->value, FieldType::cases()),
+                'patternIndexes' => $patternIndexes,
                 'engines' => $engineNames,
                 'engine' => $definition['engine'] ?? null,
                 'index' => $described,
@@ -1565,10 +1620,12 @@ try {
                         'searchable' => isset($field['searchable']),
                         'filterable' => isset($field['filterable']),
                         'sortable' => isset($field['sortable']),
+                        'patterns' => array_values(array_filter((array)($field['patterns'] ?? []), 'is_string')),
                         'unique' => isset($field['unique']),
                         'uniqueIgnoreCase' => isset($field['uniqueIgnoreCase']),
                     ], $_POST['fields'] ?? [])),
                     'types' => array_map(static fn(FieldType $type): string => $type->value, FieldType::cases()),
+                    'patternIndexes' => $patternIndexes,
                     'engines' => $engineNames,
                     // an edited index doesn't post its engine (it can't be changed)
                     'engine' => $_POST['engine'] ?? (!$isNew && $search->has((string)($_POST['name'] ?? '')) ? $search->get((string)$_POST['name'])->getEngineName() : null),

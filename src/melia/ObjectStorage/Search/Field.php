@@ -27,6 +27,9 @@ final readonly class Field
      * @param bool $searchable Whether the full-text search covers the field.
      * @param bool $filterable Whether the field can be used in filters (and facets).
      * @param bool $sortable Whether results can be sorted by the field.
+     * @param PatternIndex[] $patterns The indexes for patterns (LIKE, CONTAINS) of a filterable field of strings:
+     *        TRIE for prefixes ('Ho%'), REVERSE_TRIE for suffixes ('%son'), NGRAM for parts anywhere ('%test%');
+     *        without, a pattern is matched against all distinct values of the field.
      * @throws InvalidIndexDefinitionException
      */
     public function __construct(
@@ -36,6 +39,7 @@ final readonly class Field
         public bool      $searchable = true,
         public bool      $filterable = false,
         public bool      $sortable = false,
+        public array     $patterns = [],
     )
     {
         if (!preg_match(self::NAME_PATTERN, $name) || strlen($name) > self::MAX_NAME_LENGTH) {
@@ -58,6 +62,21 @@ final readonly class Field
         if ($sortable && $type->isList()) {
             throw new InvalidIndexDefinitionException(sprintf('The field "%s" is a list and can\'t be sortable.', $name));
         }
+
+        if ([] !== $patterns) {
+            if (!array_is_list($patterns) || !array_all($patterns, static fn(mixed $pattern): bool => $pattern instanceof PatternIndex)) {
+                throw new InvalidIndexDefinitionException(sprintf('The patterns of the field "%s" must be a list of %s.', $name, PatternIndex::class));
+            }
+            if (count($patterns) !== count(array_unique(array_map(static fn(PatternIndex $pattern): string => $pattern->value, $patterns)))) {
+                throw new InvalidIndexDefinitionException(sprintf('The field "%s" lists a pattern index twice.', $name));
+            }
+            if (!in_array($type, [FieldType::STRING, FieldType::STRING_ARRAY], true)) {
+                throw new InvalidIndexDefinitionException(sprintf('Pattern indexes need a field of strings, "%s" is of the type %s.', $name, $type->value));
+            }
+            if (!$filterable) {
+                throw new InvalidIndexDefinitionException(sprintf('Pattern indexes need a filterable field, "%s" isn\'t one.', $name));
+            }
+        }
     }
 
     /**
@@ -68,9 +87,28 @@ final readonly class Field
         return Path::parse($this->path);
     }
 
+    /**
+     * The attributes of the pattern indexes of the field, e.g. ["name__ngram" => PatternIndex::NGRAM].
+     *
+     * @return array<string, PatternIndex>
+     */
+    public function patternAttributes(): array
+    {
+        $attributes = [];
+        foreach ($this->patterns as $pattern) {
+            $attributes[$pattern->attribute($this->name)] = $pattern;
+        }
+        return $attributes;
+    }
+
+    public function hasPattern(PatternIndex $pattern): bool
+    {
+        return in_array($pattern, $this->patterns, true);
+    }
+
     public function toArray(): array
     {
-        return [
+        $array = [
             'name' => $this->name,
             'path' => $this->path,
             'type' => $this->type->value,
@@ -78,6 +116,11 @@ final readonly class Field
             'filterable' => $this->filterable,
             'sortable' => $this->sortable,
         ];
+        // only with patterns: definitions stored before compare equal
+        if ([] !== $this->patterns) {
+            $array['patterns'] = array_map(static fn(PatternIndex $pattern): string => $pattern->value, $this->patterns);
+        }
+        return $array;
     }
 
     /**
@@ -97,6 +140,10 @@ final readonly class Field
             searchable: (bool)($data['searchable'] ?? true),
             filterable: (bool)($data['filterable'] ?? false),
             sortable: (bool)($data['sortable'] ?? false),
+            patterns: array_map(static function (mixed $pattern) use ($data): PatternIndex {
+                $index = is_string($pattern) ? PatternIndex::tryFrom($pattern) : ($pattern instanceof PatternIndex ? $pattern : null);
+                return $index ?? throw new InvalidIndexDefinitionException(sprintf('Invalid pattern index "%s" for field "%s": use %s.', is_scalar($pattern) ? $pattern : get_debug_type($pattern), $data['name'] ?? '', implode(', ', array_map(static fn(PatternIndex $case): string => $case->value, PatternIndex::cases()))));
+            }, array_values((array)($data['patterns'] ?? []))),
         );
     }
 }

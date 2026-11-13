@@ -64,6 +64,21 @@ class OqlTest extends TestCase
         $this->assertContains('c.title', $result->columns);
     }
 
+    public function testParenthesesGroupConditions(): void
+    {
+        // AND binds tighter than OR: Apple, and Banana only if it's cheaper than 2
+        $this->assertSame([['Apple']], $this->query("SELECT name FROM Product WHERE name = 'Apple' OR name = 'Banana' AND price < 2 ORDER BY name"));
+        // grouped: Apple or Banana, either cheaper than 2
+        $this->assertSame([['Apple']], $this->query("SELECT name FROM Product WHERE (name = 'Apple' OR name = 'Banana') AND price < 2 ORDER BY name"));
+        $this->assertSame([['Apple'], ['Banana']], $this->query("SELECT name FROM Product WHERE (name = 'Apple' OR name = 'Banana') AND price <= 2 ORDER BY name"));
+        // nested and negated groups
+        $this->assertSame(
+            [['Banana'], ['Chair']],
+            $this->query("SELECT name FROM Product WHERE NOT (name = 'Apple' OR (price IS NULL AND name = 'ÄPFEL')) AND ((price > 1)) ORDER BY name")
+        );
+        $this->assertSame([['Chair']], $this->query("SELECT name FROM Product WHERE (active = false OR (price > 40 AND (name LIKE 'C%'))) ORDER BY name"));
+    }
+
     public function testTheAliasAloneIsTheUuid(): void
     {
         $this->assertSame([[$this->uuids['apple']]], $this->query("SELECT p FROM Product p WHERE p.name = 'Apple'"));

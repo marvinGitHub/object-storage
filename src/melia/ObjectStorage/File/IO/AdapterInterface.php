@@ -55,6 +55,20 @@ interface AdapterInterface
     public function fileSize(string $filename): bool|int;
 
     /**
+     * When the content of a file was written last (seconds since the epoch), false if unknown.
+     *
+     * @phpstan-impure the filesystem can change between two calls
+     */
+    public function fileMTime(string $filename): false|int;
+
+    /**
+     * When a file was created (Windows) or its inode changed last (Unix), false if unknown.
+     *
+     * @phpstan-impure the filesystem can change between two calls
+     */
+    public function fileCTime(string $filename): false|int;
+
+    /**
      * @phpstan-impure the filesystem can change between two calls
      */
     public function isDir(string $filename): bool;

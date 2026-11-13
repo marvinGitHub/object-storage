@@ -93,7 +93,7 @@ Keywords ignore case; `--` starts a comment up to the end of the line, `/* … *
 | dates | `NOW()`, `DATETIME(x [, zone])`, `DATE(x [, zone])`, `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND(x [, zone])`, `DATE_ADD(x, amount, unit)`, `DATE_SUB(x, amount, unit)`, see [Dates](#dates) |
 | aggregates | `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM([DISTINCT] x)`, `AVG`, `MIN`, `MAX` |
 
-The precedence of the operators, from the lowest, is that of SQLite: `OR`, `AND`, `NOT`, `= != IS IN LIKE REGEXP BETWEEN`, `< <= > >=`, `+ -`, `* / % DIV`, `||`, unary `-`.
+The precedence of the operators, from the lowest, is that of SQLite: `OR`, `AND`, `NOT`, `= != IS IN LIKE REGEXP BETWEEN`, `< <= > >=`, `+ -`, `* / % DIV`, `||`, unary `-`. Parentheses group conditions and calculations, nested as deep as needed: `WHERE (name = 'Apple' OR name = 'Banana') AND NOT (price > 2 OR (price IS NULL AND active = false))`.
 
 `LIKE` matches the whole value: `%` any characters, `_` one character, a backslash takes the next character as it is (`'50\%'`); it ignores case, of all letters (`'äp%'` matches `ÄPFEL`).
 
@@ -271,6 +271,7 @@ The caches of the storage are bounded: `ObjectStorage` and configurations of typ
 | `path = 12`, `IN (…)`, `<`, `<=`, `>`, `>=`, `BETWEEN` with numbers | a filterable `NUMBER` field: `price > 10`, `10 < price`, `price BETWEEN 2 AND 30` |
 | the same with dates (parameters) or texts that are dates | a filterable `DATE` field: `createdAt >= '2026-01-01'`, `createdAt BETWEEN :from AND :to` |
 | `path = TRUE`, `= FALSE` (`= 1`, `= 0`) | a filterable `BOOLEAN` field |
+| `path LIKE 'pattern'` | a filterable `STRING` field with a [pattern index](search.md#pattern-indexes-trie-reverse-trie-n-grams) that narrows the pattern down: `TRIE` for `'Ho%'`, `REVERSE_TRIE` for `'%son'`, `NGRAM` for `'%test%'`; the pattern needs a character no number has (not only digits, `.`, `e`, `+`, `-`: OQL writes 2.0 as `2.0`, the field has `2`) |
 
 A search index is used if it is of the class, built, has no pending changes, and is passed as `new Oql($storage, $searchManager)`; several conditions are searched together (`price > 10 AND active = TRUE AND category = 'x'`). The values are literals or parameters, the path that of a field (written the same way: `friends[0].name`).
 
@@ -290,7 +291,7 @@ $oql->query("EXPLAIN SELECT * FROM Product WHERE price BETWEEN 2 AND 30 AND acti
 **The one assumption**: a `NUMBER` field holds numbers (or texts that are numbers), a `DATE` field dates (or texts that are dates) — as suggested fields do. A field converting values of the other kind (a date in a number field becomes its seconds, a number in a date field is taken as seconds) can miss objects: in OQL any number is less than any date, so `price > 2000000000` is true for a date in `price` and `createdAt < '2020-01-01'` for a number in `createdAt`, but not in the index. Turn indexes off for such data (`useIndexes: false`).
 
 An index is only used when it names *every* object the condition can be true for; the whole condition is still checked on each object it names, so results are the same with or without indexes (`new Oql($storage, useIndexes: false)` to compare). That's why these aren't looked up and read all objects:
-- `OR`, `NOT`, `!=`, `NOT IN`, `LIKE`, `REGEXP`, `IS NULL`; comparisons of texts (`name < 'M'`);
+- `OR`, `NOT`, `!=`, `NOT IN`, `NOT LIKE`, `REGEXP`, `IS NULL`; `LIKE` without a fitting pattern index, or on a path with `*`; comparisons of texts (`name < 'M'`);
 - a number given as text (`price > '10'`) and texts that look like numbers for text fields (`'12'` equals the number 12 in OQL, the index keeps them apart); dates compared with text fields;
 - comparisons on paths with `*` other than `=` and `IN` on texts;
 - search indexes with pending changes, or naming more than 999 objects.

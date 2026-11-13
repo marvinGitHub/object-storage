@@ -73,7 +73,7 @@
                 <small class="text-muted">{{ index.progress.percent }} %</small>
                 {% endif %}
                 {% if index.errors is not empty %}
-                <span class="badge bg-danger" title="{{ index.errors|join('\n') }}">{{ index.errors|length }} errors</span>
+                <a class="badge bg-danger text-decoration-none" href="?action=index-errors&storage={{ storage|url_encode }}&name={{ index.name|url_encode }}" title="{{ index.errors|join('\n') }}">{{ index.errors|length }} errors</a>
                 {% endif %}
             </td>
             <td class="text-end">{{ index.documents is null ? '–' : index.documents|number_format(0, '.', ' ') }}</td>
@@ -86,6 +86,7 @@
                     {% if field.searchable %}<i class="bi bi-search" title="searchable"></i>{% endif %}
                     {% if field.filterable %}<i class="bi bi-funnel" title="filterable"></i>{% endif %}
                     {% if field.sortable %}<i class="bi bi-sort-down" title="sortable"></i>{% endif %}
+                    {% if field.patterns|default([]) is not empty %}<i class="bi bi-asterisk" title="pattern indexes: {{ field.patterns|join(', ') }}"></i>{% endif %}
                 </span>
                 {% endfor %}
             </td>

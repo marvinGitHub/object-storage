@@ -218,7 +218,7 @@ final class Executor
      *
      * Also when it was created and modified (seconds since 1970, for CREATED() and MODIFIED()).
      *
-     * @return array{uuid: string, data: array, reserved: string, dateTime: string, created: float, modified: float}|null
+     * @return array{uuid: string, data: array, reserved: string, dateTime: string, created: ?float, modified: ?float}|null
      */
     public static function objectOf(RawObject $raw): ?array
     {

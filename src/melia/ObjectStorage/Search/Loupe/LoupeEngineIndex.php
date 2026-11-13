@@ -18,6 +18,7 @@ use melia\ObjectStorage\Search\Exception\UnsupportedQueryException;
 use melia\ObjectStorage\Search\Field;
 use melia\ObjectStorage\Search\FieldType;
 use melia\ObjectStorage\Search\Index\Definition;
+use melia\ObjectStorage\Search\PatternIndex;
 use melia\ObjectStorage\Search\Hit;
 use melia\ObjectStorage\Search\Request;
 use melia\ObjectStorage\Search\Result;
@@ -36,6 +37,9 @@ final class LoupeEngineIndex implements EngineIndexInterface
 
     /** the most distinct values of a field a pattern is matched against */
     public const int MAX_PATTERN_VALUES = 10000;
+
+    /** the most parts of a pattern looked up in a pattern index (any of them narrows it down) */
+    public const int MAX_PATTERN_TERMS = 16;
 
     /** the documents read at once for the values of a field */
     private const int BROWSE_BATCH = 1000;
@@ -250,6 +254,9 @@ final class LoupeEngineIndex implements EngineIndexInterface
      * characters themselves) and "name CONTAINS 'om'" (the same as LIKE '%om%'), each also with NOT, ignoring case.
      * Each becomes an IN condition with the distinct values of the field matching the pattern, read as the values
      * of a facet: for filterable string fields and lists of strings with at most MAX_PATTERN_VALUES values.
+     * With pattern indexes of the field (see PatternIndex), only the values of the documents having the parts of the
+     * pattern are read (at most MAX_PATTERN_VALUES of them), or the pattern is a condition on the parts itself where
+     * they prove it ('Ho%' with a trie: "name__trie IN ('ho')").
      *
      * @throws SearchException
      */
@@ -289,8 +296,19 @@ final class LoupeEngineIndex implements EngineIndexInterface
             $regex = 'CONTAINS' === $operator->value
                 ? '/' . preg_quote((string)$literal->value, '/') . '/iu'
                 : static::likeToRegex((string)$literal->value);
-            $values[$name] ??= $this->distinctValues($name);
-            $matching = array_values(array_filter($values[$name], static fn(string $value): bool => 1 === preg_match($regex, $value)));
+
+            // with pattern indexes: a condition on the parts, or the values of the documents having them
+            [$exact, $narrowing] = $this->patternConditions($name, 'CONTAINS' === $operator->value
+                ? PatternIndex::tokenizeContains((string)$literal->value)
+                : PatternIndex::tokenize((string)$literal->value));
+            if (null !== $exact && !$negated) {
+                $replacements[] = [$attribute->position, static::endOfString($filter, $literal->position), '(' . $exact . ')'];
+                $i = $j + 1;
+                continue;
+            }
+
+            $values[$name][(string)$narrowing] ??= $this->distinctValues($name, $narrowing);
+            $matching = array_values(array_filter($values[$name][(string)$narrowing], static fn(string $value): bool => 1 === preg_match($regex, $value)));
             // the empty string is no value of a facet; lists of strings don't keep it
             $empty = 'uuid' !== $name && FieldType::STRING === $this->fieldOf($name)->type && 1 === preg_match($regex, '');
 
@@ -319,6 +337,38 @@ final class LoupeEngineIndex implements EngineIndexInterface
         return $filter;
     }
 
+    /**
+     * The conditions on the attributes of the pattern indexes of a field for a pattern: one equal to the pattern
+     * (null if none is), and one naming the documents that can match (null if the indexes can't tell), see
+     * PatternIndex::candidates().
+     *
+     * @param list<string> $tokens The pattern, see PatternIndex::tokenize().
+     * @return array{0: string|null, 1: string|null}
+     */
+    private function patternConditions(string $name, array $tokens): array
+    {
+        $field = $this->fieldOf($name);
+        if (null === $field || !$field->filterable) {
+            return [null, null];
+        }
+        $quote = static fn(string $value): string => "'" . str_replace("'", "''", $value) . "'";
+        $conditions = [];
+        foreach ($field->patternAttributes() as $attribute => $pattern) {
+            $candidates = $pattern->candidates($tokens);
+            if (null === $candidates) {
+                continue;
+            }
+            if ($candidates['exact']) {
+                return [sprintf('%s IN (%s)', $attribute, $quote($candidates['terms'][0])), null];
+            }
+            // the document has every part (one condition per part: the values of a list are separate)
+            foreach (array_slice($candidates['terms'], 0, self::MAX_PATTERN_TERMS) as $term) {
+                $conditions[] = sprintf('%s IN (%s)', $attribute, $quote($term));
+            }
+        }
+        return [null, [] === $conditions ? null : implode(' AND ', array_values(array_unique($conditions)))];
+    }
+
     private function fieldOf(string $name): ?Field
     {
         foreach ($this->definition->fields as $candidate) {
@@ -333,10 +383,11 @@ final class LoupeEngineIndex implements EngineIndexInterface
      * The distinct values of a field (of lists: of their elements), not empty, read from the documents: Loupe's
      * facets split values at commas (loupe/loupe 1.1).
      *
+     * @param string|null $filter Only of the documents matching it, e.g. having the parts of a pattern.
      * @return string[]
      * @throws SearchException
      */
-    private function distinctValues(string $name): array
+    private function distinctValues(string $name, ?string $filter = null): array
     {
         $field = $this->fieldOf($name);
         if ('uuid' !== $name) {
@@ -353,11 +404,14 @@ final class LoupeEngineIndex implements EngineIndexInterface
         try {
             do {
                 // browsing isn't limited to the maximum of hits of a search
-                $hits = $this->getLoupe()->browse(BrowseParameters::create()
+                $parameters = BrowseParameters::create()
                     ->withAttributesToRetrieve([$name])
                     ->withLimit(self::BROWSE_BATCH)
-                    ->withOffset($offset)
-                )->getHits();
+                    ->withOffset($offset);
+                if (null !== $filter) {
+                    $parameters = $parameters->withFilter($filter);
+                }
+                $hits = $this->getLoupe()->browse($parameters)->getHits();
                 foreach ($hits as $hit) {
                     foreach ((array)($hit[$name] ?? []) as $value) {
                         if (is_string($value) && '' !== $value) {
@@ -366,7 +420,9 @@ final class LoupeEngineIndex implements EngineIndexInterface
                     }
                 }
                 if (count($values) > self::MAX_PATTERN_VALUES) {
-                    throw new SearchException(sprintf('"%s" has more than %d distinct values: too many for LIKE and CONTAINS, search the full text instead.', $name, self::MAX_PATTERN_VALUES));
+                    throw new SearchException(null === $filter
+                        ? sprintf('"%s" has more than %d distinct values: too many for LIKE and CONTAINS, add a pattern index to the field (see %s) or search the full text instead.', $name, self::MAX_PATTERN_VALUES, PatternIndex::class)
+                        : sprintf('More than %d distinct values of "%s" can match the pattern: too many for LIKE and CONTAINS, use a longer pattern.', self::MAX_PATTERN_VALUES, $name));
                 }
                 $offset += self::BROWSE_BATCH;
             } while (self::BROWSE_BATCH === count($hits));
@@ -453,7 +509,7 @@ final class LoupeEngineIndex implements EngineIndexInterface
         foreach ($result->getHits() as $hit) {
             $formatted = $hit['_formatted'] ?? [];
             $score = $hasScore && isset($hit['_rankingScore']) ? (float)$hit['_rankingScore'] : null;
-            $document = array_diff_key($hit, array_flip(self::HIT_ATTRIBUTES));
+            $document = array_diff_key($hit, array_flip(self::HIT_ATTRIBUTES), array_flip(LoupeEngine::patternAttributes($this->definition)));
             $uuid = (string)$document['uuid'];
             unset($document['uuid']);
             $document = $this->withDates($document);

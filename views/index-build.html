@@ -31,7 +31,8 @@
     </div>
 
     <div id="errors-wrapper" class="hidden">
-        <h6>Objects that couldn't be indexed (the last 20)</h6>
+        <h6>Objects that couldn't be indexed (the last 20)
+            <a class="small fw-normal ms-2" href="?action=index-errors&storage={{ storage|url_encode }}&name={{ index.name|default('')|url_encode }}">with their classes</a></h6>
         <ul id="errors" class="small font-monospace"></ul>
     </div>
 

@@ -1,0 +1,59 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<div>
+    {% embed 'page-header.html' with {crumbs: [
+        {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+        {label: 'Search indexes', href: '?action=indexes&storage=' ~ storage|url_encode},
+        {label: name, href: '?action=index-edit&storage=' ~ storage|url_encode ~ '&name=' ~ name|url_encode, code: true},
+        {label: 'Errors'},
+    ]} %}
+        {% block title %}Errors of search index <code>{{ name }}</code>{% endblock %}
+        {% block actions %}
+        <a class="btn btn-outline-secondary btn-sm" href="?action=index-build&storage={{ storage|url_encode }}&name={{ name|url_encode }}&start=1"><i class="bi bi-arrow-repeat"></i> Rebuild</a>
+        {% endblock %}
+    {% endembed %}
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    {% if errors is empty %}
+    <div class="alert alert-success"><i class="bi bi-check-circle"></i> No errors: every object was indexed.</div>
+    {% else %}
+    <p class="text-muted small">
+        The objects the last builds and syncs couldn't index (they aren't found by searches until they are indexed
+        again), at most the last {{ maxErrors }}. A rebuild starts the list anew; an object is indexed again when it
+        changes. The class is that of the object as stored now.
+    </p>
+    <div class="table-responsive">
+    <table class="table table-sm align-middle" id="index-errors">
+        <thead>
+        <tr>
+            <th>UUID</th>
+            <th>Class</th>
+            <th>Reason</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for e in errors %}
+        <tr>
+            <td class="text-nowrap">
+                {% if e.uuid %}
+                <a class="uuid font-monospace" href="?action=view-record&storage={{ storage|url_encode }}&uuid={{ e.uuid|url_encode }}">{{ e.uuid }}</a>
+                {% else %}
+                <span class="text-muted">–</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if e.className %}<code>{{ e.className }}</code>
+                {% elseif e.uuid %}<span class="text-muted" title="The object doesn't exist anymore">not found</span>
+                {% else %}<span class="text-muted">–</span>{% endif %}
+            </td>
+            <td class="small font-monospace text-break" style="min-width: 16rem">{{ e.reason }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock body %}

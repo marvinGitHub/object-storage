@@ -59,7 +59,7 @@ flowchart TD
 
 - `storeObject()` is called once per object of the graph; referenced objects are stored first, so an object never refers to one that isn't stored. Its lock is taken only then, so no more than two locks are held at once.
 - The data file is only written if the data changed (checksum); otherwise only the metadata, e.g. a new lifetime.
-- Before the data is written, `checkConstraints()` (`Constraint\ConstraintsTrait`) asks every registered constraint, e.g. a unique index, with the data as it will be stored; a violation stops the write. The callback it returns runs after the write, successful or not, so a constraint can keep or release what it reserved. `writeRaw()` does the same; code writing object files itself (like the viewer when editing a record) has to call it as well.
+- Before the data is written, `checkConstraints()` (`Constraint\ConstraintsTrait`) asks every registered constraint, e.g. a unique index, with the data as it will be stored; a violation stops the write. The callback it returns runs after the write, successful or not, so a constraint can keep or release what it reserved. `writeRaw()` does the same (the viewer saves edited records with it); code writing object files itself has to call it as well.
 
 ## Deleting
 

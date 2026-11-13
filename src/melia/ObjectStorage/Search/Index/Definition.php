@@ -65,6 +65,15 @@ final readonly class Definition
             $byName[$field->name] = $field;
         }
 
+        // the attributes of pattern indexes ("name__ngram") are attributes of the documents too
+        foreach ($byName as $field) {
+            foreach (array_keys($field->patternAttributes()) as $attribute) {
+                if (isset($byName[$attribute]) || in_array($attribute, self::RESERVED_ATTRIBUTES, true)) {
+                    throw new InvalidIndexDefinitionException(sprintf('The field "%s" has the name of the pattern index of the field "%s".', $attribute, $field->name));
+                }
+            }
+        }
+
         foreach ($languages as $language) {
             if (!is_string($language) || !preg_match('/^[a-z]{2}$/', $language)) {
                 throw new InvalidIndexDefinitionException(sprintf('Invalid language "%s": use ISO 639-1 codes such as "de".', $language));

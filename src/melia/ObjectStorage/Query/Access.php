@@ -10,12 +10,14 @@ use melia\ObjectStorage\Query\Ast\Binary;
 use melia\ObjectStorage\Query\Ast\BoundColumn;
 use melia\ObjectStorage\Query\Ast\Expr;
 use melia\ObjectStorage\Query\Ast\InList;
+use melia\ObjectStorage\Query\Ast\Like;
 use melia\ObjectStorage\Query\Ast\Literal;
 use melia\ObjectStorage\Query\Ast\Source;
 use melia\ObjectStorage\Search\Field;
 use melia\ObjectStorage\Search\FieldType;
 use melia\ObjectStorage\Search\Index\IndexInterface;
 use melia\ObjectStorage\Search\Index\ManagerInterface;
+use melia\ObjectStorage\Search\PatternIndex;
 use melia\ObjectStorage\Search\Request;
 use melia\ObjectStorage\Unique\Manager as UniqueManager;
 use melia\ObjectStorage\UUID\Validator as UuidValidator;
@@ -35,12 +37,15 @@ use Throwable;
  *     field of a list of strings;
  *   - number fields: =, IN, <, <=, >, >=, BETWEEN with numbers;
  *   - date fields: the same with dates (parameters) or texts that are dates;
- *   - boolean fields: = TRUE, = FALSE (or 1, 0).
+ *   - boolean fields: = TRUE, = FALSE (or 1, 0);
+ *   - string fields with a pattern index (see PatternIndex): LIKE with a pattern the index narrows down ('Ho%' a
+ *     trie, '%son' a reverse trie, '%test%' n-grams) that has a character no number has (numbers are LIKE'd as
+ *     OQL writes them, 2.0, the index has them as 2), see likePattern().
  *   Number, date and boolean conditions also name the objects whose value the field couldn't convert (field IS
  *   NULL): OQL compares values of every type (a text is greater than any number), the field only has those of its
  *   type.
  * Texts that are numbers aren't looked up as texts ('12' equals the number 12 in OQL, which the indexes store
- * otherwise), nor are dates as texts, LIKE, OR or negations. An index naming more than MAX_CANDIDATES objects isn't
+ * otherwise), nor are dates as texts, OR or negations. An index naming more than MAX_CANDIDATES objects isn't
  * used. Writes the indexes didn't see (without the managers attached) aren't found by them, as by any search.
  *
  * @internal Not part of the public API; may change in any release.
@@ -118,10 +123,10 @@ final class Access
 
     /**
      * A path of the source compared with values: path = v, v = path, path < v (and the others), v < path,
-     * path IN (v, …), path BETWEEN v AND w; UUID = '…' and UUID IN (…).
+     * path IN (v, …), path BETWEEN v AND w, path LIKE 'pattern'; UUID = '…' and UUID IN (…).
      *
      * @return array{path: list<string|PathSegment>, uuid: bool, operator: string, values: list<mixed>}|null
-     *         operator: =, IN, <, <=, >, >=, BETWEEN; values: the values of the literals
+     *         operator: =, IN, <, <=, >, >=, BETWEEN, LIKE; values: the values of the literals
      */
     private static function lookup(Expr $condition, string $alias): ?array
     {
@@ -138,6 +143,8 @@ final class Access
             [$column, $values, $operator] = [$condition->operand, $condition->values, 'IN'];
         } elseif ($condition instanceof Between && !$condition->negated) {
             [$column, $values, $operator] = [$condition->operand, [$condition->low, $condition->high], 'BETWEEN'];
+        } elseif ($condition instanceof Like && !$condition->negated) {
+            [$column, $values, $operator] = [$condition->operand, [$condition->pattern], 'LIKE'];
         }
         if (!$column instanceof BoundColumn || $alias !== $column->alias || ($column->uuid && [] !== $column->path) || (!$column->uuid && [] === $column->path)) {
             return null;
@@ -257,6 +264,10 @@ final class Access
         $name = $field->name;
         $operator = $lookup['operator'];
 
+        if ('LIKE' === $operator) {
+            return FieldType::STRING === $field->type && !$wildcard ? self::likePattern($field, $lookup['values'][0]) : null;
+        }
+
         // texts: exactly as stored; lists of texts for paths with * (true if any element is)
         if ((FieldType::STRING === $field->type && !$wildcard) || (FieldType::STRING_ARRAY === $field->type && $wildcard)) {
             $texts = self::texts($lookup);
@@ -287,6 +298,29 @@ final class Access
         };
         // values the field couldn't convert (a text in a number field) are compared by OQL all the same
         return sprintf('(%s OR %s IS NULL)', $condition, $name);
+    }
+
+    /**
+     * The filter of LIKE on a string field with a pattern index that narrows the pattern down; null otherwise.
+     * Values the field couldn't convert (a list) are compared by OQL as text all the same: those of IS NULL. A
+     * pattern needs a character no number has: OQL writes 2.0 as "2.0", the field has "2".
+     */
+    private static function likePattern(Field $field, mixed $pattern): ?string
+    {
+        if (!is_string($pattern)) {
+            return null;
+        }
+        $tokens = PatternIndex::tokenize($pattern);
+        $literals = implode('', array_filter($tokens, static fn(string $token): bool => PatternIndex::ANY !== $token && PatternIndex::ONE !== $token));
+        if (1 !== preg_match('/[^0-9.eE+\-]/u', $literals)) {
+            return null;
+        }
+        foreach ($field->patterns as $index) {
+            if (null !== $index->candidates($tokens)) {
+                return sprintf('(%1$s LIKE %2$s OR %1$s IS NULL)', $field->name, self::quote($pattern));
+            }
+        }
+        return null;
     }
 
     private static function quote(string $text): string

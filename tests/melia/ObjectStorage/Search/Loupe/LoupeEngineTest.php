@@ -16,6 +16,7 @@ use melia\ObjectStorage\Search\Index\Index;
 use melia\ObjectStorage\Search\Index\IndexInterface;
 use melia\ObjectStorage\Search\Index\Manager;
 use melia\ObjectStorage\Search\Loupe\LoupeEngine;
+use melia\ObjectStorage\Search\PatternIndex;
 use melia\ObjectStorage\Search\Request;
 use stdClass;
 use Tests\melia\ObjectStorage\Search\Category;
@@ -219,6 +220,51 @@ class LoupeEngineTest extends TestCase
         $this->expectException(SearchException::class);
         $this->expectExceptionMessage('field of strings');
         $index->search(new Request(filter: "price LIKE '1%'"));
+    }
+
+    /**
+     * Pattern indexes find the same as matching all distinct values, and their parts aren't part of the hits.
+     */
+    public function testPatternIndexesFindTheSame(): void
+    {
+        $values = ['Homa', 'homeland', 'Johnson', 'Jackson', 'Testing', 'contest', 'A test', 'tes', 'ÄPFEL', "O'Pine 50%", '', 'x, y', 'Ho'];
+        foreach ($values as $i => $value) {
+            $object = new stdClass();
+            $object->s = $value;
+            $object->tags = [$value, 'tag' . $i];
+            $this->storage->store($object);
+        }
+        $this->storage->store(new stdClass()); // without values
+        $fields = static fn(array $patterns): array => [
+            new Field('s', 's', filterable: true, patterns: $patterns),
+            new Field('tags', 'tags', FieldType::STRING_ARRAY, filterable: true, patterns: $patterns),
+        ];
+        $plain = $this->search->create(new Definition('plain', stdClass::class, $fields([])));
+        $plain->build();
+        $indexed = $this->search->create(new Definition('indexed', stdClass::class, $fields([PatternIndex::TRIE, PatternIndex::REVERSE_TRIE, PatternIndex::NGRAM])));
+        $indexed->build();
+        $ngrams = $this->search->create(new Definition('ngrams', stdClass::class, $fields([PatternIndex::NGRAM])));
+        $ngrams->build();
+
+        $filters = [
+            "s LIKE 'ho%'", "s LIKE 'Ho%a'", "s LIKE '%son'", "s LIKE 'J%son'", "s LIKE '%test%'", "s LIKE '%tes%'",
+            "s CONTAINS 'TEST'", "s LIKE '%te_t%'", "s LIKE '%äpf%'", "s LIKE 'o''pine 50\\%'", "s CONTAINS '50%'",
+            "s LIKE 'ho'", "s LIKE '%'", "s LIKE '%x%'", "s CONTAINS ', '", "s NOT LIKE 'ho%'", "s NOT CONTAINS 'test'",
+            "s NOT LIKE '%son'", "tags LIKE '%son'", "tags CONTAINS 'test'", "tags NOT LIKE 'ho%'", "tags LIKE 'tag1%'",
+            "s LIKE '%nothing%'", "NOT (s LIKE '%test%' OR s LIKE 'ho%')",
+        ];
+        foreach ($filters as $filter) {
+            $expected = $this->find($plain, '', $filter);
+            sort($expected);
+            foreach ([$indexed, $ngrams] as $index) {
+                $found = $this->find($index, '', $filter);
+                sort($found);
+                $this->assertSame($expected, $found, "{$index->getName()}: $filter");
+            }
+        }
+
+        $hit = $indexed->search(new Request(filter: "s LIKE 'homa'", hitsPerPage: 10))->hits[0];
+        $this->assertSame(['revision', 'expiresAt', 's', 'tags', 'referencedUuids'], array_keys($hit->document), 'the parts aren\'t shown');
     }
 
     /**

@@ -53,7 +53,8 @@ final class Index implements IndexInterface
 
     private const string DIR_GENERATION_PREFIX = 'data-';
     private const string FILE_DEFINITION = 'definition.json';
-    private const int MAX_ERRORS = 20;
+    /** The number of errors kept in the state (State::$errors), the last ones. */
+    public const int MAX_ERRORS = 20;
     private const int SNAPSHOT_CHUNK = 10000;
 
     /** the documents asked for at once when looking for those built from changed referenced objects */

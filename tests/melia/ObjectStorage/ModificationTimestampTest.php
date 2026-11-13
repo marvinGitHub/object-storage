@@ -107,10 +107,14 @@ class ModificationTimestampTest extends TestCase
         $this->storage->touch('00000000-0000-4000-8000-000000000000');
     }
 
-    public function testMetadataWrittenBeforeHasTheCreationTimestamp(): void
+    /**
+     * Metadata written before the modification existed doesn't tell it (loading takes the time of the data file, see
+     * testMetadataWithoutTimesTakesThoseOfTheFiles()); written again, it is the creation at least.
+     */
+    public function testMetadataWrittenBeforeHasNoModificationTimestamp(): void
     {
         $metadata = Metadata::createFromArray(['className' => 'X', 'uuid' => '00000000-0000-4000-8000-000000000001', 'timestampCreation' => 1000.5, 'checksum' => str_repeat('a', 64)]);
-        $this->assertSame(1000.5, $metadata->getTimestampModification());
+        $this->assertNull($metadata->getTimestampModification());
         $this->assertSame(1000.5, $metadata->jsonSerialize()['timestampModification']);
         $metadata->setTimestampModification(2000);
         $this->assertSame(2000.0, Metadata::createFromArray($metadata->jsonSerialize())->getTimestampModification());
@@ -163,5 +167,42 @@ class ModificationTimestampTest extends TestCase
         $this->assertSame('2026-03-01T12:00:00.000+00:00', $json['modifiedAt']);
         $this->storage->clearCache();
         $this->assertSame('2026-03-01 12:00:00', $this->storage->getModifiedAt($uuid)->format('Y-m-d H:i:s'));
+    }
+
+    /**
+     * Metadata written without the times (by other tools or by hand) was "Typed property …$timestampCreation must
+     * not be accessed before initialization": loading takes the times of the files, and the next store writes them.
+     */
+    public function testMetadataWithoutTimesTakesThoseOfTheFiles(): void
+    {
+        $note = $this->note('old');
+        $uuid = $this->storage->store($note);
+        $file = $this->storage->getFilePathMetadata($uuid);
+        $metadata = json_decode((string)file_get_contents($file), true);
+        unset($metadata['timestampCreation'], $metadata['timestampModification']);
+        file_put_contents($file, json_encode($metadata));
+        $written = strtotime('2026-01-01T00:00:00Z');
+        touch($this->storage->getFilePathData($uuid), $written);
+        touch($file, $written + 60);
+
+        $this->assertNull(Metadata::createFromArray($metadata)->getTimestampCreation(), 'unknown in the metadata');
+        $this->assertNull(Metadata::createFromArray($metadata)->getTimestampModification());
+
+        $loaded = $this->metadata($uuid);
+        $this->assertSame((float)$written, $loaded->getTimestampModification(), 'the data file was written last then');
+        // the earliest time of the files: at most the last write (Unix keeps no creation time, files are replaced)
+        $this->assertLessThanOrEqual((float)$written, $loaded->getTimestampCreation());
+        $this->assertSame('2026-01-01T00:00:00', $this->storage->getModifiedAt($uuid)->format('Y-m-d\TH:i:s'));
+        $this->assertNotNull($this->storage->getCreatedAt($uuid));
+        $this->assertSame([['old', '2026-01-01T00:00:00.000000Z']], (new Oql($this->storage))->query('SELECT text, MODIFIED() FROM stdClass')->rows);
+
+        // storing writes them into the metadata: the creation stays
+        $created = $loaded->getTimestampCreation();
+        $note = $this->storage->load($uuid);
+        $note->text = 'new';
+        $this->storage->store($note, $uuid);
+        $stored = json_decode((string)file_get_contents($file), true);
+        $this->assertSame($created, (float)$stored['timestampCreation']);
+        $this->assertGreaterThan($written, $stored['timestampModification'], 'written now');
     }
 }

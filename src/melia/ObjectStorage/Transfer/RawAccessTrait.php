@@ -72,7 +72,8 @@ trait RawAccessTrait
         } catch (ObjectNotFoundException $e) {
             throw $e;
         } catch (Throwable $e) {
-            throw new ObjectLoadingFailureException(message: sprintf('Object with uuid %s could not be read', $uuid), previous: $e);
+            // with the cause: the message is often all that is shown, e.g. in the errors of a search index
+            throw new ObjectLoadingFailureException(message: sprintf('Object with uuid %s could not be read: %s', $uuid, $e->getMessage()), previous: $e);
         } finally {
             if ($lockedHere) {
                 $lockAdapter->releaseLock($uuid);

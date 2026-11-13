@@ -117,6 +117,7 @@
                                 {% if field.searchable %}<i class="bi bi-search" title="searchable"></i>{% endif %}
                                 {% if field.filterable %}<i class="bi bi-funnel" title="filterable"></i>{% endif %}
                                 {% if field.sortable %}<i class="bi bi-sort-down" title="sortable"></i>{% endif %}
+                                {% if field.patterns|default([]) is not empty %}<i class="bi bi-asterisk" title="pattern indexes: {{ field.patterns|join(', ') }}"></i>{% endif %}
                             </td>
                         </tr>
                         {% endfor %}

@@ -1,6 +1,19 @@
 # Upgrading
 
-## From 1.0.0-rc.6 to the next release
+## From 1.0.0-rc.7 to 1.0.0-rc.8
+
+Nothing has to be migrated. Check:
+
+- **Own IO adapters** implementing `AdapterInterface` (instead of extending `RealAdapter`) implement `fileMTime()` and `fileCTime()`: the times of a file, `false` if unknown.
+- **`Metadata::getTimestampCreation()` and `getTimestampModification()`** return `?float`, and the setters take `null`: `null` for metadata that wasn't loaded through the storage and doesn't tell. Metadata loaded by `ObjectStorage::loadMetadata()` always has both: missing ones are taken from the files.
+- **Metadata written before 1.0.0-rc.3** (without a modification time) is modified when its data file was written last, not when it was created.
+- **Metadata without a checksum** fails with a `MissingChecksumException` (an `InvalidFileFormatException`) instead of a PHP `Error`; storing the object, or saving it in the viewer, writes the checksum.
+- **The message of `readRaw()`** ends with the cause: "Object with uuid … could not be read: …". Code comparing the whole message checks its beginning.
+- **Viewer**: **Duplicate** refuses a record whose data doesn't match its checksum, and **Save** refuses a record changed since its page was loaded.
+
+To use pattern indexes, add `patterns` to the fields of a search index (`docs/search.md`, "Pattern indexes"); the index is built again.
+
+## From 1.0.0-rc.6 to 1.0.0-rc.7
 
 Nothing has to be migrated. If you use `Transaction`, check:
 

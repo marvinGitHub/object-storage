@@ -3,6 +3,7 @@
 namespace melia\ObjectStorage\Metadata;
 
 use JsonSerializable;
+use melia\ObjectStorage\Exception\MissingChecksumException;
 use melia\ObjectStorage\Checksum\AlgorithmAwareTrait;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\UUID\AwareTrait;
@@ -18,7 +19,8 @@ class Metadata implements JsonSerializable
     use ReservedNamesTrait;
 
     private string $className;
-    private float $timestampCreation;
+    /** when the object was first stored; null if unknown (see ObjectStorage::loadMetadata(), which takes the file's) */
+    private ?float $timestampCreation = null;
     private int $version;
     private string $checksum;
 
@@ -27,7 +29,7 @@ class Metadata implements JsonSerializable
 
     private ?float $timestampExpiresAt = null;
 
-    /** when the data was written last, or the object touched (ObjectStorage::touch()); null: as created */
+    /** when the data was written last, or the object touched (ObjectStorage::touch()); null if unknown */
     private ?float $timestampModification = null;
 
     /**
@@ -63,7 +65,7 @@ class Metadata implements JsonSerializable
 
         if (isset($data['checksumAlgorithm'])) {
             $metadata->setChecksumAlgorithm($data['checksumAlgorithm']);
-        } elseif (32 === strlen($metadata->getChecksum())) {
+        } elseif (isset($data['checksum']) && 32 === strlen($metadata->getChecksum())) {
             /* backwards compatibility */
             $metadata->setChecksumAlgorithm('md5');
         }
@@ -84,10 +86,23 @@ class Metadata implements JsonSerializable
      * Retrieves the checksum value.
      *
      * @return string The checksum value.
+     * @throws MissingChecksumException If the metadata has none (written by other tools or by hand): the data
+     *         can't be verified.
      */
     public function getChecksum(): string
     {
-        return $this->checksum;
+        return $this->checksum ?? throw new MissingChecksumException(sprintf(
+            'The metadata%s has no checksum, so the data can\'t be verified',
+            null === $this->getUUID() ? '' : ' of ' . $this->getUUID()
+        ));
+    }
+
+    /**
+     * Whether the metadata has a checksum (metadata written by other tools or by hand may lack it).
+     */
+    public function hasChecksum(): bool
+    {
+        return isset($this->checksum);
     }
 
     /**
@@ -123,11 +138,12 @@ class Metadata implements JsonSerializable
     }
 
     /**
-     * Retrieves the timestamp of creation.
+     * When the object was first stored; null if the metadata doesn't tell (written by other tools, by hand). Loaded
+     * metadata always has it: ObjectStorage::loadMetadata() takes the time of the files then.
      *
-     * @return float The creation timestamp.
+     * @return float|null The creation timestamp.
      */
-    public function getTimestampCreation(): float
+    public function getTimestampCreation(): ?float
     {
         return $this->timestampCreation;
     }
@@ -135,26 +151,27 @@ class Metadata implements JsonSerializable
     /**
      * Sets the creation timestamp for the instance.
      *
-     * @param int|float $timestampCreation The timestamp to be set as the creation time.
+     * @param int|float|null $timestampCreation The timestamp to be set as the creation time, null if unknown.
      * @return void
      */
-    public function setTimestampCreation(int|float $timestampCreation): void
+    public function setTimestampCreation(int|float|null $timestampCreation): void
     {
-        $this->timestampCreation = (float)$timestampCreation;
+        $this->timestampCreation = null === $timestampCreation ? null : (float)$timestampCreation;
     }
 
     /**
      * When the data of the object was written last (store() with changed data, OQL INSERT and UPDATE) or the object
-     * was touched (ObjectStorage::touch()). Metadata written before it existed: the creation timestamp.
+     * was touched (ObjectStorage::touch()); null if the metadata doesn't tell (written before it existed, by other
+     * tools). Loaded metadata always has it: ObjectStorage::loadMetadata() takes the time of the data file then.
      */
-    public function getTimestampModification(): float
+    public function getTimestampModification(): ?float
     {
-        return $this->timestampModification ?? $this->timestampCreation ?? microtime(true);
+        return $this->timestampModification;
     }
 
-    public function setTimestampModification(int|float $timestampModification): void
+    public function setTimestampModification(int|float|null $timestampModification): void
     {
-        $this->timestampModification = (float)$timestampModification;
+        $this->timestampModification = null === $timestampModification ? null : (float)$timestampModification;
     }
 
     /**

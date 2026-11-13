@@ -72,6 +72,7 @@ A field takes a value from the **stored data** of an object, not from the object
 | `searchable` | the full-text search covers the field (default) |
 | `filterable` | the field can be used in filters and facets |
 | `sortable` | results can be sorted by the field; not for lists |
+| `patterns` | [pattern indexes](#pattern-indexes-trie-reverse-trie-n-grams) for `LIKE` and `CONTAINS`: `[PatternIndex::TRIE, PatternIndex::NGRAM]`; for filterable fields of strings |
 
 Every document also has the attributes `uuid` (filterable), `revision` (the [revision](concurrency.md#optimistic-locking-detecting-lost-updates-instead-of-waiting) of the object), `expiresAt` (when the object expires, in seconds since the epoch, `null` if never; filterable) and `referencedUuids` (the referenced objects it was built from, see [Joins](#joins-paths-into-referenced-objects)), so these names can't be used for fields.
 
@@ -382,7 +383,28 @@ The filter language of Loupe ([documentation](https://github.com/loupe-php/loupe
 
 **Dates**: date fields are numbers in Loupe (seconds since 1970-01-01 UTC); the engine writes a text that is a date, compared with a date field, as that number (`Loupe\FilterDates`): `createdAt >= '2026-01-01'` is searched as `createdAt >= 1767225600`, dates before 1970 as negative numbers. The texts are read as in [OQL](query.md#dates): `'2026-01-01'`, `'2026-01-01 10:00'`, `'2026-01-01T10:00:00.5Z'`, `'2026-01-01T10:00:00+01:00'`, **in UTC without `Z` or offset**. Numbers are taken as seconds; a text that isn't a date stays as it is (and matches nothing). Sorting by a date field sorts by the point in time.
 
-**Patterns**: Loupe's filters have no `LIKE`; the engine adds `LIKE` (`%` any characters, `_` one, `\%` and `\_` the characters themselves) and `CONTAINS` (a part of the value, taken as it is), both ignoring case, written in capitals. A pattern is matched against the distinct values of the field, read from the documents (Loupe's facets split values at commas), and becomes an `IN` condition with the matching ones (and `= ''` if the pattern matches the empty string, as `LIKE '%'` does): it needs a filterable field of strings or lists of strings (a list matches if one of its values does) with at most `LoupeEngineIndex::MAX_PATTERN_VALUES` (10,000) distinct values, e.g. names or categories; for long texts, search the full text instead.
+**Patterns**: Loupe's filters have no `LIKE`; the engine adds `LIKE` (`%` any characters, `_` one, `\%` and `\_` the characters themselves) and `CONTAINS` (a part of the value, taken as it is), both ignoring case, written in capitals. A pattern is matched against the distinct values of the field, read from the documents (Loupe's facets split values at commas), and becomes an `IN` condition with the matching ones (and `= ''` if the pattern matches the empty string, as `LIKE '%'` does): it needs a filterable field of strings or lists of strings (a list matches if one of its values does) with at most `LoupeEngineIndex::MAX_PATTERN_VALUES` (10,000) distinct values, e.g. names or categories; for long texts, search the full text instead. With [pattern indexes](#pattern-indexes-trie-reverse-trie-n-grams) on the field, only the values of the documents that can match are read, so the limit applies to those.
+
+#### Pattern indexes: trie, reverse trie, n-grams
+
+Which patterns a field answers fast is chosen per field when the index is defined, by the formats in `patterns`:
+
+```php
+use melia\ObjectStorage\Search\PatternIndex;
+
+new Field('name', 'name', filterable: true, patterns: [PatternIndex::TRIE, PatternIndex::REVERSE_TRIE, PatternIndex::NGRAM]);
+new Field('sku', 'sku', searchable: false, filterable: true, patterns: [PatternIndex::TRIE]); // prefixes only
+```
+
+| Format | Stores (in lower case) | Narrows down | Exactly (a single lookup) |
+|---|---|---|---|
+| `TRIE` (`"trie"`) | every beginning of the value, up to 32 characters | a pattern with a prefix: `'Ho%'`, `'Ho%a'`, `'Ho_a'` | `'Ho%'` |
+| `REVERSE_TRIE` (`"reverse-trie"`) | every end of the value, up to 32 characters | a pattern with a suffix: `'%son'`, `'J%son'` | `'%son'` |
+| `NGRAM` (`"ngram"`) | every part of 3 characters (trigrams) | a pattern with 3 characters in a row anywhere: `'%test%'`, `CONTAINS 'test'`, `'%con_est%'` | `'%tes%'` |
+
+A format is stored as an additional filterable list of strings of the document, named after the field (`name__trie`, `name__rtrie`, `name__ngram`; so no field may have such a name). A pattern is first looked up by its parts (`'%test%'`: the documents having `tes` and `est`), and only the values of those documents are matched against it; where one part proves the pattern (`'Ho%'` with a trie) it is the condition itself. Patterns the formats can't narrow down (`'%te%'` with n-grams, `'%son'` with only a trie, `NOT LIKE`) are matched against all distinct values, as without pattern indexes. Results are the same with or without them.
+
+What to choose: `TRIE` for codes, names and paths searched by their beginning; `REVERSE_TRIE` for endings (domains of emails, file extensions); `NGRAM` for parts anywhere, which also covers most prefixes and suffixes of 3 or more characters, but stores the most (about one part per character) and checks more candidates. Several formats can be combined; the parts of all are required. The parts are kept with the documents: changing `patterns` changes the definition, so the index is built again (see [Changing an index](#changing-an-index)). In OQL, a filterable `STRING` field with a fitting pattern index is used for `LIKE`, see [Indexes](query.md#performance-and-memory).
 
 Strings go in single quotes, with `'` doubled. Full-text queries are typo-tolerant, `"exact phrase"` searches a phrase, `-word` excludes a word, and words of three or more letters also match as prefixes. `_relevance:desc` sorts by relevance explicitly.
 
@@ -456,8 +478,9 @@ The [viewer](maintenance.md#the-web-viewer) manages the indexes of a storage und
 
 - The list, the edit page and the build page show the size of an index: the number of documents and the space on disk (`IndexInterface::getSize()`, in bytes; while an index is rebuilt, the previous and the new build). The build page updates both while it builds.
 - They also show when the documents were updated last; the edit and build pages list the last updates (at most 20) with what they did and the number of documents afterwards. The state of an index records them (`State::$updates`, `State::getLastUpdate()`): completed builds, syncs that changed documents and removals of expired objects; a sync without changes isn't recorded.
-- **New index** / **Edit**: choose the class and the engine; **Suggest fields** fills in the fields from a stored object of the class, with types and options guessed from the values. Saving builds the index.
+- **New index** / **Edit**: choose the class and the engine; **Suggest fields** fills in the fields from a stored object of the class, with types and options guessed from the values. **Patterns** chooses the [pattern indexes](#pattern-indexes-trie-reverse-trie-n-grams) of a field: *prefix* (trie), *suffix* (reverse trie), *n-gram*; only for fields of strings, and checking one makes the field filterable. Saving builds the index. The index list and the search page mark fields with pattern indexes (<i>✱</i>, the formats in the tooltip).
 - **Rebuild** builds the index again, **Sync** applies the pending changes and removes expired objects, **Drop** removes it.
+- **Errors**: the badge *n errors* of the list (and *with their classes* on the build page) opens a page listing the objects the index couldn't index: the UUID (linked to the object), its class as stored now (*not found* if it was deleted since) and the reason; at most the last `Index::MAX_ERRORS` (20), until the next rebuild.
 - The build page shows the progress (indexed objects, failed ones, elapsed and remaining time) while it indexes the objects step by step; it can be left and continued.
 - **Search** runs a query with filter, sort and facets, showing the matches highlighted, the ranking score and links to the objects. **Syntax** explains the query language of the engine, also for fields joined from referenced objects.
   - **Builder** composes the filter (in the syntax of Loupe) from conditions and groups of conditions — nested to any depth, each combined with `AND` or `OR` and optionally negated, reordered and moved between groups by drag and drop — on the filterable fields, named by name or path (`friend.name`; a path that isn't indexed can be added to the index from there): operators by type, `IN` and `BETWEEN` from comma-separated values (`BETWEEN` with the smaller number first), values counted by the facets of the last search as suggestions; plus sort, facets and the fields searched.

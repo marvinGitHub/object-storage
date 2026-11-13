@@ -747,7 +747,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $previousClassname = $loadedMetadata?->getClassName();
 
-            $checksumChanged = $metadata->getChecksum() !== ($loadedMetadata?->getChecksum());
+            // metadata without a checksum (written by other tools or by hand) is written again with it
+            $checksumChanged = null === $loadedMetadata || !$loadedMetadata->hasChecksum() || $metadata->getChecksum() !== $loadedMetadata->getChecksum();
             $classNameChanged = null !== $previousClassname && $metadata->getClassName() !== $previousClassname;
             $lifetimeChanged = $ttl !== $loadedMetadata?->getLifetime();
 
@@ -1525,6 +1526,39 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
+     * Metadata not telling when the object was created or modified (written by other tools or by hand) takes the
+     * times of its files: the modification that of the data file (when it was written last), the creation the
+     * earliest time of the data and metadata files. As files are replaced when written, the creation is at most as
+     * old as the last write: the best the file system knows. Written into the metadata with the next change.
+     */
+    protected function completeTimestamps(Metadata $metadata, string $filePathMetadata): void
+    {
+        if (null !== $metadata->getTimestampCreation() && null !== $metadata->getTimestampModification()) {
+            return;
+        }
+
+        $io = $this->getIOAdapter();
+        $filePathData = $this->getFilePathData((string)$metadata->getUUID());
+        $times = [];
+        foreach ([$filePathData, $filePathMetadata] as $file) {
+            foreach ([$io->fileCTime($file), $io->fileMTime($file)] as $time) {
+                if (false !== $time) {
+                    $times[] = $time;
+                }
+            }
+        }
+        $modified = $io->fileMTime($filePathData);
+        $modified = false === $modified ? $io->fileMTime($filePathMetadata) : $modified;
+
+        if (null === $metadata->getTimestampModification() && false !== $modified) {
+            $metadata->setTimestampModification($modified);
+        }
+        if (null === $metadata->getTimestampCreation() && [] !== $times) {
+            $metadata->setTimestampCreation(min($times));
+        }
+    }
+
+    /**
      * Finds the metadata the raw data of an object was written with, by its checksum.
      *
      * The given metadata may come from the cache and be outdated, since another process may have updated
@@ -1652,6 +1686,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
                 }
                 $metadata->setUUID($uuid);
             }
+            $this->completeTimestamps($metadata, $filePathMetadata);
             $this->getMetadataCache()?->set($uuid, $metadata);
             return $metadata;
         } catch (Throwable $e) {
@@ -1863,21 +1898,22 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * When the object was first stored; null if there is no such object.
+     * When the object was first stored; null if there is no such object (or neither its metadata nor its files tell).
      */
     public function getCreatedAt(string $uuid): ?DateTimeImmutable
     {
-        $metadata = $this->loadMetadata($uuid);
-        return null === $metadata ? null : self::dateOfTimestamp($metadata->getTimestampCreation());
+        $timestamp = $this->loadMetadata($uuid)?->getTimestampCreation();
+        return null === $timestamp ? null : self::dateOfTimestamp($timestamp);
     }
 
     /**
-     * When the data of the object was written last, or it was touched; null if there is no such object.
+     * When the data of the object was written last, or it was touched; null if there is no such object (or neither
+     * its metadata nor its files tell).
      */
     public function getModifiedAt(string $uuid): ?DateTimeImmutable
     {
-        $metadata = $this->loadMetadata($uuid);
-        return null === $metadata ? null : self::dateOfTimestamp($metadata->getTimestampModification());
+        $timestamp = $this->loadMetadata($uuid)?->getTimestampModification();
+        return null === $timestamp ? null : self::dateOfTimestamp($timestamp);
     }
 
     /** a timestamp with microseconds as a date in UTC */

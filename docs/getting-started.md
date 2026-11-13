@@ -66,7 +66,7 @@ $storage->touch($uuid, new DateTimeImmutable('-1 hour')); // or at a point in ti
 - **`touch()`** sets it without changing the data, the revision or the lifetime: only the metadata is written (events `METADATA_SAVED` and `TOUCHED`). Use it to mark an object as used or seen, e.g. for "least recently used" clean-ups.
 - **Created** stays from the first `store()`. Copying objects into another storage keeps both.
 - In OQL: `CREATED(p)` and `MODIFIED(p)`, see [OQL](query.md#dates); on the CLI `object-storage touch <uuid> [--at …]`; the viewer shows both on the page of a record, with **Touch**.
-- Metadata written before 1.0.0-rc.3 has no modification time: it is the creation time (which earlier versions set on every write) until the next write or touch.
+- Metadata without a modification time (written before 1.0.0-rc.3) or creation time (written by other tools or by hand) takes the times of the files when it is loaded: the modification is when the data file was written last, the creation the earliest time of the data and metadata files (file systems keep no reliable creation time, and files are replaced when written, so it may be later than the real creation). They are written into the metadata with the next write or touch. `Metadata::getTimestampCreation()` and `getTimestampModification()` return `null` for metadata that wasn't loaded and doesn't tell.
 
 ## Knowing the UUID of an object
 
