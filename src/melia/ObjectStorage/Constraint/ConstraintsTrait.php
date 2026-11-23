@@ -64,7 +64,12 @@ trait ConstraintsTrait
         }
 
         // the data is the one about to be written: invalid JSON there is a bug, not a damaged file
-        $decoded = $this->getJsonFileReader(safeModeOnCorruption: false)->tryDecode($data) ?? [];
+        try {
+            $decoded = $this->getStrategy()?->unserialize($data) ?? [];
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $decoded = [];
+        }
 
         $finalizers = [];
         try {

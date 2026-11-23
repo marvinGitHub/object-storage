@@ -6,9 +6,11 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\Context;
+use melia\ObjectStorage\Event\Context\IOContext;
 use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
+use melia\ObjectStorage\Exception\CorruptedFileException;
 use melia\ObjectStorage\Exception\DanglingReferenceException;
 use melia\ObjectStorage\Exception\DateTimeRestorationFailureException;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
@@ -176,7 +178,15 @@ trait LoadingTrait
         }
         [$raw, $metadata, $filename] = $stored;
 
-        $data = $this->getJsonFileReader()->decode($raw, $filename);
+        // the data is verified by its checksum: data that can't be decoded all the same is a damaged file
+        try {
+            $data = $this->getStrategy()?->unserialize($raw) ?? [];
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, static fn() => new IOContext($filename));
+            $this->getStateHandler()?->enableSafeMode();
+            throw new CorruptedFileException($filename, sprintf('The data file %s holds no valid data: %s', $filename, $e->getMessage()), $e);
+        }
 
         return $this->hydrateObject($uuid, $data, $metadata, $addToCache);
     }

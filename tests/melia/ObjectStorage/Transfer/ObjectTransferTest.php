@@ -3,7 +3,7 @@
 namespace Tests\melia\ObjectStorage\Transfer;
 
 use InvalidArgumentException;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\File\Files;
 use RuntimeException;
 use Throwable;
 use melia\ObjectStorage\ObjectStorage;
@@ -146,7 +146,7 @@ class ObjectTransferTest extends TestCase
         $uuid = $this->storage->store(new Product('Before'));
 
         // a crash after the data was committed, before the metadata: the files don't match until recovered
-        $crashingWriter = new class extends Writer {
+        $crashingWriter = new class extends Files {
             private int $commits = 0;
 
             protected function commit(string $filename): void
@@ -158,7 +158,7 @@ class ObjectTransferTest extends TestCase
             }
         };
         $crashing = new ObjectStorage($this->storage->getStorageDir());
-        $crashing->setWriter($crashingWriter);
+        $crashing->setFiles($crashingWriter);
         try {
             $crashing->store(new Product('After'), $uuid);
         } catch (Throwable) {

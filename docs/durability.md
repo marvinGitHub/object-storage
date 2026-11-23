@@ -28,7 +28,7 @@ To survive a power loss, not only a process crash, every written file and every 
 Where durability doesn't matter — caches, test suites, data that can be recreated — turn it off:
 
 ```php
-$storage->getWriter()->setSyncEnabled(false);
+$storage->getFiles()->setSyncEnabled(false);
 ```
 
 Without fsync, writes are still atomic and crash-safe against a killed process; only a power loss or an operating system crash may lose the most recent writes.

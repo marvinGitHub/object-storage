@@ -6,7 +6,10 @@ use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use Random\RandomException;
 
-class Writer implements WriterInterface
+/**
+ * The files of the storage, as bytes, through its IO adapter: see FilesInterface.
+ */
+class Files implements FilesInterface
 {
     use AdapterAwareTrait;
 
@@ -46,23 +49,45 @@ class Writer implements WriterInterface
     }
 
     /**
-     * Performs an atomic write operation to the specified file. Ensures that the file content
-     * is written safely and completely, handling directory creation if needed, and managing
-     * file system operations to reduce risks of data loss or corruption.
+     * The contents of a file.
      *
-     * @param string $filename The path to the file to write. A missing directory is created.
-     * @param string|null $data The data to write to the file. If null, an empty string will be written.
-     * @return void
-     * @throws IOException If any file operation such as opening, writing, truncating, or closing fails.
+     * @return string|null Null if there is no such file.
+     * @throws IOException If the file exists but can't be read.
      */
-    public function atomicWrite(string $filename, ?string $data = null): void
+    public function read(string $path): ?string
+    {
+        $adapter = $this->getIOAdapter();
+
+        $contents = $adapter->fileGetContents($path);
+        if (false !== $contents) {
+            return $contents;
+        }
+
+        // asked after the failure: a file deleted meanwhile is no file, not an error
+        if (!$adapter->isFile($path)) {
+            return null;
+        }
+
+        throw new IOException('Unable to read file: ' . $path);
+    }
+
+    /**
+     * Writes a file atomically: written to a staging file next to it (flushed to disk), then renamed over it. A
+     * missing directory is created.
+     *
+     * @param string $path The path of the file to write.
+     * @param string $contents The contents.
+     * @throws IOException If the file can't be written; its previous contents are kept.
+     * @throws RandomException If no random bytes can be generated for the name of the staging file.
+     */
+    public function write(string $path, string $contents): void
     {
         // a staging file unique per call, so concurrent writers of the same file don't interfere
-        $stagingPath = $this->getStagingFilename($filename);
-        $this->writeFile($stagingPath, $data);
+        $stagingPath = $this->getStagingFilename($path);
+        $this->writeFile($stagingPath, $contents);
 
         try {
-            $this->rename($stagingPath, $filename);
+            $this->rename($stagingPath, $path);
         } catch (IOException $e) {
             $this->deleteIfExists($stagingPath);
             throw $e;
@@ -77,12 +102,11 @@ class Writer implements WriterInterface
      * another in the given order by atomic renames. A crash before the first commit leaves the previous content
      * of all files; a crash in between leaves pending files that recover() commits.
      *
-     * @param array<string, string|null> $files The files to write, path => content, in commit order.
-     * @return void
+     * @param array<string, string> $files The files to write, path => contents, in commit order.
      * @throws IOException If a file cannot be written or committed. A failure before the first commit leaves
      *                     the previous content of all files; a later failure is completed by recover().
      */
-    public function atomicWriteAll(array $files): void
+    public function writeGroup(array $files): void
     {
         try {
             foreach ($files as $filename => $data) {
@@ -110,19 +134,19 @@ class Writer implements WriterInterface
     }
 
     /**
-     * Completes a group write interrupted by a crash (see atomicWriteAll()).
+     * Completes a group write interrupted by a crash (see writeGroup()).
      *
      * Commits happen in order and only after all pending files are completely written. So if the first file
      * still has a pending file, nothing was committed: all pending files are discarded and the previous content
      * stays. Otherwise committing had started, and the remaining pending files are committed.
      *
-     * @param string[] $filenames The files of the group, in commit order.
+     * @param string[] $paths The files of the group, in commit order.
      * @return bool True if pending files were committed, i.e. the files changed, false otherwise.
      * @throws IOException If a pending file cannot be committed or discarded.
      */
-    public function recover(array $filenames): bool
+    public function recover(array $paths): bool
     {
-        $filenames = array_values($filenames);
+        $filenames = array_values($paths);
         if ([] === $filenames) {
             return false;
         }
@@ -150,9 +174,9 @@ class Writer implements WriterInterface
     /**
      * Writes the data to the pending file of a file (its content flushed to disk), leaving the file itself
      * untouched until commit() is called. The directory entry of the pending file is flushed by the caller,
-     * once for all pending files of a group (see atomicWriteAll()).
+     * once for all pending files of a group (see writeGroup()).
      *
-     * Unlike atomicWrite(), the pending file is written directly, without a staging file: an interrupted write
+     * Unlike write(), the pending file is written directly, without a staging file: an interrupted write
      * leaves an incomplete pending file, which is never committed (commit() is only called after all pending
      * files of a group are written) and is overwritten by the next write.
      *

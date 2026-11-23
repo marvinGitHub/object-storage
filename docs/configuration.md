@@ -100,7 +100,7 @@ A shared cache isn't updated when another process changes an object without goin
 Writes are flushed to disk by default, which makes them slower. Turn it off where durability doesn't matter, see [Durability](durability.md#fsync):
 
 ```php
-$storage->getWriter()->setSyncEnabled(false);
+$storage->getFiles()->setSyncEnabled(false);
 ```
 
 ## Logging

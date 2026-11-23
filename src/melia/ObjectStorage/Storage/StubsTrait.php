@@ -105,7 +105,7 @@ trait StubsTrait
             $this->registeredClassNamesCache[$className] = $className;
 
             $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->getJsonFileWriter()->write($this->getFilePathClassnames(), $this->registeredClassNamesCache);
+            $this->writeJson($this->getFilePathClassnames(), $this->registeredClassNamesCache);
         } catch (Throwable $e) {
             throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
         } finally {
@@ -128,7 +128,11 @@ trait StubsTrait
         $filenameClassnames = $this->getFilePathClassnames();
         if ($this->getIOAdapter()?->isFile($filenameClassnames)) {
             // unreadable: nothing is cached, so registerClassname() doesn't write over it and the next call reads again
-            $registered = $this->getJsonFileReader()->readJson($filenameClassnames);
+            try {
+                $registered = $this->readJson($filenameClassnames);
+            } catch (IOException) {
+                return [];
+            }
             if (null === $registered) {
                 return [];
             }
@@ -215,7 +219,7 @@ trait StubsTrait
             ksort($classNames);
 
             $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->getJsonFileWriter()->write($this->getFilePathClassnames(), $classNames);
+            $this->writeJson($this->getFilePathClassnames(), $classNames);
             $this->registeredClassNamesCache = $classNames;
 
             return $classNames;
@@ -294,7 +298,7 @@ trait StubsTrait
         $adapter = $this->getIOAdapter();
 
         // flushed like every other write, so the moved files don't reappear after a power loss
-        $sync = $this->getWriter()->syncEnabled();
+        $sync = $this->getFiles()->syncEnabled();
 
         foreach ([$this->getFilePathMetadata($uuid), $this->getFilePathData($uuid)] as $path) {
             if ($adapter->isFile($path)) {

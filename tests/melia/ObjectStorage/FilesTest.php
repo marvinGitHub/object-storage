@@ -4,35 +4,50 @@ namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\IO\AdapterInterface;
-use melia\ObjectStorage\File\Reader;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\File\Files;
 use RuntimeException;
 
-class WriterTest extends TestCase
+class FilesTest extends TestCase
 {
-    public function testWriteNull()
+    public function testWriteAndRead()
     {
         $filename = $this->createTemporaryFile();
 
-        $writer = new Writer();
-        $writer->atomicWrite($filename, 'test');
+        $files = new Files();
+        $files->write($filename, 'test');
+        $this->assertSame('test', $files->read($filename));
 
-        $reader = new Reader();
-        $this->assertEquals('test', $reader->read($filename));
+        $files->write($filename, '');
+        $this->assertSame('', $files->read($filename));
+    }
 
-        $writer->atomicWrite($filename, null);
-        $this->assertEquals('', $reader->read($filename));
+    public function testReadingAMissingFileGivesNull(): void
+    {
+        $this->assertNull((new Files())->read($this->createTemporaryDirectory() . '/missing'));
+    }
+
+    public function testReadingAnUnreadableFileFails(): void
+    {
+        // the file exists, but can't be read (e.g. held open by another program)
+        $adapter = $this->createStub(AdapterInterface::class);
+        $adapter->method('fileGetContents')->willReturn(false);
+        $adapter->method('isFile')->willReturn(true);
+        $files = new Files();
+        $files->setIOAdapter($adapter);
+
+        $this->expectException(IOException::class);
+        $files->read('/data/a.obj');
     }
 
     public function testAtomicWriteWithTruncate()
     {
         $filename = $this->createTemporaryFile();
-        $writer = new Writer();
+        $writer = new Files();
 
-        $writer->atomicWrite($filename, 'ABCDEFG');
+        $writer->write($filename, 'ABCDEFG');
         $this->assertStringEqualsFile($filename, 'ABCDEFG');
 
-        $writer->atomicWrite($filename, 'XYZ');
+        $writer->write($filename, 'XYZ');
         $this->assertStringEqualsFile($filename, 'XYZ');
     }
 
@@ -42,10 +57,10 @@ class WriterTest extends TestCase
         $single = $directory . '/one/two/single.json';
         $groupData = $directory . '/three/a.obj';
         $groupMetadata = $directory . '/four/a.metadata';
-        $writer = new Writer();
+        $writer = new Files();
 
-        $writer->atomicWrite($single, 'single');
-        $writer->atomicWriteAll([$groupData => 'data', $groupMetadata => 'metadata']);
+        $writer->write($single, 'single');
+        $writer->writeGroup([$groupData => 'data', $groupMetadata => 'metadata']);
 
         $this->assertStringEqualsFile($single, 'single');
         $this->assertStringEqualsFile($groupData, 'data');
@@ -55,9 +70,9 @@ class WriterTest extends TestCase
     /**
      * A writer that "crashes" (throws without cleaning up) at the given commit of a group write.
      */
-    private function createWriterCrashingAtCommit(int $crashAt): Writer
+    private function createWriterCrashingAtCommit(int $crashAt): Files
     {
-        return new class ($crashAt) extends Writer {
+        return new class ($crashAt) extends Files {
             private int $commits = 0;
 
             public function __construct(private readonly int $crashAt)
@@ -93,7 +108,7 @@ class WriterTest extends TestCase
     {
         [$a, $b] = $this->createFilePair();
 
-        (new Writer())->atomicWriteAll([$a => 'new a', $b => 'new b']);
+        (new Files())->writeGroup([$a => 'new a', $b => 'new b']);
 
         $this->assertStringEqualsFile($a, 'new a');
         $this->assertStringEqualsFile($b, 'new b');
@@ -105,7 +120,7 @@ class WriterTest extends TestCase
         $directory = $this->createTemporaryDirectory();
         $a = $directory . DIRECTORY_SEPARATOR . 'new.obj';
 
-        (new Writer())->atomicWriteAll([$a => 'content']);
+        (new Files())->writeGroup([$a => 'content']);
 
         $this->assertStringEqualsFile($a, 'content');
     }
@@ -115,9 +130,9 @@ class WriterTest extends TestCase
         [$a, $b] = $this->createFilePair();
 
         // left over by an earlier interrupted write
-        file_put_contents($a . Writer::SUFFIX_PENDING, 'a much longer leftover content');
+        file_put_contents($a . Files::SUFFIX_PENDING, 'a much longer leftover content');
 
-        (new Writer())->atomicWriteAll([$a => 'short', $b => 'new b']);
+        (new Files())->writeGroup([$a => 'short', $b => 'new b']);
 
         $this->assertStringEqualsFile($a, 'short');
     }
@@ -127,7 +142,7 @@ class WriterTest extends TestCase
         [$a, $b] = $this->createFilePair();
 
         try {
-            $this->createWriterCrashingAtCommit(2)->atomicWriteAll([$a => 'new a', $b => 'new b']);
+            $this->createWriterCrashingAtCommit(2)->writeGroup([$a => 'new a', $b => 'new b']);
             $this->fail('the simulated crash must interrupt the write');
         } catch (RuntimeException) {
             // expected
@@ -136,11 +151,11 @@ class WriterTest extends TestCase
         $this->assertStringEqualsFile($a, 'new a');
         $this->assertStringEqualsFile($b, 'old b', 'the crash leaves the group inconsistent');
 
-        $this->assertTrue((new Writer())->recover([$a, $b]));
+        $this->assertTrue((new Files())->recover([$a, $b]));
 
         $this->assertStringEqualsFile($a, 'new a');
         $this->assertStringEqualsFile($b, 'new b');
-        $this->assertFileDoesNotExist($b . Writer::SUFFIX_PENDING);
+        $this->assertFileDoesNotExist($b . Files::SUFFIX_PENDING);
     }
 
     public function testCrashBeforeFirstCommitIsDiscardedByRecover(): void
@@ -148,27 +163,27 @@ class WriterTest extends TestCase
         [$a, $b] = $this->createFilePair();
 
         try {
-            $this->createWriterCrashingAtCommit(1)->atomicWriteAll([$a => 'new a', $b => 'new b']);
+            $this->createWriterCrashingAtCommit(1)->writeGroup([$a => 'new a', $b => 'new b']);
             $this->fail('the simulated crash must interrupt the write');
         } catch (RuntimeException) {
             // expected
         }
 
-        $this->assertFileExists($a . Writer::SUFFIX_PENDING);
+        $this->assertFileExists($a . Files::SUFFIX_PENDING);
 
-        $this->assertFalse((new Writer())->recover([$a, $b]));
+        $this->assertFalse((new Files())->recover([$a, $b]));
 
         $this->assertStringEqualsFile($a, 'old a');
         $this->assertStringEqualsFile($b, 'old b');
-        $this->assertFileDoesNotExist($a . Writer::SUFFIX_PENDING);
-        $this->assertFileDoesNotExist($b . Writer::SUFFIX_PENDING);
+        $this->assertFileDoesNotExist($a . Files::SUFFIX_PENDING);
+        $this->assertFileDoesNotExist($b . Files::SUFFIX_PENDING);
     }
 
     public function testRecoverWithoutInterruptedWriteChangesNothing(): void
     {
         [$a, $b] = $this->createFilePair();
 
-        $this->assertFalse((new Writer())->recover([$a, $b]));
+        $this->assertFalse((new Files())->recover([$a, $b]));
 
         $this->assertStringEqualsFile($a, 'old a');
         $this->assertStringEqualsFile($b, 'old b');
@@ -177,13 +192,13 @@ class WriterTest extends TestCase
     public function testCommitWithoutPendingFileThrowsAndKeepsFile(): void
     {
         $filename = $this->createTemporaryFile();
-        $writer = new class extends Writer {
+        $writer = new class extends Files {
             public function commitFile(string $filename): void
             {
                 $this->commit($filename);
             }
         };
-        $writer->atomicWrite($filename, 'committed');
+        $writer->write($filename, 'committed');
 
         try {
             $writer->commitFile($filename);
@@ -236,10 +251,10 @@ class WriterTest extends TestCase
     public function testAtomicWriteAllWritesAllPendingFilesBeforeCommittingInOrder(): void
     {
         $calls = [];
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($this->createRecordingAdapter($calls));
 
-        $writer->atomicWriteAll(['/data/a.obj' => 'data', '/data/a.metadata' => 'metadata']);
+        $writer->writeGroup(['/data/a.obj' => 'data', '/data/a.metadata' => 'metadata']);
 
         // pending files are written directly (no staging file) and flushed before anything is committed;
         // their directory is flushed once for both, each commit is flushed before the next one
@@ -259,10 +274,10 @@ class WriterTest extends TestCase
     public function testAtomicWriteAllFlushesEachDirectoryOfPendingFilesOnce(): void
     {
         $calls = [];
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($this->createRecordingAdapter($calls));
 
-        $writer->atomicWriteAll(['/one/a' => 'a', '/two/b' => 'b', '/one/c' => 'c']);
+        $writer->writeGroup(['/one/a' => 'a', '/two/b' => 'b', '/one/c' => 'c']);
 
         $firstCommit = array_search('rename /one/a.pending > /one/a', $calls, true);
         $beforeCommits = array_slice($calls, 0, $firstCommit);
@@ -276,11 +291,11 @@ class WriterTest extends TestCase
     public function testFailedWriteBeforeCommitDiscardsAllPendingFiles(): void
     {
         $calls = [];
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($this->createRecordingAdapter($calls, failWriteOf: '/data/a.metadata.pending'));
 
         try {
-            $writer->atomicWriteAll(['/data/a.obj' => 'data', '/data/a.metadata' => 'metadata']);
+            $writer->writeGroup(['/data/a.obj' => 'data', '/data/a.metadata' => 'metadata']);
             $this->fail('the failed write must fail the group');
         } catch (IOException) {
             // expected
@@ -294,11 +309,11 @@ class WriterTest extends TestCase
     public function testFailedFsyncFailsTheWriteWithoutCommitting(): void
     {
         $calls = [];
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($this->createRecordingAdapter($calls, fsyncSucceeds: false));
 
         try {
-            $writer->atomicWriteAll(['/data/a.obj' => 'data']);
+            $writer->writeGroup(['/data/a.obj' => 'data']);
             $this->fail('a failed fsync must fail the write');
         } catch (IOException) {
             // expected
@@ -311,13 +326,13 @@ class WriterTest extends TestCase
     public function testAtomicWriteIsFlushedBeforeRename(): void
     {
         $calls = [];
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($this->createRecordingAdapter($calls));
 
-        $writer->atomicWrite('/data/classnames.json', '{}');
+        $writer->write('/data/classnames.json', '{}');
 
         $this->assertCount(4, $calls);
-        $this->assertStringStartsWith('write /data/classnames.json' . Writer::SUFFIX_STAGING, $calls[0]);
+        $this->assertStringStartsWith('write /data/classnames.json' . Files::SUFFIX_STAGING, $calls[0]);
         $this->assertSame('fsync', $calls[1]);
         $this->assertStringEndsWith(' > /data/classnames.json', $calls[2]);
         $this->assertSame('fsyncDirectory /data', $calls[3]);
@@ -326,11 +341,11 @@ class WriterTest extends TestCase
     public function testNothingIsFlushedWithoutSync(): void
     {
         $calls = [];
-        $writer = new Writer(sync: false);
+        $writer = new Files(sync: false);
         $writer->setIOAdapter($this->createRecordingAdapter($calls));
 
-        $writer->atomicWriteAll(['/data/a.obj' => 'data', '/data/a.metadata' => 'metadata']);
-        $writer->atomicWrite('/data/classnames.json', '{}');
+        $writer->writeGroup(['/data/a.obj' => 'data', '/data/a.metadata' => 'metadata']);
+        $writer->write('/data/classnames.json', '{}');
 
         $this->assertSame([], array_values(array_filter($calls, static fn(string $call) => str_starts_with($call, 'fsync'))));
     }
@@ -338,29 +353,29 @@ class WriterTest extends TestCase
     public function testSyncCanBeDisabledAndEnabledBySetter(): void
     {
         $calls = [];
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($this->createRecordingAdapter($calls));
 
         $this->assertTrue($writer->syncEnabled());
 
         $writer->setSyncEnabled(false);
         $this->assertFalse($writer->syncEnabled());
-        $writer->atomicWriteAll(['/data/a.obj' => 'data']);
+        $writer->writeGroup(['/data/a.obj' => 'data']);
         $this->assertNotContains('fsync', $calls);
 
         $writer->setSyncEnabled(true);
-        $writer->atomicWriteAll(['/data/a.obj' => 'data']);
+        $writer->writeGroup(['/data/a.obj' => 'data']);
         $this->assertContains('fsync', $calls);
     }
 
     public function testWritingWithoutSyncProducesSameResult(): void
     {
         [$a, $b] = $this->createFilePair();
-        $writer = new Writer(sync: false);
+        $writer = new Files(sync: false);
 
         $this->assertFalse($writer->syncEnabled());
 
-        $writer->atomicWriteAll([$a => 'new a', $b => 'new b']);
+        $writer->writeGroup([$a => 'new a', $b => 'new b']);
 
         $this->assertStringEqualsFile($a, 'new a');
         $this->assertStringEqualsFile($b, 'new b');

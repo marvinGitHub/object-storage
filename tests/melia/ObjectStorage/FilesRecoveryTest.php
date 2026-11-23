@@ -6,12 +6,12 @@ namespace melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\IO\AdapterInterface;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\File\Files;
 use PHPUnit\Framework\TestCase;
 use ReflectionException;
 use ReflectionProperty;
 
-final class WriterRecoveryTest extends TestCase
+final class FilesRecoveryTest extends TestCase
 {
     /**
      * @throws ReflectionException
@@ -20,7 +20,7 @@ final class WriterRecoveryTest extends TestCase
     {
         $adapter = $this->createMock(AdapterInterface::class);
         $adapter->method('isDir')->willReturn(true); // the target directory exists
-        $writer = new Writer();
+        $writer = new Files();
 
         // Attach the adapter (works whether the trait exposes a setter or not).
         if (method_exists($writer, 'setIOAdapter')) {
@@ -36,7 +36,7 @@ final class WriterRecoveryTest extends TestCase
             ->method('filePutContents')
             ->with($this->callback(static function (string $path) use (&$stagingPath): bool {
                 $stagingPath = $path;
-                return str_contains($path, Writer::SUFFIX_STAGING);
+                return str_contains($path, Files::SUFFIX_STAGING);
             }), 'payload')
             ->willReturn(false); // Simulate write failure
 
@@ -60,14 +60,14 @@ final class WriterRecoveryTest extends TestCase
         $this->expectException(IOException::class);
         $this->expectExceptionMessage('Failed to write to file');
 
-        $writer->atomicWrite('some/target/file.dat', 'payload');
+        $writer->write('some/target/file.dat', 'payload');
     }
 
     public function testRecoverySkipsUnlinkWhenFileDoesNotExist(): void
     {
         $adapter = $this->createMock(AdapterInterface::class);
         $adapter->method('isDir')->willReturn(true); // the target directory exists
-        $writer = new Writer();
+        $writer = new Files();
 
         // Attach the adapter (works whether the trait exposes a setter or not).
         if (method_exists($writer, 'setIOAdapter')) {
@@ -83,7 +83,7 @@ final class WriterRecoveryTest extends TestCase
             ->method('filePutContents')
             ->with($this->callback(static function (string $path) use (&$stagingPath): bool {
                 $stagingPath = $path;
-                return str_contains($path, Writer::SUFFIX_STAGING);
+                return str_contains($path, Files::SUFFIX_STAGING);
             }), 'payload')
             ->willReturn(false); // Simulate write failure
 
@@ -103,6 +103,6 @@ final class WriterRecoveryTest extends TestCase
         $this->expectException(IOException::class);
         $this->expectExceptionMessage('Failed to write to file');
 
-        $writer->atomicWrite('some/target/file.dat', 'payload');
+        $writer->write('some/target/file.dat', 'payload');
     }
 }

@@ -50,7 +50,7 @@ trait MetadataTrait
                 return null;
             }
 
-            $metadata = $this->getJsonFileReader()->readJson($filePathMetadata);
+            $metadata = $this->readJson($filePathMetadata);
             if (null === $metadata) {
                 throw new MetadataNotFoundException('Unable to load metadata for uuid: ' . $uuid);
             }
@@ -108,7 +108,7 @@ trait MetadataTrait
         }
 
         try {
-            $this->getJsonFileWriter()->write($this->getFilePathMetadata($metadata->getUUID()), $metadata);
+            $this->writeJson($this->getFilePathMetadata($metadata->getUUID()), $metadata);
             $this->getEventDispatcher()?->dispatch(Events::METADATA_SAVED, static fn() => new Context($metadata->getUUID()));
         } catch (Throwable $e) {
             $this->getEventDispatcher()?->dispatch(Events::METADATA_WRITE_FAILED, static fn() => new Context($metadata->getUUID()));

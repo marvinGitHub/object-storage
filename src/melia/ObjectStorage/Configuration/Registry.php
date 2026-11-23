@@ -5,8 +5,7 @@ namespace melia\ObjectStorage\Configuration;
 use melia\ObjectStorage\Configuration\Exception\ConfigurationAlreadyExistsException;
 use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
 use melia\ObjectStorage\Configuration\Exception\ConfigurationNotFoundException;
-use melia\ObjectStorage\File\JsonFileReader;
-use melia\ObjectStorage\File\JsonFileWriter;
+use melia\ObjectStorage\File\JsonFiles;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\UUID\Helper;
@@ -200,7 +199,7 @@ final class Registry
 
         // written atomically (the directory is created), so readers see the old or the new assignment
         try {
-            (new JsonFileWriter(flags: JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES))->write($file, ['configuration' => $name]);
+            (new JsonFiles(flags: JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES))->write($file, ['configuration' => $name]);
         } catch (Throwable $e) {
             throw new ConfigurationException(message: 'Unable to write ' . $file, previous: $e);
         }
@@ -219,7 +218,7 @@ final class Registry
         }
 
         try {
-            $data = (new JsonFileReader())->readJson($file);
+            $data = (new JsonFiles())->read($file);
         } catch (Throwable $e) {
             throw new ConfigurationException(message: 'Unreadable assignment of a configuration: ' . $file, previous: $e);
         }

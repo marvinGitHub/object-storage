@@ -40,15 +40,15 @@ class ObjectStorageChildUpdateTest extends TestCase
         $childUuid = $child->getUUID();
 
         // Clear spy to track only subsequent operations
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Store the same objects again without any modifications
         $this->storage->store($parent, $parentUuid);
         $this->storage->store($child, $childUuid);
 
         // Assert
-        $parentCalls = $this->writerSpy->getCallsForUuid($parentUuid);
-        $childCalls = $this->writerSpy->getCallsForUuid($childUuid);
+        $parentCalls = $this->filesSpy->getCallsForUuid($parentUuid);
+        $childCalls = $this->filesSpy->getCallsForUuid($childUuid);
 
         $this->assertCount(0, $parentCalls, 'getCallsForUuid should return empty array (zero calls) for unchanged parent');
         $this->assertCount(0, $childCalls, 'getCallsForUuid should return empty array (zero calls) for unchanged child');
@@ -70,7 +70,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         // Clear cache and spy
         $this->storage->clearCache();
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Load parent, access child but don't modify anything
         $loadedParent = $this->storage->load($parentUuid);
@@ -86,8 +86,8 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->storage->store($loadedParent, $parentUuid);
 
         // Assert
-        $parentCalls = $this->writerSpy->getCallsForUuid($parentUuid);
-        $childCalls = $this->writerSpy->getCallsForUuid($childUuid);
+        $parentCalls = $this->filesSpy->getCallsForUuid($parentUuid);
+        $childCalls = $this->filesSpy->getCallsForUuid($childUuid);
 
         $this->assertEquals(0, count($childCalls), 'getCallsForUuid should return zero for unchanged lazy-loaded child');
         $this->assertEquals(0, count($parentCalls), 'getCallsForUuid should return zero for unchanged parent');
@@ -104,15 +104,15 @@ class ObjectStorageChildUpdateTest extends TestCase
         $childUuid = $child->getUUID();
         $grandChildUuid = $grandChild->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Store the entire structure again without any changes
         $this->storage->store($parent, $parentUuid);
 
         // Assert
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
-        $grandChildCalls = count($this->writerSpy->getCallsForUuid($grandChildUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
+        $grandChildCalls = count($this->filesSpy->getCallsForUuid($grandChildUuid));
 
         $this->assertEquals(0, $parentCalls, 'Parent getCallsForUuid should be zero when unchanged');
         $this->assertEquals(0, $childCalls, 'Child getCallsForUuid should be zero when unchanged');
@@ -134,7 +134,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $child1Uuid = $child1->getUUID();
         $child2Uuid = $child2->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Modify only child1, leave child2 unchanged
         $child1->value = 999;
@@ -142,8 +142,8 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->storage->store($child2, $child2Uuid); // Store unchanged child2
 
         // Assert
-        $child1Calls = count($this->writerSpy->getCallsForUuid($child1Uuid));
-        $child2Calls = count($this->writerSpy->getCallsForUuid($child2Uuid));
+        $child1Calls = count($this->filesSpy->getCallsForUuid($child1Uuid));
+        $child2Calls = count($this->filesSpy->getCallsForUuid($child2Uuid));
 
         $this->assertGreaterThan(0, $child1Calls, 'Modified child1 should have calls > 0');
         $this->assertEquals(0, $child2Calls, 'Unchanged child2 getCallsForUuid should be zero');
@@ -156,7 +156,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $child = new ChildObject('Multiple Storage Test', 42);
         $parentUuid = $this->storage->store($child);
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Store the same object multiple times without changes
         $this->storage->store($child, $parentUuid);
@@ -164,7 +164,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->storage->store($child, $parentUuid);
 
         // Assert
-        $calls = $this->writerSpy->getCallsForUuid($parentUuid);
+        $calls = $this->filesSpy->getCallsForUuid($parentUuid);
         $this->assertEquals(0, count($calls), 'getCallsForUuid should return zero even after multiple unchanged storage attempts');
     }
 
@@ -182,15 +182,15 @@ class ObjectStorageChildUpdateTest extends TestCase
         $child1Uuid = $child1->getUUID();
         $child2Uuid = $child2->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Store parent with unchanged array elements
         $this->storage->store($parent, $parentUuid);
 
         // Assert
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $child1Calls = count($this->writerSpy->getCallsForUuid($child1Uuid));
-        $child2Calls = count($this->writerSpy->getCallsForUuid($child2Uuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $child1Calls = count($this->filesSpy->getCallsForUuid($child1Uuid));
+        $child2Calls = count($this->filesSpy->getCallsForUuid($child2Uuid));
 
         $this->assertEquals(0, $parentCalls, 'Parent with unchanged array should have zero calls');
         $this->assertEquals(0, $child1Calls, 'Unchanged array element 1 should have zero calls');
@@ -211,12 +211,12 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->assertNotNull($parentUuid, 'Parent UUID should not be null');
         $this->assertNotNull($childUuid, 'Child UUID should not be null');
 
-        $initialCalls = $this->writerSpy->getMethodCalls();
-        $initialParentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $initialChildCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $initialCalls = $this->filesSpy->getMethodCalls();
+        $initialParentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $initialChildCalls = count($this->filesSpy->getCallsForUuid($childUuid));
 
         // Clear call history
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Modify only the child object
         $child->value = 200;
@@ -225,13 +225,13 @@ class ObjectStorageChildUpdateTest extends TestCase
         // Store only the child (parent should not be affected)
         $this->storage->store($child, $childUuid);
 
-        $afterChildUpdateCalls = $this->writerSpy->getMethodCalls();
-        $parentCallsAfterChildUpdate = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCallsAfterChildUpdate = count($this->writerSpy->getCallsForUuid($childUuid));
+        $afterChildUpdateCalls = $this->filesSpy->getMethodCalls();
+        $parentCallsAfterChildUpdate = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCallsAfterChildUpdate = count($this->filesSpy->getCallsForUuid($childUuid));
 
         // Debug-Ausgaben hinzufügen
-        $this->assertIsArray($this->writerSpy->getCallsForUuid($parentUuid), 'Parent calls should be array');
-        $this->assertIsArray($this->writerSpy->getCallsForUuid($childUuid), 'Child calls should be array');
+        $this->assertIsArray($this->filesSpy->getCallsForUuid($parentUuid), 'Parent calls should be array');
+        $this->assertIsArray($this->filesSpy->getCallsForUuid($childUuid), 'Child calls should be array');
 
         // Assert
         $this->assertGreaterThan(0, $initialParentCalls, 'Parent should be written initially');
@@ -259,14 +259,14 @@ class ObjectStorageChildUpdateTest extends TestCase
         $parentUuid = $this->storage->store($parent);
         $childUuid = $child->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Modify only parent object
         $parent->name = 'Updated Parent Name';
         $this->storage->store($parent, $parentUuid);
 
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
 
         // Assert
         $this->assertGreaterThan(0, $parentCalls, 'Parent should be written when updated');
@@ -295,15 +295,15 @@ class ObjectStorageChildUpdateTest extends TestCase
         $childUuid = $child->getUUID();
         $grandChildUuid = $this->storage->store($grandChild);
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Update only the grandchild
         $grandChild->value = 999;
         $this->storage->store($grandChild, $grandChildUuid);
 
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
-        $grandChildCalls = count($this->writerSpy->getCallsForUuid($grandChildUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
+        $grandChildCalls = count($this->filesSpy->getCallsForUuid($grandChildUuid));
 
         // Assert
         $this->assertEquals(0, $parentCalls, 'Parent should not be updated');
@@ -371,7 +371,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         // Clear cache to force lazy loading
         $this->storage->clearCache();
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Load parent (child should be lazy-loaded)
         $loadedParent = $this->storage->load($parentUuid);
@@ -380,7 +380,7 @@ class ObjectStorageChildUpdateTest extends TestCase
         $lazyChild = $loadedParent->child;
         $originalValue = $lazyChild->value; // This should trigger loading
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         $this->assertCount(0, $this->storage->getLockAdapter()->getActiveLocks());
 
@@ -388,8 +388,8 @@ class ObjectStorageChildUpdateTest extends TestCase
         $lazyChild->value = 999;
         $this->storage->store($lazyChild, $childUuid);
 
-        $parentCallsAfterChildUpdate = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCallsAfterChildUpdate = count($this->writerSpy->getCallsForUuid($childUuid));
+        $parentCallsAfterChildUpdate = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCallsAfterChildUpdate = count($this->filesSpy->getCallsForUuid($childUuid));
 
         // Assert
         $this->assertEquals(300, $originalValue, 'Original value should be loaded correctly');
@@ -418,7 +418,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         // Clear cache to force lazy loading
         $this->storage->clearCache();
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Load parent (child becomes LazyLoadReference but is NOT accessed)
         $loadedParent = $this->storage->load($parentUuid);
@@ -427,13 +427,13 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->assertInstanceOf(LazyLoadReference::class, $loadedParent->child);
         $this->assertFalse($loadedParent->child->isLoaded(), 'LazyLoadReference should not be loaded initially');
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store parent again - non-loaded lazy references should NOT be stored
         $this->storage->store($loadedParent, $parentUuid);
 
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
 
         // Assert
         $this->assertEquals(0, $parentCalls, 'Parent should not be written');
@@ -456,7 +456,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         // Clear cache to force lazy loading
         $this->storage->clearCache();
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Load parent and access child to trigger loading
         $loadedParent = $this->storage->load($parentUuid);
@@ -472,14 +472,14 @@ class ObjectStorageChildUpdateTest extends TestCase
         // Modify the loaded child
         $loadedParent->child->value = 999;
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store parent - loaded lazy references should be processed
         $this->strategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
         $this->storage->store($loadedParent, $parentUuid);
 
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
 
         // Assert
         $this->assertEquals(0, $parentCalls, 'Parent should not be written since only child is modified');
@@ -513,7 +513,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         // Clear cache and spy
         $this->storage->clearCache();
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Load parent and selectively access children
         $loadedParent = $this->storage->load($parentUuid);
@@ -530,15 +530,15 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->assertTrue($modifiedChild->isLoaded(), 'Child3 should be loaded');
         $this->assertFalse($nonLoadedChild->isLoaded(), 'Child2 should remain unloaded');
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store parent
         $this->storage->store($loadedParent, $parentUuid);
 
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $child1Calls = count($this->writerSpy->getCallsForUuid($child1Uuid));
-        $child2Calls = count($this->writerSpy->getCallsForUuid($child2Uuid));
-        $child3Calls = count($this->writerSpy->getCallsForUuid($child3Uuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $child1Calls = count($this->filesSpy->getCallsForUuid($child1Uuid));
+        $child2Calls = count($this->filesSpy->getCallsForUuid($child2Uuid));
+        $child3Calls = count($this->filesSpy->getCallsForUuid($child3Uuid));
 
         // Assert
         //$this->assertEquals(0, $parentCalls, 'Parent should not be written since only childs are modified');
@@ -568,14 +568,14 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->assertFalse($lazyChild->isLoaded(), 'Child should not be loaded initially');
 
         // Clear writer spy to track only the next storage operation
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store the parent with the unloaded lazy reference
         $this->storage->store($loadedParent, $parentUuid);
 
         // Get storage data to verify lazy reference was skipped
-        $allCalls = $this->writerSpy->getMethodCalls();
-        $childCalls = $this->writerSpy->getCallsForUuid($childUuid);
+        $allCalls = $this->filesSpy->getMethodCalls();
+        $childCalls = $this->filesSpy->getCallsForUuid($childUuid);
 
         // Assert that child was not processed during storage
         $this->assertCount(0, $childCalls, 'Unloaded lazy reference should be skipped during storage');
@@ -601,7 +601,7 @@ class ObjectStorageChildUpdateTest extends TestCase
 
         // Clear cache
         $this->storage->clearCache();
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Load parent and access only the first level child
         $loadedParent = $this->storage->load($parentUuid);
@@ -614,14 +614,14 @@ class ObjectStorageChildUpdateTest extends TestCase
         $this->assertInstanceOf(LazyLoadReference::class, $firstLevelChild->child);
         $this->assertFalse($firstLevelChild->child->isLoaded(), 'Grandchild should remain unloaded');
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store parent
         $this->storage->store($loadedParent, $parentUuid);
 
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
-        $grandChildCalls = count($this->writerSpy->getCallsForUuid($grandChildUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
+        $grandChildCalls = count($this->filesSpy->getCallsForUuid($grandChildUuid));
 
         // Assert 1 call means only metadata has been written
         $this->assertEquals(0, $parentCalls, 'Parent should not be stored (unmodified)');
@@ -664,14 +664,14 @@ class ObjectStorageChildUpdateTest extends TestCase
         $thirdChild = $loadedParent->children[2];
         $this->assertFalse($thirdChild->isLoaded(), 'Third child should remain unloaded');
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store parent
         $this->storage->store($loadedParent, $parentUuid);
 
-        $child1Calls = count($this->writerSpy->getCallsForUuid($child1Uuid));
-        $child2Calls = count($this->writerSpy->getCallsForUuid($child2Uuid));
-        $child3Calls = count($this->writerSpy->getCallsForUuid($child3Uuid));
+        $child1Calls = count($this->filesSpy->getCallsForUuid($child1Uuid));
+        $child2Calls = count($this->filesSpy->getCallsForUuid($child2Uuid));
+        $child3Calls = count($this->filesSpy->getCallsForUuid($child3Uuid));
 
         // Assert - only loaded references should be processed
         $this->assertEquals(0, $child1Calls, 'Unloaded child1 should not be stored');

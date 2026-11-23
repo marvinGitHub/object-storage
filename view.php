@@ -1117,8 +1117,8 @@ try {
                 $finalizeConstraints = $storage->checkConstraints($uuidNew, $metadata->getClassName(), $data, $metadata->getReservedReferenceName());
                 $written = false;
                 try {
-                    // written as a group (the writer creates the shard directory), so a crash leaves no half copy
-                    $storage->getWriter()->atomicWriteAll([
+                    // written as a group (the files create the shard directory), so a crash leaves no half copy
+                    $storage->getFiles()->writeGroup([
                         $storage->getFilePathData($uuidNew) => $data,
                         $storage->getFilePathMetadata($uuidNew) => json_encode($metadata, JSON_THROW_ON_ERROR),
                     ]);

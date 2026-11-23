@@ -23,7 +23,7 @@ use Throwable;
 
 /**
  * Creates what a configuration describes: the lock adapter and the caches of a storage, and applies the settings of
- * the strategy and the writer. Used by the constructor of ObjectStorage; usable on its own, e.g. to check that a
+ * the strategy and the files. Used by the constructor of ObjectStorage; usable on its own, e.g. to check that a
  * configuration works.
  */
 final class Factory
@@ -101,14 +101,14 @@ final class Factory
     }
 
     /**
-     * Applies the settings of the strategy and the writer to a storage. The strategy settings apply to the
+     * Applies the settings of the strategy and the files to a storage. The strategy settings apply to the
      * Standard strategy and its subclasses; a strategy of its own keeps its settings.
      *
-     * @param bool $applyStrategy False to apply the writer settings only, e.g. for a strategy passed explicitly.
+     * @param bool $applyStrategy False to apply the settings of the files only, e.g. for a strategy passed explicitly.
      */
     public function apply(ObjectStorage $storage, Configuration $configuration, bool $applyStrategy = true): void
     {
-        $storage->getWriter()->setSyncEnabled($configuration->fsync);
+        $storage->getFiles()->setSyncEnabled($configuration->fsync);
 
         $strategy = $storage->getStrategy();
         if (!$applyStrategy || !$strategy instanceof Standard) {

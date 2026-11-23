@@ -3,7 +3,7 @@
 namespace Tests\melia\ObjectStorage;
 
 use melia\ObjectStorage\File\IO\RealAdapter;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\File\Files;
 use melia\ObjectStorage\ObjectStorage;
 
 /**
@@ -30,8 +30,8 @@ final class ObjectStorageIOAdapterTest extends TestCase
         $storage = $this->createStorageWithAdapter($adapter);
 
         $uuid = $storage->store(new ChildObject('child', 1));
-        $this->assertContains($storage->getFilePathData($uuid) . Writer::SUFFIX_PENDING, $adapter->written);
-        $this->assertContains($storage->getFilePathMetadata($uuid) . Writer::SUFFIX_PENDING, $adapter->written);
+        $this->assertContains($storage->getFilePathData($uuid) . Files::SUFFIX_PENDING, $adapter->written);
+        $this->assertContains($storage->getFilePathMetadata($uuid) . Files::SUFFIX_PENDING, $adapter->written);
 
         $storage->clearCache();
         $this->assertSame('child', $storage->load($uuid)->title);
@@ -39,11 +39,10 @@ final class ObjectStorageIOAdapterTest extends TestCase
         $this->assertContains($storage->getFilePathMetadata($uuid), $adapter->read);
     }
 
-    public function testDefaultWriterAndReaderFollowAChangedAdapter(): void
+    public function testDefaultFilesFollowAChangedAdapter(): void
     {
         $storage = $this->createStorageWithAdapter($this->createRecordingAdapter());
-        $storage->getWriter();
-        $storage->getReader();
+        $storage->getFiles();
 
         $adapter = $this->createRecordingAdapter();
         $storage->setIOAdapter($adapter);
@@ -52,7 +51,7 @@ final class ObjectStorageIOAdapterTest extends TestCase
         $storage->clearCache();
         $storage->load($uuid);
 
-        $this->assertContains($storage->getFilePathData($uuid) . Writer::SUFFIX_PENDING, $adapter->written);
+        $this->assertContains($storage->getFilePathData($uuid) . Files::SUFFIX_PENDING, $adapter->written);
         $this->assertContains($storage->getFilePathData($uuid), $adapter->read);
     }
 
@@ -62,15 +61,15 @@ final class ObjectStorageIOAdapterTest extends TestCase
         $storage = $this->createStorageWithAdapter($storageAdapter);
 
         $writerAdapter = $this->createRecordingAdapter();
-        $writer = new Writer();
+        $writer = new Files();
         $writer->setIOAdapter($writerAdapter);
-        $storage->setWriter($writer);
+        $storage->setFiles($writer);
 
         $storage->setIOAdapter($this->createRecordingAdapter());
         $uuid = $storage->store(new ChildObject('child', 1));
 
         $this->assertSame($writerAdapter, $writer->getIOAdapter());
-        $this->assertContains($storage->getFilePathData($uuid) . Writer::SUFFIX_PENDING, $writerAdapter->written);
+        $this->assertContains($storage->getFilePathData($uuid) . Files::SUFFIX_PENDING, $writerAdapter->written);
         $this->assertSame([], $storageAdapter->written);
     }
 }

@@ -2,7 +2,7 @@
 
 namespace Tests\melia\ObjectStorage;
 
-class ObjectStorageSpyWriterTest extends TestCase
+class ObjectStorageFilesSpyTest extends TestCase
 {
     public function testStorageOfUnchangedObjectDoesNotCallAtomicWrite(): void
     {
@@ -11,14 +11,14 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Act - First store should trigger atomic writes
         $uuid = $this->storage->store($user);
-        $callsAfterFirstStore = $this->writerSpy->getAtomicWriteCallCount();
+        $callsAfterFirstStore = $this->filesSpy->getWriteCallCount();
 
         // Clear call history to focus on second store
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Store the same unchanged object again
         $this->storage->store($user, $uuid);
-        $callsAfterSecondStore = $this->writerSpy->getAtomicWriteCallCount();
+        $callsAfterSecondStore = $this->filesSpy->getWriteCallCount();
 
         // 3 -> data, metadata and classname
         $this->assertEquals(3, $callsAfterFirstStore, 'First store should write data and metadata files, stub and classname');
@@ -37,14 +37,14 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Act - Initial store
         $uuid = $this->storage->store($user);
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Modify the object
         $user->age = 31;
 
         // Act - Store the modified object
         $this->storage->store($user, $uuid);
-        $callsAfterModification = $this->writerSpy->getAtomicWriteCallCount();
+        $callsAfterModification = $this->filesSpy->getWriteCallCount();
 
         // 3 -> data, metadata (stub won't be regenerated since it exists already)
         $this->assertEquals(2, $callsAfterModification, 'Modified object should trigger writes');
@@ -62,7 +62,7 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Act - Store object
         $uuid = $this->storage->store($user);
-        $calls = $this->writerSpy->getAtomicWriteCalls();
+        $calls = $this->filesSpy->getWriteCalls();
 
         // Assert - Verify call details
         $this->assertCount(3, $calls, 'Should have 3 calls (data + metadata as group, classname)');
@@ -70,14 +70,14 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Check first call (data file, written as a group with its metadata)
         $dataCall = $calls[0];
-        $this->assertEquals('atomicWriteAll', $dataCall['method']);
+        $this->assertEquals('writeGroup', $dataCall['method']);
         $this->assertStringEndsWith('.obj', $dataCall['filename']);
         $this->assertGreaterThan(0, $dataCall['data_length']);
         $this->assertIsFloat($dataCall['timestamp']);
 
         // Check second call (metadata file, committed after the data)
         $metadataCall = $calls[1];
-        $this->assertEquals('atomicWriteAll', $metadataCall['method']);
+        $this->assertEquals('writeGroup', $metadataCall['method']);
         $this->assertStringEndsWith('.metadata', $metadataCall['filename']);
         $this->assertGreaterThan(0, $metadataCall['data_length']);
 
@@ -113,18 +113,18 @@ class ObjectStorageSpyWriterTest extends TestCase
         clearstatcache();
         $initialDataTime = filemtime($dataFile);
         $initialMetadataTime = filemtime($metadataFile);
-        $initialCallCount = $this->writerSpy->getAtomicWriteCallCount();
+        $initialCallCount = $this->filesSpy->getWriteCallCount();
 
         // Wait to ensure timestamp difference would be detectable
         sleep(1);
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act - Store unchanged object multiple times
         $this->storage->store($user, $uuid);
         $this->storage->store($user, $uuid);
         $this->storage->store($user, $uuid);
 
-        $subsequentCallCount = $this->writerSpy->getAtomicWriteCallCount();
+        $subsequentCallCount = $this->filesSpy->getWriteCallCount();
 
         // Get final file timestamps
         clearstatcache();
@@ -152,21 +152,21 @@ class ObjectStorageSpyWriterTest extends TestCase
 
         // Initial store
         $uuid = $this->storage->store($user);
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Store unchanged - should not write
         $this->storage->store($user, $uuid);
-        $unchangedCalls = $this->writerSpy->getAtomicWriteCallCount();
+        $unchangedCalls = $this->filesSpy->getWriteCallCount();
 
         // Make a change and store - should write
         $user->name = 'Changed Name';
         $this->storage->store($user, $uuid);
-        $changedCalls = $this->writerSpy->getAtomicWriteCallCount();
+        $changedCalls = $this->filesSpy->getWriteCallCount();
 
         // Store unchanged again - should not write
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
         $this->storage->store($user, $uuid);
-        $unchangedAgainCalls = $this->writerSpy->getAtomicWriteCallCount();
+        $unchangedAgainCalls = $this->filesSpy->getWriteCallCount();
 
         // Assert
         $this->assertEquals(0, $unchangedCalls, 'Unchanged store should not write');

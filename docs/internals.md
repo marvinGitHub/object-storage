@@ -15,13 +15,13 @@ The two files are written together as a group (`writeObjectFiles()`), so a crash
 
 ## Verbs
 
-`ObjectStorage` holds the construction, the configuration and the caches; the rest is grouped by concern in traits of `Storage\` (together one class): `PathsTrait`, `StoringTrait`, `LoadingTrait`, `DurabilityTrait` (the files as a group, checksums, interrupted writes, see [Durability](durability.md)), `MetadataTrait`, `LifetimeTrait`, `DeletingTrait`, `ListingTrait`, `StubsTrait`; besides them `UUID\IdentityTrait`, `Transfer\RawAccessTrait`, `Locking\RetainedLocksTrait` and `Constraint\ConstraintsTrait`. Each verb has one meaning:
+`ObjectStorage` holds the construction, the configuration and the caches; the rest is grouped by concern in traits of `Storage\` (together one class): `PathsTrait`, `StoringTrait`, `LoadingTrait`, `DurabilityTrait` (the files as a group, checksums, interrupted writes, see [Durability](durability.md)), `JsonTrait` (`readJson()`, `writeJson()`), `MetadataTrait`, `LifetimeTrait`, `DeletingTrait`, `ListingTrait`, `StubsTrait`; besides them `UUID\IdentityTrait`, `Transfer\RawAccessTrait`, `Locking\RetainedLocksTrait` and `Constraint\ConstraintsTrait`. Each verb has one meaning:
 
 | Verb | Level | Examples |
 |---|---|---|
 | `load` / `store` / `delete` | objects, with caches, locks and events — the public API | `load()`, `store()`, `delete()`, `loadMetadata()` |
 | `readRaw` / `writeRaw` | objects as stored, unchanged (`Transfer\RawAccessTrait`) | copying into another storage |
-| `read…` / `write…` | files, without caches | `readObjectFiles()`, `writeObjectFiles()`, `writeMetadata()`; JSON files through `File\JsonFileReader` and `File\JsonFileWriter` (`getJsonFileReader()`, `getJsonFileWriter()`) |
+| `read…` / `write…` | files, without caches | `readObjectFiles()`, `writeObjectFiles()`, `writeMetadata()`, `readJson()`, `writeJson()`; see [Files](#files) |
 | `hydrate…` | stored data → object | `hydrateObject()`, `hydrateProperties()`, `hydrateArray()` |
 | `serialize…` | object → stored data | `serializeGraph()` |
 
@@ -34,7 +34,7 @@ flowchart TD
     load["load($uuid)<br/>cache hit? expired?<br/>shared or exclusive lock"] --> fromFiles["loadFromFiles()"]
     fromFiles --> readFiles["readObjectFiles()<br/>metadata + data,<br/>checksum verified,<br/>interrupted write completed"]
     readRaw["readRaw($uuid)<br/>shared lock"] --> readFiles
-    readFiles --> decode["JsonFileReader::decode()<br/>invalid JSON: safe mode"]
+    readFiles --> decode["unserialize() of the strategy<br/>invalid data: safe mode"]
     decode --> hydrate["hydrateObject()"]
     hydrate --> unserialize["__unserialize() of the class<br/>(references resolved first)"]
     hydrate --> properties["hydrateProperties()<br/>→ hydrateArray():<br/>references become lazy load references"]
@@ -65,14 +65,20 @@ flowchart TD
 
 `delete()` → `deleteObject()` per object: the files and the stub are removed under the lock of the object; `findChildrenToDelete()` decides by the child deletion policy which referenced objects follow (`delete($uuid, applyChildDeletionPolicy: false)` deletes only the object itself).
 
-## JSON files
+## Files
 
-`File\JsonFileReader` and `File\JsonFileWriter` read and write all JSON files of the storage — metadata, the registry of class names — and the assignments of configurations:
+The storage reads and writes its files in layers, each with `read()` and `write()`:
 
-- The reader reports a file it can't read (logged, `IO_READ_FAILURE`) and returns `null`; invalid JSON is reported (`JSON_DECODING_FAILURE`) and throws a `SerializationFailureException`. `tryDecode()` only looks into JSON, e.g. for references, without reporting a damaged file.
-- What a damaged file means is the caller's decision: the storage passes `onCorruption`, which enables safe mode (`getJsonFileReader()`); `readRaw()` and deleting don't.
-- The writer encodes with the maximum depth of the strategy and writes atomically with the writer of the storage, so readers see the previous or the new contents.
-- `getJsonFileReader()` and `getJsonFileWriter()` create them per use, so a reader, writer or strategy set later is used.
+| Layer | Reads and writes | Errors |
+|---|---|---|
+| `File\IO\AdapterInterface` | the file system (the real one, or one injected by tests) | |
+| `File\FilesInterface` (`File\Files`, `getFiles()`/`setFiles()`) | bytes: `read()` (`null` if there is no file), `write()` atomically (staging file, rename), `writeGroup()` several files so that after a crash all or none hold the new contents, `recover()` completes an interrupted group; flushed to disk unless `setSyncEnabled(false)` | `IOException` |
+| `File\JsonFiles` (with `File\Json`) | JSON: `read()` decodes, `write()` encodes, with a maximum depth, errors thrown | `CorruptedFileException` for invalid JSON, `SerializationFailureException` for values JSON can't hold |
+| `readJson()`, `writeJson()` of the storage (`Storage\JsonTrait`) | its JSON files: metadata, the registry of class names | reports a file it can't read (logged, `IO_READ_FAILURE`); invalid JSON is a damaged file: `JSON_DECODING_FAILURE`, safe mode |
+| `readObjectFiles()`, `writeObjectFiles()` (`Storage\DurabilityTrait`) | an object: its data and metadata as a group, the checksum verified, an interrupted write completed | `ChecksumMismatchException`, `InvalidFileFormatException`, safe mode |
+
+- The data of an object is encoded and decoded by the strategy (`serialize()`, `unserialize()`); the checksum is computed over its bytes, so it is read as bytes (`getFiles()->read()`). Data that only is looked into, e.g. for references while deleting or copying, is decoded without taking invalid data as a damaged storage.
+- `JsonFiles` is created per use with the files and the maximum depth of the strategy, so files or a strategy set later are used. Configurations (`Configuration\Registry`) use it on their own.
 
 ## Retained locks
 

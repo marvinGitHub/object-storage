@@ -194,14 +194,19 @@ trait DeletingTrait
         }
 
         $metadata = $this->loadMetadata($uuid);
-        $reader = $this->getJsonFileReader();
-        $raw = $reader->read($filePath);
-        if (null === $metadata || null === $raw) {
+        if (null === $metadata) {
             return [];
         }
 
-        // the object is deleted anyway: invalid data means no references to follow, not a damaged storage
-        $data = $reader->tryDecode($raw);
+        // the object is deleted anyway: data that can't be read or decoded means no references to follow, not a
+        // damaged storage
+        try {
+            $raw = $this->getFiles()->read($filePath);
+            $data = null === $raw ? null : $strategy?->unserialize($raw);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return [];
+        }
         if (null === $data) {
             return [];
         }

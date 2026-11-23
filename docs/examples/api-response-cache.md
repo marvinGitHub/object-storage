@@ -30,7 +30,7 @@ final class CachedResponse
 $cache = new ObjectStorage(__DIR__ . '/var/http-cache');
 
 // cached responses can always be fetched again: no need to flush every write to disk
-$cache->getWriter()->setSyncEnabled(false);
+$cache->getFiles()->setSyncEnabled(false);
 ```
 
 Without `fsync`, writes are much faster and still atomic; only a power loss may lose the most recent entries, which is fine for a cache. See [Durability](../durability.md#fsync).

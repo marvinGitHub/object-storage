@@ -88,7 +88,7 @@ foreach ($objectCaches as $objectCacheName => $objectCache) {
                 $objectCache
             );
 
-			$storage->getWriter()->setSyncEnabled(false);
+			$storage->getFiles()->setSyncEnabled(false);
 
 			return $storage;
         };

@@ -5,8 +5,7 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
-use melia\ObjectStorage\File\Reader;
-use melia\ObjectStorage\File\ReaderInterface;
+use melia\ObjectStorage\File\Files;
 
 /**
  * A file that exists but can't be read (e.g. held open by another program) is an error, not a missing object:
@@ -19,17 +18,18 @@ final class ObjectStorageReadFailureTest extends TestCase
      */
     private function failReading(string $suffix): void
     {
-        $this->storage->setReader(new class($suffix) implements ReaderInterface {
+        $this->storage->setFiles(new class($suffix) extends Files {
             public function __construct(private readonly string $suffix)
             {
+                parent::__construct();
             }
 
-            public function read(string $filename): string
+            public function read(string $path): ?string
             {
-                if (str_ends_with($filename, $this->suffix)) {
-                    throw new IOException('Unable to read file: ' . $filename);
+                if (str_ends_with($path, $this->suffix)) {
+                    throw new IOException('Unable to read file: ' . $path);
                 }
-                return (new Reader())->read($filename);
+                return parent::read($path);
             }
         });
     }

@@ -2,14 +2,14 @@
 
 namespace melia\ObjectStorage\Storage;
 
+use melia\ObjectStorage\Event\Context\IOContext;
+use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
-use melia\ObjectStorage\File\JsonFileReader;
-use melia\ObjectStorage\File\JsonFileWriter;
+use melia\ObjectStorage\File\Json;
 use melia\ObjectStorage\Metadata\Metadata;
-use melia\ObjectStorage\Strategy\StrategyInterface;
 use Throwable;
 
 /**
@@ -97,17 +97,19 @@ trait DurabilityTrait
      * Reads the data file of an object.
      *
      * @return string|null The data; null if there is no data file (nothing stored, or deleted).
-     * @throws IOException If the data file exists but can't be read: reported as an error, not as a missing object,
-     *                     since callers create an object anew if none is stored (and would overwrite this one).
+     * @throws IOException If the data file exists but can't be read (logged, IO_READ_FAILURE dispatched): reported as
+     *         an error, not as a missing object, since callers create an object anew if none is stored (and would
+     *         overwrite this one).
      */
     protected function readDataFile(string $filename): ?string
     {
-        $raw = $this->getJsonFileReader()->read($filename);
-        if (null === $raw && $this->getIOAdapter()->isFile($filename)) {
-            throw new IOException('Unable to read the data file ' . $filename);
+        try {
+            return $this->getFiles()->read($filename);
+        } catch (IOException $e) {
+            $this->getLogger()?->log($e);
+            $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($filename));
+            throw $e;
         }
-
-        return $raw;
     }
 
     /**
@@ -122,9 +124,9 @@ trait DurabilityTrait
         $this->getActiveTransaction()?->track($uuid);
 
         [$filePathData, $filePathMetadata] = $this->getObjectFiles($uuid);
-        $this->getWriter()->atomicWriteAll([
+        $this->getFiles()->writeGroup([
             $filePathData => $data,
-            $filePathMetadata => $this->getJsonFileWriter()->encode($metadata),
+            $filePathMetadata => (new Json())->encode($metadata),
         ]);
     }
 
@@ -137,7 +139,7 @@ trait DurabilityTrait
     protected function recoverInterruptedWrite(string $uuid): bool
     {
         try {
-            $recovered = $this->getWriter()->recover($this->getObjectFiles($uuid));
+            $recovered = $this->getFiles()->recover($this->getObjectFiles($uuid));
         } catch (Throwable $e) {
             $this->getLogger()?->log($e);
             return false;
@@ -232,32 +234,5 @@ trait DurabilityTrait
     protected static function generateChecksum(string $data, string $algorithm): string
     {
         return hash($algorithm, $data);
-    }
-
-    /**
-     * Reads the files of the storage and decodes their JSON, with its reader, logger, events and maximum depth.
-     * Created per use, so a reader or strategy set later is used.
-     *
-     * @param bool $safeModeOnCorruption Whether invalid JSON enables safe mode (a damaged file of the storage);
-     *        false to report it only.
-     */
-    protected function getJsonFileReader(bool $safeModeOnCorruption = true): JsonFileReader
-    {
-        return new JsonFileReader(
-            $this->getReader(),
-            $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH,
-            $this->getLogger(),
-            $this->getEventDispatcher(),
-            $safeModeOnCorruption ? fn() => $this->getStateHandler()?->enableSafeMode() : null,
-        );
-    }
-
-    /**
-     * Encodes JSON and writes the files of the storage atomically, with its writer and maximum depth. Created per
-     * use, so a writer or strategy set later is used.
-     */
-    protected function getJsonFileWriter(): JsonFileWriter
-    {
-        return new JsonFileWriter($this->getWriter(), $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
     }
 }

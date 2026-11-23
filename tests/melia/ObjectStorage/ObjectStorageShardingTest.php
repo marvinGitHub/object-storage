@@ -18,15 +18,15 @@ class ObjectStorageShardingTest extends TestCase
         $this->assertEquals($this->storage->getShardDir() . '/8/7/877d51df-aebd-4807-8701-95e007e9b701.obj', $this->storage->getFilePathData($uuid));
     }
 
-    public function testSyncCanBeDisabledOnTheDefaultWriter(): void
+    public function testSyncCanBeDisabledOnTheDefaultFiles(): void
     {
         $storage = new ObjectStorage($this->storage->getStorageDir());
 
-        $storage->getWriter()->setSyncEnabled(false);
+        $storage->getFiles()->setSyncEnabled(false);
 
-        // the default writer is kept, so the setting applies to later writes
-        $this->assertSame($storage->getWriter(), $storage->getWriter());
-        $this->assertFalse($storage->getWriter()->syncEnabled());
+        // the default files are kept, so the setting applies to later writes
+        $this->assertSame($storage->getFiles(), $storage->getFiles());
+        $this->assertFalse($storage->getFiles()->syncEnabled());
 
         $uuid = $storage->store(new ChildObject('child', 1));
         $this->assertSame('child', (new ObjectStorage($this->storage->getStorageDir()))->load($uuid)->title);
@@ -35,7 +35,7 @@ class ObjectStorageShardingTest extends TestCase
     #[DataProvider('provideSyncSettings')]
     public function testRebuildingStubsMovesObjectsWithoutClassNameAside(bool $sync): void
     {
-        $this->storage->getWriter()->setSyncEnabled($sync);
+        $this->storage->getFiles()->setSyncEnabled($sync);
         $uuid = $this->storage->store(new ChildObject('child', 1));
 
         // corrupt the metadata: no class name

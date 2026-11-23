@@ -55,7 +55,12 @@ trait RawAccessTrait
 
             // the data is verified by its checksum: looked into for references only
             $references = [];
-            $decoded = $this->getJsonFileReader(safeModeOnCorruption: false)->tryDecode($data);
+            try {
+                $decoded = $this->getStrategy()?->unserialize($data);
+            } catch (Throwable $e) {
+                $this->getLogger()?->log($e);
+                $decoded = null;
+            }
             if (null !== $decoded) {
                 foreach (static::findReferences($decoded, $metadata->getReservedReferenceName()) as [$reference]) {
                     if ($reference !== $uuid) {

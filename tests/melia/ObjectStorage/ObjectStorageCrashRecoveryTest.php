@@ -5,7 +5,7 @@ namespace Tests\melia\ObjectStorage;
 use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\File\Files;
 use melia\ObjectStorage\ObjectStorage;
 use RuntimeException;
 use Throwable;
@@ -22,7 +22,7 @@ final class ObjectStorageCrashRecoveryTest extends TestCase
      */
     private function storeAndCrashAtCommit(object $object, ?string $uuid, int $crashAt): void
     {
-        $crashingWriter = new class ($crashAt) extends Writer {
+        $crashingWriter = new class ($crashAt) extends Files {
             private int $commits = 0;
 
             public function __construct(private readonly int $crashAt)
@@ -40,7 +40,7 @@ final class ObjectStorageCrashRecoveryTest extends TestCase
         };
 
         $crashingStorage = new ObjectStorage($this->storage->getStorageDir());
-        $crashingStorage->setWriter($crashingWriter);
+        $crashingStorage->setFiles($crashingWriter);
 
         try {
             $crashingStorage->store($object, $uuid);
@@ -57,8 +57,8 @@ final class ObjectStorageCrashRecoveryTest extends TestCase
 
     private function assertNoPendingFiles(string $uuid): void
     {
-        $this->assertFileDoesNotExist($this->storage->getFilePathData($uuid) . Writer::SUFFIX_PENDING);
-        $this->assertFileDoesNotExist($this->storage->getFilePathMetadata($uuid) . Writer::SUFFIX_PENDING);
+        $this->assertFileDoesNotExist($this->storage->getFilePathData($uuid) . Files::SUFFIX_PENDING);
+        $this->assertFileDoesNotExist($this->storage->getFilePathMetadata($uuid) . Files::SUFFIX_PENDING);
     }
 
     public function testUpdateInterruptedBetweenCommitsIsRecovered(): void
@@ -109,7 +109,7 @@ final class ObjectStorageCrashRecoveryTest extends TestCase
     {
         $uuid = $this->storage->store(new ChildObject('before', 1));
 
-        $failingWriter = new class extends Writer {
+        $failingWriter = new class extends Files {
             protected function writePending(string $filename, ?string $data = null): void
             {
                 if (str_ends_with($filename, '.metadata')) {
@@ -120,7 +120,7 @@ final class ObjectStorageCrashRecoveryTest extends TestCase
         };
 
         $failingStorage = $this->restart();
-        $failingStorage->setWriter($failingWriter);
+        $failingStorage->setFiles($failingWriter);
 
         try {
             $failingStorage->store(new ChildObject('after', 2), $uuid);

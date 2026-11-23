@@ -13,15 +13,12 @@ use melia\ObjectStorage\Event\DispatcherAwareTrait;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\File\Files;
+use melia\ObjectStorage\File\FilesAwareTrait;
+use melia\ObjectStorage\File\FilesInterface;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\IO\RealAdapter;
-use melia\ObjectStorage\File\Reader;
-use melia\ObjectStorage\File\ReaderAwareTrait;
-use melia\ObjectStorage\File\ReaderInterface;
-use melia\ObjectStorage\File\Writer;
-use melia\ObjectStorage\File\WriterAwareTrait;
-use melia\ObjectStorage\File\WriterInterface;
 use melia\ObjectStorage\Locking\Backends\SymfonyLockAdapter;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Locking\RetainedLocksTrait;
@@ -32,6 +29,7 @@ use melia\ObjectStorage\Runtime\ClassRenameMapAwareTrait;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Storage\DeletingTrait;
 use melia\ObjectStorage\Storage\DurabilityTrait;
+use melia\ObjectStorage\Storage\JsonTrait;
 use melia\ObjectStorage\Storage\LifetimeTrait;
 use melia\ObjectStorage\Storage\ListingTrait;
 use melia\ObjectStorage\Storage\LoadingTrait;
@@ -61,6 +59,7 @@ use WeakReference;
  * - PathsTrait: the paths of the files, sharded by UUID
  * - StoringTrait, LoadingTrait, DeletingTrait: objects, with caches, locks and events
  * - DurabilityTrait: the files of objects as stored (both files as a group, checksums, interrupted writes)
+ * - JsonTrait: readJson() and writeJson(), the JSON files of the storage
  * - MetadataTrait, LifetimeTrait: metadata, expiration and touching
  * - ListingTrait, StubsTrait: existence, listing, the index of objects by class and the registry of class names
  * - IdentityTrait (UUID), RawAccessTrait (Transfer), RetainedLocksTrait (Locking), ConstraintsTrait (Constraint)
@@ -73,7 +72,8 @@ use WeakReference;
  *     delete() → deleteObject() (per object, following the child deletion policy)
  * - readRaw / writeRaw: objects as stored, unchanged, e.g. to copy them (Transfer\RawAccessTrait)
  * - read… / write…: files, without caches: readObjectFiles() and writeObjectFiles() are shared by load() and
- *   readRaw(), store() and writeRaw(); they verify checksums and complete interrupted writes
+ *   readRaw(), store() and writeRaw(); they verify checksums and complete interrupted writes. Files are read and
+ *   written in layers: getFiles() (bytes, atomic, fsync) → readJson()/writeJson() (JSON) → the object files
  * - hydrate… / serialize…: converting between stored data and objects
  * - loadMetadata() reads metadata through its cache, reloadMetadata() from the file
  *
@@ -83,9 +83,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 {
     use AdapterAwareTrait;
 
-    use WriterAwareTrait;
-
-    use ReaderAwareTrait;
+    use FilesAwareTrait;
 
     use DispatcherAwareTrait;
 
@@ -100,6 +98,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use StoringTrait; // store(): objects and the objects they reference
     use LoadingTrait; // load(): objects, references loaded lazily
     use DurabilityTrait; // readObjectFiles(), writeObjectFiles(): data and metadata as a group, checksums, recovery
+    use JsonTrait; // readJson(), writeJson(): the JSON files of the storage (metadata, registry of class names)
     use MetadataTrait; // loadMetadata(), writeMetadata(), getRevision(), getClassName()
     use LifetimeTrait; // setLifetime(), setExpiration(), expired(), touch()
     use DeletingTrait; // delete(), deleteIfExpired(): following the child deletion policy
@@ -112,11 +111,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use ConstraintsTrait; // addConstraint(), checkConstraints(): rules written objects have to satisfy, e.g. unique values
 
     /**
-     * The writer and reader created by default, which follow the IO adapter of the storage (see setIOAdapter()).
+     * The files created by default, which follow the IO adapter of the storage (see setIOAdapter()).
      */
-    private ?Writer $defaultWriter = null;
-
-    private ?Reader $defaultReader = null;
+    private ?Files $defaultFiles = null;
 
     /**
      * The default checksum algorithm used for checksum validation.
@@ -186,7 +183,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @param AdapterInterface|null $adapter
      * @param StrategyInterface|null $strategy
      * @param Configuration|null $configuration Settings to create the lock adapter and the caches from, and to
-     *        apply to the strategy and the writer; arguments passed explicitly take precedence. See Registry for
+     *        apply to the strategy and the files; arguments passed explicitly take precedence. See Registry for
      *        named configurations.
      * @throws IOException If the storage directory cannot be created.
      * @throws ConfigurationException If the lock adapter or a cache of the configuration can't be created.
@@ -309,8 +306,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * Sets the IO adapter of the storage, which the default writer and reader use as well. A writer or reader set
-     * explicitly keeps its own adapter.
+     * Sets the IO adapter of the storage, which the default files use as well. Files set explicitly keep their own
+     * adapter.
      *
      * @param AdapterInterface|null $ioAdapter
      * @return void
@@ -319,45 +316,25 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     {
         $this->ioAdapter = $ioAdapter;
 
-        if (null !== $this->defaultWriter && $this->writer === $this->defaultWriter) {
-            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
-        }
-
-        if (null !== $this->defaultReader && $this->reader === $this->defaultReader) {
-            $this->defaultReader->setIOAdapter($this->getIOAdapter());
+        if (null !== $this->defaultFiles && $this->files === $this->defaultFiles) {
+            $this->defaultFiles->setIOAdapter($this->getIOAdapter());
         }
     }
 
     /**
-     * Returns the writer; unless one was set, a default writer is created once, using the IO adapter of the storage.
-     *
-     * @return WriterInterface
+     * The files of the storage, which reads and writes them through it (see FilesInterface); unless set, default
+     * files are created once, using the IO adapter of the storage. E.g. `getFiles()->setSyncEnabled(false)` where
+     * durability doesn't matter.
      */
-    public function getWriter(): WriterInterface
+    public function getFiles(): FilesInterface
     {
-        if (null === $this->writer) {
-            $this->defaultWriter = new Writer();
-            $this->defaultWriter->setIOAdapter($this->getIOAdapter());
-            $this->writer = $this->defaultWriter;
+        if (null === $this->files) {
+            $this->defaultFiles = new Files();
+            $this->defaultFiles->setIOAdapter($this->getIOAdapter());
+            $this->files = $this->defaultFiles;
         }
 
-        return $this->writer;
-    }
-
-    /**
-     * Returns the reader; unless one was set, a default reader is created once, using the IO adapter of the storage.
-     *
-     * @return ReaderInterface
-     */
-    public function getReader(): ReaderInterface
-    {
-        if (null === $this->reader) {
-            $this->defaultReader = new Reader();
-            $this->defaultReader->setIOAdapter($this->getIOAdapter());
-            $this->reader = $this->defaultReader;
-        }
-
-        return $this->reader;
+        return $this->files;
     }
 
     /**

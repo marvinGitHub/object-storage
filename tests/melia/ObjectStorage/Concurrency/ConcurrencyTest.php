@@ -3,7 +3,7 @@
 namespace Tests\melia\ObjectStorage\Concurrency;
 
 use FilesystemIterator;
-use melia\ObjectStorage\File\Writer;
+use melia\ObjectStorage\File\Files;
 use melia\ObjectStorage\ObjectStorage;
 use PHPUnit\Framework\Attributes\Group;
 use RecursiveDirectoryIterator;
@@ -175,7 +175,7 @@ class ConcurrencyTest extends TestCase
         $leftovers = [];
         $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($storage->getStorageDir(), FilesystemIterator::SKIP_DOTS));
         foreach ($files as $file) {
-            if (str_ends_with($file->getFilename(), Writer::SUFFIX_PENDING) || str_contains($file->getFilename(), Writer::SUFFIX_STAGING . '.')) {
+            if (str_ends_with($file->getFilename(), Files::SUFFIX_PENDING) || str_contains($file->getFilename(), Files::SUFFIX_STAGING . '.')) {
                 $leftovers[] = $file->getPathname();
             }
         }

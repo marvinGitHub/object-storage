@@ -28,15 +28,15 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
         $parentUuid = $this->storage->store($parent);
         $childUuid = $child->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act: modify child, then store only the parent
         $child->value = 11;
         $this->storage->store($parent, $parentUuid);
 
         // Assert: parent store must not cascade-write the child under ChildWrite::NEVER
-        $parentCalls = count($this->writerSpy->getCallsForUuid($parentUuid));
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $parentCalls = count($this->filesSpy->getCallsForUuid($parentUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
 
         $this->assertGreaterThanOrEqual(0, $parentCalls, 'Parent may or may not be written depending on change detection');
         $this->assertSame(0, $childCalls, 'Child must NOT be written when policy is NEVER and parent is stored');
@@ -54,14 +54,14 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
         $parentUuid = $this->storage->store($parent);
         $childUuid = $child->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act: modify child but store parent; since child already exists, it must NOT be written under IF_NOT_EXIST
         $child->value = 999;
         $this->storage->store($parent, $parentUuid);
 
         // Assert
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
         $this->assertSame(
             0,
             $childCalls,
@@ -80,14 +80,14 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
         $parentUuid = $this->storage->store($parent);
         $childUuid = $child->getUUID();
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
 
         // Act: modify child, then store parent; ALWAYS should cascade and persist the child change
         $child->value = 12345;
         $this->storage->store($parent, $parentUuid);
 
         // Assert: child must have been written due to cascading under ALWAYS
-        $childCalls = count($this->writerSpy->getCallsForUuid($childUuid));
+        $childCalls = count($this->filesSpy->getCallsForUuid($childUuid));
         $this->assertGreaterThan(
             0,
             $childCalls,
@@ -128,6 +128,6 @@ class ObjectStorageChildPersistencePolicyTest extends TestCase
 
         $this->storage->store($parent2);
         $this->assertNotNull($child2->getUUID());
-        $this->assertGreaterThan(0, count($this->writerSpy->getCallsForUuid($child2->getUUID())));
+        $this->assertGreaterThan(0, count($this->filesSpy->getCallsForUuid($child2->getUUID())));
     }
 }

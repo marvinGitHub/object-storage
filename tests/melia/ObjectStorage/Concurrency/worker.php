@@ -25,7 +25,7 @@ $args = array_slice($argv, 5);
 
 $storage = new ObjectStorage($dir);
 // durability is not under test here, flushing to disk would only slow the workers down
-$storage->getWriter()->setSyncEnabled(false);
+$storage->getFiles()->setSyncEnabled(false);
 
 $report = static function (Throwable $e): void {
     $root = $e;

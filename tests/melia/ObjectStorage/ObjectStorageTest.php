@@ -17,7 +17,7 @@ use melia\ObjectStorage\Exception\MaxDepthExceededException;
 use melia\ObjectStorage\Exception\MetadataSavingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
-use melia\ObjectStorage\File\WriterInterface;
+use melia\ObjectStorage\File\FilesInterface;
 use melia\ObjectStorage\LazyLoadReference;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
@@ -91,9 +91,9 @@ class ObjectStorageTest extends TestCase
         $this->storage->clearCache();
         $this->assertTrue($this->storage->exists($uuid));
 
-        $this->writerSpy->clearMethodCalls();
+        $this->filesSpy->clearMethodCalls();
         $this->storage->store($object, $uuid);
-        $this->assertCount(0, $this->writerSpy->getCallsForUuid($uuid)); // 1 means only metadata has been written
+        $this->assertCount(0, $this->filesSpy->getCallsForUuid($uuid)); // 1 means only metadata has been written
     }
 
     public function testStore()
@@ -676,19 +676,24 @@ class ObjectStorageTest extends TestCase
     /**
      * A writer whose group writes (data + metadata) fail, other calls are no-ops.
      */
-    private function createWriterFailingOnGroupWrite(): WriterInterface
+    private function createWriterFailingOnGroupWrite(): FilesInterface
     {
-        return new class implements WriterInterface {
-            public function atomicWrite(string $filename, ?string $data = null): void
+        return new class implements FilesInterface {
+            public function read(string $path): ?string
+            {
+                return is_file($path) ? file_get_contents($path) : null;
+            }
+
+            public function write(string $path, string $contents): void
             {
             }
 
-            public function atomicWriteAll(array $files): void
+            public function writeGroup(array $files): void
             {
                 throw new \RuntimeException('Simulated write failure');
             }
 
-            public function recover(array $filenames): bool
+            public function recover(array $paths): bool
             {
                 return false;
             }
@@ -706,7 +711,7 @@ class ObjectStorageTest extends TestCase
 
     public function testStoreThrowsWhenWriterMockFailsOnDataWrite(): void
     {
-        $this->storage->setWriter($this->createWriterFailingOnGroupWrite());
+        $this->storage->setFiles($this->createWriterFailingOnGroupWrite());
 
         $obj = new stdClass();
         $obj->foo = 'bar';
@@ -726,8 +731,8 @@ class ObjectStorageTest extends TestCase
         $obj->foo = 'before';
         $uuid = $this->storage->store($obj);
 
-        $writer = $this->storage->getWriter();
-        $this->storage->setWriter($this->createWriterFailingOnGroupWrite());
+        $writer = $this->storage->getFiles();
+        $this->storage->setFiles($this->createWriterFailingOnGroupWrite());
 
         $obj->foo = 'after';
         try {
@@ -737,7 +742,7 @@ class ObjectStorageTest extends TestCase
             // expected
         }
 
-        $this->storage->setWriter($writer);
+        $this->storage->setFiles($writer);
         $this->storage->clearCache();
 
         $this->assertSame('before', $this->storage->load($uuid)->foo);

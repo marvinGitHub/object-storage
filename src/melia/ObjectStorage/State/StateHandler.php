@@ -7,7 +7,7 @@ use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\File\IO\AdapterAwareTrait;
 use melia\ObjectStorage\File\IO\RealAdapter;
-use melia\ObjectStorage\File\WriterAwareTrait;
+use melia\ObjectStorage\File\FilesAwareTrait;
 use Throwable;
 
 class StateHandler
@@ -18,7 +18,7 @@ class StateHandler
     }
 
     use AdapterAwareTrait;
-    use WriterAwareTrait;
+    use FilesAwareTrait;
     use DispatcherAwareTrait;
 
     /**
@@ -68,7 +68,7 @@ class StateHandler
     public function enableSafeMode(): bool
     {
         try {
-            $this->getWriter()->atomicWrite($this->getFilePathSafeMode(), '1');
+            $this->getFiles()->write($this->getFilePathSafeMode(), '1');
             $this->getEventDispatcher()?->dispatch(Events::SAFE_MODE_ENABLED);
             return true;
         } catch (Throwable $e) {

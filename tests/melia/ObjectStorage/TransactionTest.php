@@ -203,10 +203,10 @@ class TransactionTest extends TestCase
         $txn->store((object)['name' => 'changed'], $existing);
         $journal = $txn->getJournalDirectory();
 
-        $writesBefore = $this->writerSpy->getAtomicWriteCallCount();
+        $writesBefore = $this->filesSpy->getWriteCallCount();
         $this->assertTrue($txn->rollback());
 
-        $this->assertSame($writesBefore, $this->writerSpy->getAtomicWriteCallCount(), 'nothing was written, so nothing is restored');
+        $this->assertSame($writesBefore, $this->filesSpy->getWriteCallCount(), 'nothing was written, so nothing is restored');
         $this->assertTrue($txn->isRolledBack());
         $this->assertFalse($txn->isActive());
         $this->assertSame(0, $txn->getOperationCount());

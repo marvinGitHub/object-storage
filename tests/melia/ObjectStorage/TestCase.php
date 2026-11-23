@@ -9,7 +9,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 
 class TestCase extends \PHPUnit\Framework\TestCase
 {
-    protected WriterSpy $writerSpy;
+    protected FilesSpy $filesSpy;
 
     protected ObjectStorage|MockObject $storage;
 
@@ -37,8 +37,8 @@ class TestCase extends \PHPUnit\Framework\TestCase
         $this->storage = $this->createStorage();
 
         // Create spy that wraps the real writer
-        $this->writerSpy = new WriterSpy($this->storage->getWriter());
-        $this->storage->setWriter($this->writerSpy);
+        $this->filesSpy = new FilesSpy($this->storage->getFiles());
+        $this->storage->setFiles($this->filesSpy);
     }
 
     protected function createTemporaryDirectory(): string

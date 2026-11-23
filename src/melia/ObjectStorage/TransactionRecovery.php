@@ -58,7 +58,7 @@ final class TransactionRecovery
         return new Journal(
             self::directory($storage) . DIRECTORY_SEPARATOR . $transactionId,
             $storage->getIOAdapter(),
-            $storage->getWriter()->syncEnabled(),
+            $storage->getFiles()->syncEnabled(),
         );
     }
 
