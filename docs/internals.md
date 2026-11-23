@@ -15,7 +15,7 @@ The two files are written together as a group (`writeObjectFiles()`), so a crash
 
 ## Verbs
 
-`ObjectStorage` is grouped in sections (creating, paths, storing, loading, files, metadata, lifetime, deleting, listing, stubs, cache). Each verb has one meaning:
+`ObjectStorage` holds the construction, the configuration and the caches; the rest is grouped by concern in traits of `Storage\` (together one class): `PathsTrait`, `StoringTrait`, `LoadingTrait`, `DurabilityTrait` (the files as a group, checksums, interrupted writes, see [Durability](durability.md)), `MetadataTrait`, `LifetimeTrait`, `DeletingTrait`, `ListingTrait`, `StubsTrait`; besides them `UUID\IdentityTrait`, `Transfer\RawAccessTrait`, `Locking\RetainedLocksTrait` and `Constraint\ConstraintsTrait`. Each verb has one meaning:
 
 | Verb | Level | Examples |
 |---|---|---|
@@ -114,8 +114,8 @@ $journal->remove();              // removes the journal
 
 | To change … | look at |
 |---|---|
-| how properties are written | `serializeGraph()`, `transformValueForGraph()`, the strategy (`Strategy\Standard`) |
-| how properties are restored | `hydrateProperties()`, `hydrateArray()`, `resolveReferences()` |
-| checksums, crash recovery | `readObjectFiles()`, `findMatchingMetadata()`, `recoverInterruptedWrite()`, `File\Writer` |
-| what the metadata holds | `Metadata\Metadata`, `writeMetadata()`, `loadMetadata()` |
+| how properties are written | `serializeGraph()`, `transformValueForGraph()` (`Storage\StoringTrait`), the strategy (`Strategy\Standard`) |
+| how properties are restored | `hydrateProperties()`, `hydrateArray()`, `resolveReferences()` (`Storage\LoadingTrait`) |
+| checksums, crash recovery | `readObjectFiles()`, `findMatchingMetadata()`, `recoverInterruptedWrite()` (`Storage\DurabilityTrait`), `File\Writer` |
+| what the metadata holds | `Metadata\Metadata`, `writeMetadata()`, `loadMetadata()` (`Storage\MetadataTrait`) |
 | locking | `load()`, `storeObject()`, `deleteObject()`, `Locking\LockAdapterInterface`, `Locking\RetainedLocksTrait` |
