@@ -43,6 +43,8 @@ final class Planner
     public const array FUNCTIONS = [
         'LOWER' => [1, 1], 'UPPER' => [1, 1], 'LENGTH' => [1, 1], 'TRIM' => [1, 1], 'ABS' => [1, 1],
         'ROUND' => [1, 2], 'SUBSTR' => [2, 3], 'COALESCE' => [1, null], 'IFNULL' => [2, 2],
+        // the number of elements of a list or the keys of a map; NULL for anything else
+        'CARDINALITY' => [1, 1],
         // texts joined, NULL left out; CONCAT_WS with a separator first
         'CONCAT' => [1, null], 'CONCAT_WS' => [2, null],
         // regular expressions (PCRE): the first match, the text with the matches replaced

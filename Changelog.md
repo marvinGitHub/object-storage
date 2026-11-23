@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+### Added
+- OQL *(experimental)*: `CARDINALITY(list)` — the number of elements of a list (or keys of a map), also in `WHERE`, `ORDER BY` and `GROUP BY`: `WHERE CARDINALITY(p.tags) >= 10`. An empty list is 0, a value that isn't a list `NULL`. Highlighted in the query console. `OqlTest::testCardinalityCountsElements`.
+
 ## [1.0.0-rc.9] - 2026-11-13
 
 The ninth release candidate of 1.0: OQL statements can be stopped (a maximum runtime, or cancelled) with what they wrote rolled back, every statement reports what it cost (time, objects read, how its objects were found), and a slow query log records the expensive ones. The viewer's console runs queries without PHP's time limit, can stop them, and shows the slow queries by query. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc8-to-100-rc9).

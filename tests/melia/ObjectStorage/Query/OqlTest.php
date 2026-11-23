@@ -96,6 +96,21 @@ class OqlTest extends TestCase
         $this->assertSame([[['red', 'sweet']]], $this->query("SELECT tags FROM Product WHERE name = 'Apple'"), 'lists as arrays');
     }
 
+    public function testCardinalityCountsElements(): void
+    {
+        $this->assertSame(
+            [['Apple', 2], ['Banana', 1], ['Chair', 0], ['ÄPFEL', 0]],
+            $this->query('SELECT name, CARDINALITY(tags) FROM Product ORDER BY name')
+        );
+        $this->assertSame([['Apple'], ['Banana']], $this->query('SELECT name FROM Product WHERE CARDINALITY(tags) >= 1 ORDER BY name'), 'in WHERE');
+        $this->assertSame([['Apple'], ['Banana']], $this->query('SELECT name FROM Product p WHERE CARDINALITY(p.tags) BETWEEN 1 AND 2 ORDER BY CARDINALITY(p.tags) DESC'), 'with an alias, in ORDER BY');
+        $this->assertSame([[0, 2], [1, 1], [2, 1]], $this->query('SELECT CARDINALITY(tags) AS n, COUNT(*) FROM Product GROUP BY n ORDER BY n'), 'in GROUP BY');
+        $this->assertSame([['Apple', 1], ['Chair', 0]], $this->query("SELECT name, CARDINALITY(labels) FROM Product WHERE name IN ('Apple', 'Chair') ORDER BY name"), 'a list of references');
+        $this->assertSame([['Apple', 1], ['Chair', null]], $this->query("SELECT name, CARDINALITY(labels.*.title) FROM Product WHERE name IN ('Apple', 'Chair') ORDER BY name"), 'the values through references; none: NULL');
+        $this->assertSame([[null, null, null, null]], $this->query("SELECT CARDINALITY(name), CARDINALITY(price), CARDINALITY(category), CARDINALITY(description) FROM Product WHERE name = 'Apple'"), 'not a list (a single reference too): NULL');
+        $this->assertSame([[null]], $this->query("SELECT CARDINALITY(price) FROM Product WHERE name = 'ÄPFEL'"), 'NULL');
+    }
+
     public function testObjectsThatAreGone(): void
     {
         $furniture = $this->query("SELECT category FROM Product WHERE name = 'Chair'")[0][0];

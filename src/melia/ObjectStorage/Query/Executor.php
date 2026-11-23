@@ -895,6 +895,9 @@ final class Executor
                 return mb_strtoupper(Values::text($first), 'UTF-8');
             case 'LENGTH':
                 return mb_strlen(Values::text($first), 'UTF-8');
+            case 'CARDINALITY':
+                // as in SQL for arrays (and Countable values); objects have no schema, so not a list (a text, a number) is NULL, not an error
+                return is_countable($first) ? count($first) : null;
             case 'TRIM':
                 return trim(Values::text($first), ' ');
             case 'ABS':

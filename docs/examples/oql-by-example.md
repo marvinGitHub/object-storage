@@ -312,7 +312,7 @@ ORDER BY name
 | Homa | Homa – Berlin | Homa – Berlin | Homa, Berlin, +49 30 2222222 |
 | Kim | NULL | Kim –  | Kim |
 
-Functions: `LOWER`, `UPPER`, `LENGTH`, `TRIM`, `SUBSTR(text, start [, length])`, `ABS`, `ROUND(number [, digits])`, `COALESCE`, `IFNULL`, `CONCAT`, `CONCAT_WS`, `REGEXP_SUBSTR`, `REGEXP_REPLACE`, and those of [dates](#dates-and-now).
+Functions: `LOWER`, `UPPER`, `LENGTH`, `CARDINALITY(list)` (the number of elements: `WHERE CARDINALITY(tags) >= 10`), `TRIM`, `SUBSTR(text, start [, length])`, `ABS`, `ROUND(number [, digits])`, `COALESCE`, `IFNULL`, `CONCAT`, `CONCAT_WS`, `REGEXP_SUBSTR`, `REGEXP_REPLACE`, and those of [dates](#dates-and-now).
 
 ### Math
 
