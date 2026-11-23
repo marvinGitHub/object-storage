@@ -4,8 +4,32 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.10] - 2026-11-23
+
+The tenth release candidate of 1.0: an audit for data loss. Fixed are the ways the storage could lose or change data without notice (a failed rename on Windows, values JSON can't hold stored as `null`, read errors taken as "nothing stored", copies instead of updates of loaded objects, rebuilding stubs and purging expired objects without the lock), and OQL statements that could change or delete more objects than they should have. **Read [UPGRADE.md](UPGRADE.md#from-100-rc9-to-100-rc10) before upgrading**: storing invalid UTF-8 or `NAN` fails now, and some OQL statements that ran before are errors.
+
 ### Added
 - OQL *(experimental)*: `CARDINALITY(list)` — the number of elements of a list (or keys of a map), also in `WHERE`, `ORDER BY` and `GROUP BY`: `WHERE CARDINALITY(p.tags) >= 10`. An empty list is 0, a value that isn't a list `NULL`. Highlighted in the query console. `OqlTest::testCardinalityCountsElements`.
+- `ObjectStorage::getUuidOf($object)`: the UUID `store()` would use for an instance, null if it is unknown. `ObjectStorage::deleteIfExpired($uuid)`: deletes an object if it has expired, checked under its lock.
+
+### Fixed
+Ways data could be lost or changed without notice:
+- A failed rename (e.g. Windows, while a virus scanner holds the new file open) deleted the target file and tried again: if the second attempt failed as well, the object's data was gone and `load()` returned `null`. `RealAdapter::rename()` never deletes the target anymore; it retries a few times while the source exists and reports a failure leaving both files as they were. This also removes a race of a reader completing an interrupted write with the writer's commit, which could delete the just written metadata. `RealAdapterTest::testFailedRenameKeepsTheTarget`.
+- The maximum depth was ORed into the flags of `json_encode()` (`Standard::serialize()`): with the default depth 512 that is `JSON_PARTIAL_OUTPUT_ON_ERROR`, so strings that aren't valid UTF-8 were stored as `null` and `NAN`/`INF` as `0`, with a matching checksum; other depths could add flags such as `JSON_NUMERIC_CHECK` (`"01234"` stored as `1234`). Such values fail the store now (`ObjectSavingFailureException`), see `docs/serialization.md`. `ObjectStorageStrategyTest`.
+- A data file that exists but couldn't be read was loaded as `null` ("nothing stored"), so code creating the object anew overwrote it; it fails with an `ObjectLoadingFailureException` now. An unreadable registry of class names was written anew with a single class. `ObjectStorageReadFailureTest`.
+- `store()` without a UUID of an instance returned by `load()` stored a copy under a new UUID for objects without `AwareInterface` (and left the loaded object unchanged); so did `Transaction::store()` without a UUID for every object without `AwareInterface`. Both update the loaded object now. Objects loaded as references of another one (lazily, or for `__unserialize()`) are written along with it as before. `ObjectStorageLoadedIdentityTest`.
+- Rebuilding the stubs moved objects without readable metadata aside without their lock and without completing an interrupted write: an object being written by another process, or recoverable after a crash, ended up in `corrupted/`. `StubRebuilderTest::testObjectWithInterruptedWriteIsRecoveredNotMovedAside`.
+- `maintenance:purge-expired` deleted objects whose lifetime another process had extended after they were found expired. `ObjectStorageDeleteIfExpiredTest`.
+
+### Breaking (experimental)
+OQL statements that changed or deleted more objects than they should have (`OqlDataLossTest`):
+- A referenced object that exists but can't be read (locked by another process beyond the timeout, damaged) was `NULL`, so `DELETE … WHERE p.category.title IS NULL` deleted products with a perfectly fine category; it fails the statement now.
+- `--` right after a value (`SET n = 50--5 WHERE …`, or `n-` followed by a negative number) started a comment that swallowed the `WHERE`; it is an error now.
+- A script ran its statements before reading the later ones, so `DELETE FROM T;` followed by `WHERE …` deleted everything before failing; every statement is read first now.
+- `LIKE` needing more backtracking than PCRE allows was false, so `NOT LIKE` held for matching texts; it is an error now (a text that isn't valid UTF-8 gives `NULL`, as for `REGEXP`).
+- `NAN` as a parameter, and a calculation without a finite result, made `>` and `!=` hold for every object; such a parameter is an error, such a result `NULL`.
+- `COMMIT` and `ROLLBACK` in a dry run (`query(…, dryRun: true)`, `script(…, dryRun: true)`) committed or rolled back for real; they do nothing in a dry run now.
+- A stale stub could make a full scan (and so `UPDATE`/`DELETE`) reach an object of another class; the class is checked for every object now.
 
 ## [1.0.0-rc.9] - 2026-11-13
 

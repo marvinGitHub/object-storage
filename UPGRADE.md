@@ -1,5 +1,21 @@
 # Upgrading
 
+## From 1.0.0-rc.9 to 1.0.0-rc.10
+
+Nothing has to be migrated. Check:
+
+- **Strings that aren't valid UTF-8, `NAN` and `INF`** were stored as `null` (or `0`) without an error; `store()` fails with an `ObjectSavingFailureException` now. Encode binary data (e.g. `base64_encode()`) and convert other encodings (`mb_convert_encoding()`) before storing, see [Serialization](docs/serialization.md#values-json-cant-hold). Objects stored before keep what was written.
+- **A data file that exists but can't be read** made `load()` return `null`; it throws an `ObjectLoadingFailureException` now.
+- **Storing a loaded object without a UUID** (objects without `AwareInterface`): `store($storage->load($uuid))` and `Transaction::store()` update that object now, instead of storing a copy under a new UUID. Code relying on getting a copy passes a new UUID explicitly.
+- OQL *(experimental)*:
+  - A referenced object that exists but can't be read (locked beyond the timeout, damaged) fails the statement instead of being `NULL`.
+  - `--` right after a value (`50--5`) is an error: write `50 - -5`, and a space before a comment.
+  - A script with an invalid statement runs nothing (`ScriptException` without results) instead of running the statements before it.
+  - `LIKE` that PCRE can't evaluate (too much backtracking) is an error; `NAN`/`INF` parameters are errors; a calculation without a finite result is `NULL`.
+  - `COMMIT` and `ROLLBACK` do nothing in a dry run.
+
+`ObjectStorage::loadReferenced()` is internal (used by `LazyLoadReference`).
+
 ## From 1.0.0-rc.8 to 1.0.0-rc.9
 
 Nothing has to be migrated. OQL *(experimental)*: the constructor of `Oql` takes `interrupt` and `observer` (both optional, after `useIndexes`; pass them by name), and `Result` has `$statistics` (`null` for a `Result` created by hand).
