@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.11] - 2026-11-23
+
+The eleventh release candidate of 1.0: `ObjectStorage` is split into traits by concern, and files are read and written in layers, each with `read()` and `write()` — the bytes (`File\Files`, atomic and flushed to disk), JSON (`File\JsonFiles`), and in the storage `readJson()`/`writeJson()` and the files of objects. Files, behavior and safe mode are unchanged. **Read [UPGRADE.md](UPGRADE.md#from-100-rc10-to-100-rc11) before upgrading** if you use the reader or writer of the storage (e.g. `getWriter()->setSyncEnabled(false)`).
+
+### Changed
+- `ObjectStorage` is split into traits by concern (`Storage\PathsTrait`, `StoringTrait`, `LoadingTrait`, `DurabilityTrait`, `JsonTrait`, `MetadataTrait`, `LifetimeTrait`, `DeletingTrait`, `ListingTrait`, `StubsTrait`; the identity map in `UUID\IdentityTrait`); the class keeps the construction, the configuration and the caches. The same methods with the same visibility, see `docs/internals.md`.
+- **Breaking:** files are read and written in layers, each with `read()` and `write()` (`docs/internals.md`, "Files"). `File\FilesInterface` / `File\Files` (`getFiles()`, `setFiles()`) replace `File\ReaderInterface`, `File\WriterInterface`, `File\Reader`, `File\Writer` (`getReader()`, `setReader()`, `getWriter()`, `setWriter()`): `read()` (`null` if there is no file, an `IOException` if it can't be read), `write()` (was `atomicWrite()`), `writeGroup()` (was `atomicWriteAll()`), `recover()`, `syncEnabled()`, `setSyncEnabled()`. `File\JsonFiles` (`read()`, `write()`) and `File\Json` (`encode()`, `decode()`) replace `File\JsonFileReader` and `File\JsonFileWriter`; invalid JSON throws a `CorruptedFileException` (a `SerializationFailureException`) instead of calling `onCorruption`. In the storage, `readJson()` and `writeJson()` replace `getJsonFileReader()` and `getJsonFileWriter()`. The data of objects is decoded by the strategy (`unserialize()`, now with its maximum depth), as it is encoded by it. Behavior, file format, safe mode and events are unchanged. See [UPGRADE.md](UPGRADE.md#from-100-rc10-to-100-rc11).
+
 ## [1.0.0-rc.10] - 2026-11-23
 
 The tenth release candidate of 1.0: an audit for data loss. Fixed are the ways the storage could lose or change data without notice (a failed rename on Windows, values JSON can't hold stored as `null`, read errors taken as "nothing stored", copies instead of updates of loaded objects, rebuilding stubs and purging expired objects without the lock), and OQL statements that could change or delete more objects than they should have. **Read [UPGRADE.md](UPGRADE.md#from-100-rc9-to-100-rc10) before upgrading**: storing invalid UTF-8 or `NAN` fails now, and some OQL statements that ran before are errors.

@@ -1,5 +1,24 @@
 # Upgrading
 
+## From 1.0.0-rc.10 to 1.0.0-rc.11
+
+Nothing has to be migrated: the files are written as before. Code using the reader or writer of the storage changes names:
+
+| Before | Now |
+|---|---|
+| `$storage->getWriter()->setSyncEnabled(false)` | `$storage->getFiles()->setSyncEnabled(false)` |
+| `getReader()`, `getWriter()`, `setReader()`, `setWriter()` | `getFiles()`, `setFiles()` |
+| `File\ReaderInterface`, `File\WriterInterface` | `File\FilesInterface` |
+| `File\Reader`, `File\Writer` | `File\Files` |
+| `atomicWrite()`, `atomicWriteAll()` | `write()`, `writeGroup()` |
+| `ReaderInterface::read()` throws for a missing file | `FilesInterface::read()` returns `null` for a missing file, throws an `IOException` for one it can't read |
+| `File\JsonFileReader::readJson()`, `File\JsonFileWriter::write()` | `File\JsonFiles::read()`, `write()` |
+| `JsonFileWriter::encode()`, `JsonFileReader::decode()`/`tryDecode()` | `File\Json::encode()`, `decode()` (throws a `SerializationFailureException`) |
+| `onCorruption` of `JsonFileReader` | `JsonFiles::read()` throws a `CorruptedFileException` (a `SerializationFailureException`) for invalid JSON |
+| `getJsonFileReader()`, `getJsonFileWriter()` (protected) | `readJson()`, `writeJson()` |
+
+An own implementation of the writer implements `FilesInterface` now, with `read()` added. `StrategyInterface::unserialize()` decodes the data of objects when loading, as `serialize()` encodes it: an own strategy implements both.
+
 ## From 1.0.0-rc.9 to 1.0.0-rc.10
 
 Nothing has to be migrated. Check:
