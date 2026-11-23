@@ -280,14 +280,32 @@ class OqlTransactionTest extends TestCase
 
     public function testAFailingStatementStopsTheScriptAndRollsBackItsTransaction(): void
     {
+        // valid, but fails when it runs: the class doesn't exist
+        $script = "START TRANSACTION;\nUPDATE Product SET price = 0;\nSELECT nothing FROM NoSuchClass";
+        try {
+            $this->oql->script($script);
+            $this->fail('the third statement fails');
+        } catch (ScriptException $e) {
+            $this->assertSame(2, $e->statement);
+            $this->assertCount(2, $e->results);
+            $this->assertTrue($e->rolledBack);
+            $this->assertStringStartsWith('Statement 3: ', $e->getMessage());
+        }
+
+        $this->assertSame(['Apple' => 1.5, 'Banana' => 2, 'Chair' => 49], $this->prices());
+    }
+
+    public function testAnInvalidStatementStopsTheScriptBeforeAnythingRuns(): void
+    {
         $script = "START TRANSACTION;\nUPDATE Product SET price = 0;\nSELECT nothing FROM";
         try {
             $this->oql->script($script);
             $this->fail('the third statement is invalid');
         } catch (ScriptException $e) {
             $this->assertSame(2, $e->statement);
-            $this->assertCount(2, $e->results);
-            $this->assertTrue($e->rolledBack);
+            $this->assertSame([], $e->results, 'nothing ran');
+            $this->assertFalse($e->rolledBack);
+            $this->assertFalse($this->oql->inTransaction());
             $this->assertStringStartsWith('Statement 3: ', $e->getMessage());
             // the position and line are those in the script
             $this->assertStringContainsString('line 3', $e->getMessage());

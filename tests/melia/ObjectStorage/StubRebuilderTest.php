@@ -151,6 +151,21 @@ class StubRebuilderTest extends TestCase
         $this->assertFileExists($this->storage->getStorageDir() . '/corrupted/' . basename($this->storage->getFilePathData($uuid)));
     }
 
+    public function testObjectWithInterruptedWriteIsRecoveredNotMovedAside(): void
+    {
+        $uuid = $this->storage->store(new ArrayObject([1]));
+        // a new object whose write stopped after committing its data: its metadata is still pending
+        $metadata = $this->storage->getFilePathMetadata($uuid);
+        rename($metadata, $metadata . '.pending');
+
+        $progress = $this->createRebuilder(new ObjectStorage($this->storage->getStorageDir()))->rebuildStubs();
+
+        $this->assertSame(0, $progress['corrupted']);
+        $this->assertFileExists($this->storage->getFilePathData($uuid));
+        $this->assertFileExists($metadata);
+        $this->assertContains($uuid, iterator_to_array($this->storage->list(ArrayObject::class), false));
+    }
+
     public function testStateAndSnapshotsAreObjectsOfAnInternalStorage(): void
     {
         $this->storage->store(new ArrayObject([1]));

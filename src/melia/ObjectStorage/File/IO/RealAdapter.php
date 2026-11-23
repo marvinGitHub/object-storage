@@ -191,18 +191,34 @@ class RealAdapter implements AdapterInterface
         return @mkdir($dir, $mode, $recursive);
     }
 
+    /**
+     * Number of attempts of a rename: on Windows, a rename fails for a moment while another program (a virus
+     * scanner, an indexer, a backup) holds one of the files open.
+     */
+    private const int RENAME_ATTEMPTS = 5;
+
+    /**
+     * Renames a file atomically, replacing an existing target (on Windows too, PHP replaces the target).
+     *
+     * The target is never deleted before: if the rename fails after that, the previous content would be lost
+     * while the new one still has its old name. A failed rename is retried a few times instead, as long as the
+     * source exists, and reported by returning false, leaving both files as they were.
+     */
     public function rename(string $from, string $to, $context = null): bool
     {
-        $result = rename($from, $to, $context);
-
-        // ensure rename is atomic and overrides the file if it already exists
-        if (false === $result) {
-            if ($this->fileExists($to)) {
-                $this->unlink($to);
+        for ($attempt = 1; $attempt < self::RENAME_ATTEMPTS; $attempt++) {
+            if (@rename($from, $to, $context)) {
+                return true;
             }
-            $result = rename($from, $to, $context);
+            clearstatcache(true, $from);
+            if (!file_exists($from)) {
+                break;
+            }
+            usleep(10000 * $attempt);
         }
-        return $result;
+
+        // the last attempt reports its warning
+        return rename($from, $to, $context);
     }
 
     public function fileExists(string $filename): bool

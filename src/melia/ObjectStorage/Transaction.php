@@ -20,7 +20,6 @@ use melia\ObjectStorage\Exception\TransactionNotActiveException;
 use melia\ObjectStorage\Exception\TransactionRollbackException;
 use melia\ObjectStorage\Journal\Journal;
 use melia\ObjectStorage\Storage\StorageAwareTrait;
-use melia\ObjectStorage\UUID\AwareInterface;
 use melia\ObjectStorage\UUID\Generator\AwareTrait;
 use melia\ObjectStorage\UUID\Generator\Generator;
 use Throwable;
@@ -288,7 +287,8 @@ class Transaction
     {
         $this->ensureTransactionActive();
 
-        $uuid = $uuid ?? ($object instanceof AwareInterface ? $object->getUUID() ?? $this->getGenerator()->generate() : $this->getGenerator()->generate());
+        // as store() of the storage determines it: an object loaded or stored before is updated, not copied
+        $uuid ??= $this->getStorage()->getUuidOf($object) ?? $this->getGenerator()->generate();
 
         $this->lockObject($uuid);
         $this->recordBefore($uuid);

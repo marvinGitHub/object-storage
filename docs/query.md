@@ -58,14 +58,14 @@ ALTER CLASS Class DROP ATTRIBUTE property [, DROP ATTRIBUTE property] …
 ALTER TABLE Class DROP [COLUMN] property [, DROP [COLUMN] property] …   -- the same, as in SQL
 ```
 
-Keywords ignore case; `--` starts a comment up to the end of the line, `/* … */` is one too.
+Keywords ignore case; `--` starts a comment up to the end of the line, `/* … */` is one too. A `--` right after a value (`50--5`, `price-` followed by a negative number) is an error, since the comment would swallow the rest of the line, e.g. the `WHERE` of an `UPDATE`: write `50 - -5` or `50 - (-5)`, and a space before a comment.
 
 ### Classes and aliases
 
 - A class is named by its short name (`Product`), if only one stored class has it, or by its full name (`App\Entity\Product`, or in backticks or double quotes: `` `App\Entity\Product` ``). Class names ignore case, as in PHP. A class without stored objects gives no rows.
 - Without an alias, a source is named by the short name of its class: `SELECT Product.name FROM Product`.
 - A column is a name or a path of names: `name`, `p.name`, `p.category.title`. With one source, the alias may be left out; with several sources (joins) it is required.
-- **Paths lead into referenced objects**: `p.category.parent.title` follows the references to the category and its parent, at most three references per path (as the [search indexes](search.md#joins-paths-into-referenced-objects)). A referenced object that doesn't exist (anymore) or has expired gives `NULL`; so does a property that doesn't exist.
+- **Paths lead into referenced objects**: `p.category.parent.title` follows the references to the category and its parent, at most three references per path (as the [search indexes](search.md#joins-paths-into-referenced-objects)). A referenced object that doesn't exist (anymore) or has expired gives `NULL`; so does a property that doesn't exist. A referenced object that exists but can't be read — locked by another process beyond the lock timeout, or damaged — fails the statement instead: as `NULL`, `DELETE … WHERE p.category.title IS NULL` would delete products whose category is fine. (An object of the class itself that can't be read is left out, like one that doesn't exist.)
 - **`UUID` is the UUID of an object**, a reserved keyword: `SELECT UUID, name FROM Product WHERE UUID IN (?, ?)`, with several sources `p.UUID`, and at the end of a path the UUID of the referenced object there: `p.category.UUID` (`NULL` if there is no reference). It can be used wherever a value can: in the selection, conditions, `ON`, `GROUP BY`, `ORDER BY`, `UPDATE` and `DELETE`. As a keyword it ignores case; a property named uuid is written in backticks: `` p.`uuid` ``.
 - **The alias alone is the object** too, as its UUID: `SELECT p FROM Product p` lists the UUIDs; a reference is its UUID as well, so `JOIN Category c ON c = p.category` (or `ON c.UUID = p.category`) joins the referenced category.
 - Lists give arrays, also through references: `p.labels.title` gives the titles of all labels (`NULL` for an empty list). Lists can be selected, but not compared — except as follows.
@@ -96,7 +96,7 @@ Keywords ignore case; `--` starts a comment up to the end of the line, `/* … *
 
 The precedence of the operators, from the lowest, is that of SQLite: `OR`, `AND`, `NOT`, `= != IS IN LIKE REGEXP BETWEEN`, `< <= > >=`, `+ -`, `* / % DIV`, `||`, unary `-`. Parentheses group conditions and calculations, nested as deep as needed: `WHERE (name = 'Apple' OR name = 'Banana') AND NOT (price > 2 OR (price IS NULL AND active = false))`.
 
-`LIKE` matches the whole value: `%` any characters, `_` one character, a backslash takes the next character as it is (`'50\%'`); it ignores case, of all letters (`'äp%'` matches `ÄPFEL`).
+`LIKE` matches the whole value: `%` any characters, `_` one character, a backslash takes the next character as it is (`'50\%'`); it ignores case, of all letters (`'äp%'` matches `ÄPFEL`). A pattern of many `%` against a long text may need more backtracking than PCRE allows: that is an error, not "doesn't match" (which would make `NOT LIKE` hold). A number parameter must be finite (`NAN` and `INF` are errors), and a calculation without a finite result (`1e999 - 1e999`) is `NULL`.
 
 `REGEXP` matches a regular expression ([PCRE](https://www.php.net/manual/en/reference.pcre.pattern.syntax.php), with Unicode) **anywhere** in the value, as in MySQL and SQLite; `^` and `$` anchor it. Unlike `LIKE` it **minds case**; `(?i)` at the start ignores it. The pattern is written without delimiters, in a text (`'` doubled) or as a parameter; numbers and dates are matched as their text, `NULL` gives `NULL`. A pattern that isn't valid is an error (written in the query: before running).
 
@@ -193,7 +193,7 @@ The statements write the data of the objects as stored, like [copying](transfer.
   - The property must be able to hold a list (no type, `array`, `iterable`, `mixed`); the elements aren't checked, PHP has no types for them. Two targets that may name the same value (`tags[0]` and `tags[-1]`, `tags` and `tags[0]`, `tags[]` and `tags[0]`, a target of `SET` and one of `REMOVE`) are an error: set or remove a value once.
 - **`ALTER CLASS Class DROP ATTRIBUTE property`** removes properties from the stored data of all objects of the class, e.g. after removing them from the class: `ALTER CLASS Product DROP ATTRIBUTE discount, DROP ATTRIBUTE legacyCode`. For those coming from SQL, `ALTER TABLE Product DROP COLUMN discount` (or `DROP discount`) is the same. The objects are written like those of `UPDATE` (under their locks, new checksum and revision, indexes follow); the result lists those that had one of the properties. A property the class still declares isn't dropped (loading would leave it at its default or uninitialized): remove it from the class first; classes allowing dynamic properties (`stdClass`) and classes that aren't loadable aren't checked. Only properties of the object itself, no paths. A referenced object the property pointed to stays stored. `ALTER`, `CLASS`, `TABLE`, `DROP`, `ATTRIBUTE` and `COLUMN` aren't reserved: properties may be named so.
 - **Adding a property** (e.g. a date) has no statement of its own, as objects have no schema: declare it in the class with a default (`public ?DateTimeImmutable $paidAt = null;`, not as a promoted parameter: loading doesn't call the constructor), then fill it for the objects stored before: `UPDATE Purchase SET paidAt = NOW() WHERE paidAt IS NULL`. See [OQL by example](examples/oql-by-example.md#adding-a-property-eg-a-date).
-- **Dry run**: `query($query, dryRun: true)` computes and checks everything and returns the objects that would be written (for `INSERT` without UUIDs), writing nothing.
+- **Dry run**: `query($query, dryRun: true)` computes and checks everything and returns the objects that would be written (for `INSERT` without UUIDs), writing nothing. `START TRANSACTION`, `COMMIT` and `ROLLBACK` do nothing in a dry run: an open transaction is neither committed nor rolled back.
 
 ## Transactions and scripts
 
@@ -232,6 +232,7 @@ $result->rolledBack; // true if the script left a transaction open: it was rolle
 ```
 
 - Semicolons in texts, quoted names and comments don't separate statements. `?` parameters are numbered across the script, `:name` parameters are shared.
+- Every statement is read before the first one runs: a script with a statement that isn't valid (e.g. `DELETE FROM Product;` followed by `WHERE name = 'x'`, a semicolon in the wrong place) runs nothing (`ScriptException` with no results).
 - A failing statement throws a `ScriptException` (a `QueryException`): `$e->statement` (its index), `$e->results` (those of the statements before), `$e->rolledBack`; its position and line are those in the script. A transaction the script started is rolled back.
 - **Preview**: `script($script, preview: true)` runs everything and rolls it all back at the end: the results, `SELECT`s after the changes included, without keeping anything. Within the preview, `START TRANSACTION`, `COMMIT` and `ROLLBACK` work as usual, but `COMMIT` keeps the changes only until the end of the preview.
 

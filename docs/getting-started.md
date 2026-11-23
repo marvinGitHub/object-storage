@@ -92,7 +92,7 @@ $task->title = 'Write better docs';
 $storage->store($task);     // no UUID needed: the object knows it
 ```
 
-Objects without the interface keep their UUID inside the storage as long as the same instance is used in the same process; across processes, keep the UUID returned by `store()`.
+Objects without the interface keep their UUID inside the storage as long as the same instance is used in the same process — the instance returned by `load()` too, so storing it again updates the object (`$storage->getUuidOf($object)` tells the UUID); across processes, keep the UUID returned by `store()`.
 
 You can also choose the UUID yourself (it has to be a valid UUID v4):
 

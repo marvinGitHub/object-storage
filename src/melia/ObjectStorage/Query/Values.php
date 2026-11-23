@@ -259,7 +259,14 @@ final class Values
         return false === $result ? null : 1 === $result;
     }
 
-    public static function like(string $value, string $pattern): bool
+    /**
+     * Whether a text matches a LIKE pattern (% any text, _ one character, \ escapes; ignoring case).
+     *
+     * @return bool|null Null for a text that isn't valid UTF-8 (as REGEXP).
+     * @throws QueryException If the pattern can't be matched against the text, e.g. because it needs too much
+     *         backtracking: taken as "doesn't match", NOT LIKE would hold for a text that matches.
+     */
+    public static function like(string $value, string $pattern): ?bool
     {
         static $regexes = [];
         if (!isset($regexes[$pattern])) {
@@ -283,6 +290,14 @@ final class Values
             }
             $regexes[$pattern] = '/^' . $regex . '$/su';
         }
-        return 1 === preg_match($regexes[$pattern], mb_strtolower($value, 'UTF-8'));
+        $result = @preg_match($regexes[$pattern], mb_strtolower($value, 'UTF-8'));
+        if (false === $result) {
+            $error = preg_last_error();
+            if (PREG_BAD_UTF8_ERROR === $error) {
+                return null;
+            }
+            throw new QueryException(sprintf('LIKE \'%s\' can\'t be evaluated for a text of %d characters: %s', $pattern, mb_strlen($value, 'UTF-8'), preg_last_error_msg()));
+        }
+        return 1 === $result;
     }
 }

@@ -105,7 +105,7 @@ class LazyLoadReference implements AwareInterface, JsonSerializable
             }
 
             try {
-                $this->loadedObject = $storage->load($this->uuid);
+                $this->loadedObject = $storage instanceof ObjectStorage ? $storage->loadReferenced($this->uuid) : $storage->load($this->uuid);
             } catch (Throwable $e) {
                 $storage->getLogger()?->log($e);
             } finally {

@@ -136,11 +136,11 @@ class StubRebuilder extends SteppedMaintenance
                 foreach ($uuids as $uuid) {
                     $className = $storage->getClassName($uuid);
 
-                    if (empty($className)) {
-                        // without metadata or class: not loadable, as before moved aside
-                        $storage->markAsCorrupted($uuid);
+                    // without metadata or class: not loadable, as before moved aside; checked again under the lock,
+                    // after completing an interrupted write (the object may be being written right now)
+                    if (empty($className) && $storage->markAsCorruptedIfClassless($uuid)) {
                         $state['corrupted']++;
-                    } else {
+                    } elseif (!empty($className = $storage->getClassName($uuid))) {
                         $existed = is_file($storage->getFilePathStub($className, $uuid));
                         $storage->createStub($className, $uuid);
                         $state['created'] += $existed ? 0 : 1;

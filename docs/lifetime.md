@@ -39,6 +39,8 @@ $storage->expired($uuid);       // true once the lifetime is over
   vendor/bin/object-storage maintenance:purge-expired --dir var/storage
   ```
 
+  or in code, per object, with `$storage->deleteIfExpired($uuid)`. Both check the lifetime again under the lock of the object, as stored on disk: an object whose lifetime another process has extended in the meantime is kept.
+
 - **Lazily loaded references to expired objects** throw a `DanglingReferenceException` when they are accessed.
 - **Referenced objects get their own lifetime.** By default they don't expire with the object that references them. To let them inherit the lifetime, enable it on the strategy:
 

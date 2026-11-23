@@ -47,6 +47,14 @@ final class Lexer
                 continue;
             }
             if ('-' === $c && '-' === ($query[$i + 1] ?? '')) {
+                // "50--5" or "n-" . $delta with a negative delta: the comment would swallow the rest of the line,
+                // e.g. the WHERE of an UPDATE, which then changes every object; a comment is written apart
+                // not $query[-1]: a negative offset is the last character
+                $previous = $i > 0 ? $query[$i - 1] : ' ';
+                $endsComment = '/' === $previous && $i > 1 && '*' === $query[$i - 2];
+                if (!ctype_space($previous) && ';' !== $previous && !$endsComment) {
+                    throw QueryException::at('"--" right after a value starts a comment up to the end of the line; write "- -" or "-(…)" to subtract a negative number, or put a space before a comment', $query, $i);
+                }
                 $end = strpos($query, "\n", $i);
                 $i = false === $end ? $length : $end + 1;
                 continue;

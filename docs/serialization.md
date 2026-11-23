@@ -80,6 +80,10 @@ final class Report
 - `__sleep()` and `__wakeup()` are not used.
 - To exclude properties of many classes at once, use a [property persistence policy](configuration.md#property-persistence-and-hydration-which-properties-are-written-and-loaded) instead.
 
+## Values JSON can't hold
+
+Strings that aren't valid UTF-8 (e.g. Latin-1 text or binary data) and the floats `NAN`, `INF` and `-INF` can't be stored as JSON: `store()` fails with an `ObjectSavingFailureException` (its previous exception a `JsonException`), and nothing is written. Encode binary data yourself, e.g. with `base64_encode()`, and convert other encodings with `mb_convert_encoding()`.
+
 ## Type conversion on load
 
 JSON doesn't distinguish all PHP types. When a stored scalar doesn't match the declared type of a property, it is converted, as long as no information is lost: `"5"` becomes `5` for an `int` property, `2.0` becomes `2`. A lossy conversion, e.g. `"abc"` or `2.5` into an `int` property, fails with a `TypeConversionFailureException`. This mostly matters after changing the type of a property.

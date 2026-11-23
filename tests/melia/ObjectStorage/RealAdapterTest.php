@@ -76,6 +76,19 @@ class RealAdapterTest extends TestCase
         $this->assertSame('source', file_get_contents($to));
     }
 
+    public function testFailedRenameKeepsTheTarget()
+    {
+        $adapter = new RealAdapter();
+
+        $dir = $this->reserveRandomDirectory();
+        $to = $dir . '/to.txt';
+        file_put_contents($to, 'target');
+
+        // the source can't be renamed (it doesn't exist): the target must not be deleted on the way
+        $this->assertFalse(@$adapter->rename($dir . '/missing.txt', $to));
+        $this->assertSame('target', file_get_contents($to));
+    }
+
     public function testTempnam()
     {
         $adapter = new RealAdapter();

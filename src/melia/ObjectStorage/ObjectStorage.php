@@ -94,6 +94,7 @@ use melia\ObjectStorage\Strategy\StrategyInterface;
 use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
 use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
 use melia\ObjectStorage\UUID\Helper;
+use melia\ObjectStorage\UUID\IdentityTrait;
 use melia\ObjectStorage\UUID\Validator;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
 use Psr\SimpleCache\CacheInterface;
@@ -143,6 +144,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use RawAccessTrait;
     use RetainedLocksTrait; // retainLock(): exclusive locks kept across store()/delete(), for transactions
     use ConstraintsTrait; // addConstraint(), checkConstraints(): rules written objects have to satisfy, e.g. unique values
+    use IdentityTrait; // getUuidOf(): the UUID store() uses for an instance
 
  // readRaw(), writeRaw(): objects as stored, e.g. to copy them into another storage
 
@@ -196,12 +198,8 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
     protected WeakMap $processingStack;
 
-    /**
-     * Identity map containing holding the related uuids to objects
-     *
-     * @var WeakMap<object, string>
-     */
-    protected WeakMap $identityMap;
+    /** how many loads of referenced objects are running (loadReferenced()), nested ones included */
+    private int $loadingReferences = 0;
 
     /**
      * The revision each object was loaded or stored with by this instance, for optimistic locking.
@@ -620,7 +618,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         try {
             // 1) prefer UUID from parameter; otherwise from AwareInterface; otherwise REUSE from objectUuidMap mapping,
             //    only generate a new UUID if none is available
-            $uuid ??= Helper::getAssigned($object) ?? $this->identityMap[$object] ?? $this->getNextAvailableUuid();
+            $uuid ??= $this->getUuidOf($object) ?? $this->getNextAvailableUuid();
 
             /* use metadata to check for existence, since this will already warm up the metadata cache;
                this has to happen after resolving the UUID, otherwise updates without an explicit UUID go unnoticed */
@@ -1117,6 +1115,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             $cached = $cache?->get($uuid);
             if (null !== $cached) {
                 $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
+                $this->rememberLoaded($cached, $uuid);
                 return $cached;
             }
         }
@@ -1143,6 +1142,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
             $eventDispatcher?->dispatch(Events::AFTER_LOAD, static fn() => new Context($uuid));
 
+            if (null !== $object) {
+                $this->rememberLoaded($object, $uuid);
+            }
+
             return $object;
         } catch (Throwable $e) {
             if (!$lockedBefore && $lockAdapter?->isLockedByThisProcess($uuid)) {
@@ -1150,6 +1153,38 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             }
             $eventDispatcher?->dispatch(Events::OBJECT_LOADING_FAILURE, static fn() => new Context($uuid));
             throw new ObjectLoadingFailureException(message: sprintf('Unable to load object with uuid: %s', $uuid), previous: $e);
+        }
+    }
+
+    /**
+     * Loads a referenced object, for a LazyLoadReference or the references passed to __unserialize(). Unlike
+     * load() by the caller, the instance isn't remembered under its UUID (see rememberLoaded()).
+     *
+     * @internal
+     * @throws Throwable
+     */
+    public function loadReferenced(string $uuid): ?object
+    {
+        $this->loadingReferences++;
+        try {
+            return $this->load($uuid);
+        } finally {
+            $this->loadingReferences--;
+        }
+    }
+
+    /**
+     * Remembers the UUID of an instance returned by load(), so storing it again updates the object instead of
+     * storing a copy under a new UUID (objects without AwareInterface don't carry their UUID themselves).
+     *
+     * Not for objects loaded as references of another one: storing the referencing object writes referenced objects
+     * by the child persistence policy, which (by default) doesn't write existing ones; they are written as new
+     * objects, with their changes, as long as they aren't known (as before).
+     */
+    private function rememberLoaded(object $object, string $uuid): void
+    {
+        if (0 === $this->loadingReferences && !isset($this->identityMap[$object])) {
+            $this->identityMap[$object] = $uuid;
         }
     }
 
@@ -1357,7 +1392,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
                 $data[$key] = $this->restoreDateTime($value, $metadata);
             } else if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
-                $data[$key] = $this->restoring[$value[$reserved]] ?? $this->load($value[$reserved]);
+                $data[$key] = $this->restoring[$value[$reserved]] ?? $this->loadReferenced($value[$reserved]);
             } else {
                 $data[$key] = $this->resolveReferences($value, $metadata);
             }
@@ -1451,7 +1486,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             throw new InvalidFileFormatException('Unable to load metadata for: ' . $uuid);
         }
 
-        $raw = $this->getJsonFileReader()->read($filename);
+        $raw = $this->readDataFile($filename);
         if (null === $raw) {
             return null;
         }
@@ -1460,7 +1495,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         // metadata may be left by an interrupted write, which is completed before the files are read again
         $matchingMetadata = $this->findMatchingMetadata($uuid, $raw, $metadata);
         if (null === $matchingMetadata && $this->recoverInterruptedWrite($uuid)) {
-            $raw = $this->getJsonFileReader()->read($filename);
+            $raw = $this->readDataFile($filename);
             if (null === $raw) {
                 return null;
             }
@@ -1483,6 +1518,23 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         }
 
         return [$raw, $matchingMetadata, $filename];
+    }
+
+    /**
+     * Reads the data file of an object.
+     *
+     * @return string|null The data; null if there is no data file (nothing stored, or deleted).
+     * @throws IOException If the data file exists but can't be read: reported as an error, not as a missing object,
+     *                     since callers create an object anew if none is stored (and would overwrite this one).
+     */
+    protected function readDataFile(string $filename): ?string
+    {
+        $raw = $this->getJsonFileReader()->read($filename);
+        if (null === $raw && $this->getIOAdapter()->isFile($filename)) {
+            throw new IOException('Unable to read the data file ' . $filename);
+        }
+
+        return $raw;
     }
 
     /**
@@ -1993,6 +2045,43 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
+     * Deletes an object if it has expired, checked under its exclusive lock with its metadata as on disk: an object
+     * whose lifetime another process extended after it was found expired is kept.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool True if the object was expired and has been deleted, false if it isn't expired (or doesn't exist).
+     * @throws ObjectDeletionFailureException If the object can't be deleted.
+     */
+    public function deleteIfExpired(string $uuid): bool
+    {
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+
+        try {
+            if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
+                $lockAdapter->acquireExclusiveLock($uuid);
+                $lockedHere = true;
+            }
+
+            $this->reloadMetadata($uuid);
+            if (!$this->expired($uuid)) {
+                return false;
+            }
+
+            $this->delete($uuid);
+            return true;
+        } catch (ObjectDeletionFailureException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
+        } finally {
+            if ($lockedHere && !$this->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
+                $lockAdapter->releaseLock($uuid);
+            }
+        }
+    }
+
+    /**
      * Deletes a single object and determines which of the objects it references are deleted along with it,
      * according to the child deletion policy of the strategy.
      *
@@ -2415,6 +2504,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             // other processes may have registered class names since the registry was read
             $this->registeredClassNamesCache = null;
             $this->getRegisteredClassnames();
+            // an unreadable registry is not written over: the class names in it would be lost
+            if (null === $this->registeredClassNamesCache) {
+                throw new IOException('Unable to read the class name registry ' . $this->getFilePathClassnames());
+            }
             $this->registeredClassNamesCache[$className] = $className;
 
             $this->createDirectoryIfNotExist($this->getStubDirectory());
@@ -2440,7 +2533,12 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         $filenameClassnames = $this->getFilePathClassnames();
         if ($this->getIOAdapter()?->isFile($filenameClassnames)) {
-            $this->registeredClassNamesCache = $this->getJsonFileReader()->readJson($filenameClassnames) ?? [];
+            // unreadable: nothing is cached, so registerClassname() doesn't write over it and the next call reads again
+            $registered = $this->getJsonFileReader()->readJson($filenameClassnames);
+            if (null === $registered) {
+                return [];
+            }
+            $this->registeredClassNamesCache = $registered;
         } else {
             $this->registeredClassNamesCache = [];
         }
@@ -2546,6 +2644,57 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      * @throws IOException
      */
     public function markAsCorrupted(string $uuid): void
+    {
+        $this->moveToCorruptedArtifacts($uuid);
+    }
+
+    /**
+     * Moves the files of an object aside (see markAsCorrupted()) if it really has no class: under its lock, after
+     * completing an interrupted write. An object being written by another process at the moment, or whose write
+     * was interrupted by a crash, has its metadata (and class) only once that write is complete; and metadata that
+     * exists but can't be read at the moment is no reason to move the object aside either.
+     *
+     * @param string $uuid The unique identifier of the object.
+     * @return bool True if the files were moved aside, false if the object has a class (or doesn't exist).
+     * @throws IOException If the metadata exists but can't be read.
+     * @throws \melia\ObjectStorage\Exception\LockException If the object can't be locked.
+     */
+    public function markAsCorruptedIfClassless(string $uuid): bool
+    {
+        $lockAdapter = $this->getLockAdapter();
+        $lockedHere = false;
+        // in safe mode nothing can be locked for writing, but no other process writes either
+        if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid) && !$this->getStateHandler()?->safeModeEnabled()) {
+            $lockAdapter->acquireExclusiveLock($uuid);
+            $lockedHere = true;
+        }
+
+        try {
+            $this->recoverInterruptedWrite($uuid);
+
+            $adapter = $this->getIOAdapter();
+            $filePathMetadata = $this->getFilePathMetadata($uuid);
+            if ($adapter->isFile($filePathMetadata) && false === $adapter->fileGetContents($filePathMetadata)) {
+                throw new IOException('Unable to read the metadata file ' . $filePathMetadata);
+            }
+
+            if (!$this->exists($uuid) || !empty($this->reloadMetadata($uuid)?->getClassName())) {
+                return false;
+            }
+
+            $this->moveToCorruptedArtifacts($uuid);
+            return true;
+        } finally {
+            if ($lockedHere && !$this->isLockRetained($uuid)) {
+                $lockAdapter->releaseLock($uuid);
+            }
+        }
+    }
+
+    /**
+     * @throws IOException
+     */
+    private function moveToCorruptedArtifacts(string $uuid): void
     {
         $this->getEventDispatcher()?->dispatch(Events::OBJECT_CORRUPTION_DETECTED, static fn() => new Context($uuid));
         $adapter = $this->getIOAdapter();

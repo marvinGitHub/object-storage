@@ -5,6 +5,7 @@ namespace melia\ObjectStorage\Query;
 use DateTimeImmutable;
 use DateTimeZone;
 use Generator;
+use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Path\Path;
@@ -85,7 +86,7 @@ final class Executor
                     // the older half goes
                     $this->referenced = array_slice($this->referenced, intdiv(self::MAX_REFERENCED, 2), null, true);
                 }
-                $this->referenced[$uuid] = $this->read($uuid);
+                $this->referenced[$uuid] = $this->read($uuid, strict: true);
             }
             $object = $this->referenced[$uuid];
             return null === $object ? null : [$object['data'], $object['reserved']];
@@ -214,8 +215,9 @@ final class Executor
         foreach ($uuids as $uuid) {
             $this->checkpoint();
             $object = $this->read((string)$uuid);
-            // an index may name an object of another class (a unique index of a parent class, a UUID)
-            if (null !== $object && (null === $access->uuids || $this->storage->getClassName($object['uuid']) === $class)) {
+            // an index may name an object of another class (a unique index of a parent class, a UUID), and so may a
+            // stale stub (e.g. left by an interrupted change of the class): a DELETE must not reach other classes
+            if (null !== $object && $object['class'] === $class) {
                 yield $object;
             }
         }
@@ -238,16 +240,29 @@ final class Executor
     }
 
     /**
-     * An object as stored; null if it doesn't exist, has expired or can't be read. Not kept: reading many objects
-     * leaves nothing behind (the caches of the storage are bounded too).
+     * An object as stored; null if it doesn't exist or has expired. Not kept: reading many objects leaves nothing
+     * behind (the caches of the storage are bounded too).
+     *
+     * An object that exists but can't be read (locked by another process beyond the timeout, damaged):
+     * - as a row of a source (not strict) it is left out, like an object that doesn't exist: a statement isn't
+     *   stopped by an object it doesn't concern, e.g. one locked by a transaction of another process;
+     * - as a referenced object (strict) it fails the statement: taken as NULL, a condition like
+     *   `ref.name IS NULL` would hold, and a DELETE or UPDATE would change objects whose referenced object is fine.
+     *
+     * @throws QueryException If strict and the object exists but can't be read.
      */
-    private function read(string $uuid): ?array
+    private function read(string $uuid, bool $strict = false): ?array
     {
         $this->objectsRead++;
         try {
             return self::objectOf($this->storage->readRaw($uuid));
-        } catch (Throwable) {
+        } catch (ObjectNotFoundException) {
             return null;
+        } catch (Throwable $e) {
+            if (!$strict) {
+                return null;
+            }
+            throw new QueryException(sprintf('The referenced object %s can\'t be read: %s', $uuid, $e->getMessage()), null, $e);
         }
     }
 
@@ -257,14 +272,14 @@ final class Executor
      *
      * Also when it was created and modified (seconds since 1970, for CREATED() and MODIFIED()).
      *
-     * @return array{uuid: string, data: array, reserved: string, dateTime: string, created: ?float, modified: ?float}|null
+     * @return array{uuid: string, class: string, data: array, reserved: string, dateTime: string, created: ?float, modified: ?float}|null
      */
     public static function objectOf(RawObject $raw): ?array
     {
         $data = $raw->isExpired() ? null : json_decode($raw->data, true);
         return is_array($data)
             ? [
-                'uuid' => $raw->uuid, 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName(),
+                'uuid' => $raw->uuid, 'class' => (string)$raw->metadata->getClassName(), 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName(),
                 'created' => $raw->metadata->getTimestampCreation(), 'modified' => $raw->metadata->getTimestampModification(),
             ]
             : null;
@@ -697,7 +712,8 @@ final class Executor
                 if (null === $operand || null === $pattern) {
                     return null;
                 }
-                return Values::like($operand, $pattern) !== $expression->negated;
+                $matches = Values::like($operand, $pattern);
+                return null === $matches ? null : $matches !== $expression->negated;
             default:
                 throw new QueryException('Unknown expression ' . $expression::class);
         }
@@ -843,7 +859,7 @@ final class Executor
         if (null === $left || null === $right) {
             return null;
         }
-        return match ($operator) {
+        $result = match ($operator) {
             '+' => $left + $right,
             '-' => $left - $right,
             '*' => $left * $right,
@@ -854,6 +870,10 @@ final class Executor
             'DIV' => Math::div($left, $right),
             default => throw new QueryException('Unknown operator ' . $operator),
         };
+
+        // NULL for a result that isn't a finite number (as the functions of Math): NAN compares as greater than
+        // and unequal to everything, so "x > 1e999 - 1e999" held for every object
+        return is_float($result) && !is_finite($result) ? null : $result;
     }
 
     private function function(string $name, array $arguments): mixed

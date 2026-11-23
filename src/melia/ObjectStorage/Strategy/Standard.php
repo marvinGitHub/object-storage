@@ -54,11 +54,15 @@ class Standard implements StrategyInterface
     }
 
     /**
+     * Encodes the graph as JSON. Values JSON can't hold (strings that aren't valid UTF-8, NAN, INF) fail the
+     * serialization instead of being stored as null or 0, which would lose them without notice.
+     *
+     * @param int $depth The maximum depth of the graph; only the depth, never part of the flags.
      * @throws JsonException
      */
     public function serialize(array $graph, int $depth): ?string
     {
-        return json_encode($graph, JSON_THROW_ON_ERROR | $depth, $depth) ?: null;
+        return json_encode($graph, JSON_THROW_ON_ERROR, $depth) ?: null;
     }
 
     /**

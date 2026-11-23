@@ -241,6 +241,10 @@ final class Planner
         if (!(null === $value || is_scalar($value))) {
             throw new QueryException(sprintf('The parameter %s must be a string, number, boolean, date or null', is_int($key) ? '?' : ':' . $key), $parameter->position);
         }
+        // NAN compares as greater than and unequal to everything: "balance > ?" would hold for every object
+        if (is_float($value) && !is_finite($value)) {
+            throw new QueryException(sprintf('The parameter %s must be a finite number', is_int($key) ? '?' : ':' . $key), $parameter->position);
+        }
         return new Literal($value);
     }
 

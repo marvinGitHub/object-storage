@@ -197,7 +197,9 @@ final class Oql
             if ($explain) {
                 throw new QueryException('EXPLAIN takes a SELECT');
             }
-            return $this->control($statement);
+            // a dry run changes nothing: neither ends an open transaction (a ROLLBACK would discard its changes, a
+            // COMMIT keep them) nor starts one
+            return $dryRun ? new Result([], [], $statement->action) : $this->control($statement);
         }
         $planner = new Planner($parameters);
         $executor = new Executor($this->storage, $this->search, $this->unique, $this->useIndexes, $this->interrupt);
@@ -238,6 +240,18 @@ final class Oql
     public function script(string $script, array $parameters = [], bool $dryRun = false, ?int $maxRows = null, bool $preview = false): ScriptResult
     {
         $statements = Parser::splitScript($script);
+
+        // every statement is read before the first one runs: a semicolon in the wrong place ("DELETE FROM T;
+        // WHERE …") must not run the statement before it, cut off from its WHERE, and fail only afterwards
+        foreach ($statements as $index => $range) {
+            $query = self::isolate($script, $range['start'], $range['end']);
+            try {
+                Parser::parse(self::explains($query) ? (string)preg_replace('/^(\s*)EXPLAIN\b/i', '$1       ', $query, 1) : $query);
+            } catch (QueryException $e) {
+                $message = count($statements) > 1 ? sprintf('Statement %d: %s', $index + 1, $e->getMessage()) : $e->getMessage();
+                throw new ScriptException($message, $e->position, $index, [], false, $e);
+            }
+        }
 
         $outer = null;
         if ($preview) {

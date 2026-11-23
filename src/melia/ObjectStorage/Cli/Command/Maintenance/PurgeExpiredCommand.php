@@ -80,7 +80,11 @@ final class PurgeExpiredCommand extends BaseCommand
                             continue;
                         }
 
-                        $storage->delete($uuid);
+                        // checked again under the lock: the lifetime may have been extended meanwhile
+                        if (!$storage->deleteIfExpired($uuid)) {
+                            $expiredFound--;
+                            continue;
+                        }
                         $deleted++;
 
                         $this->io->writeln('Deleted: ' . $uuid);
