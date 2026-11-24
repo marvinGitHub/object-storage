@@ -74,15 +74,12 @@ trait LoadingTrait
             return null;
         }
 
-        $cache = $this->getCache();
-
         // For non-exclusive reads a cache hit can be served immediately without locking,
         // as no exclusivity guarantee was requested. An exclusive load always reads the
         // stored state under the lock (see below), so it never short-circuits here.
         if (!$exclusive) {
-            $cached = $cache?->get($uuid);
+            $cached = $this->objectCache()->get($uuid);
             if (null !== $cached) {
-                $eventDispatcher?->dispatch(Events::CACHE_HIT, static fn() => new Context($uuid));
                 $this->rememberLoaded($cached, $uuid);
                 return $cached;
             }

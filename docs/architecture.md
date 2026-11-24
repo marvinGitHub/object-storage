@@ -19,7 +19,7 @@ The storage is being split into components, one concern each, step by step and w
 | `Storage\StubIndex` | the stubs: objects by class | stub part of `StubsTrait`, listing by class of `ListingTrait` | done |
 | `Storage\MetadataStore` | metadata through its cache, completed from its files (UUID, times) | `MetadataTrait` | done |
 | `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes | `DurabilityTrait` | done |
-| `Storage\ObjectCache` | the cache of loaded objects | cache methods of `ObjectStorage` | planned |
+| `Storage\ObjectCache` | the cache of loaded objects, with its events | cache methods of `ObjectStorage` | done |
 | `Storage\ObjectReader`, `ObjectWriter`, `ObjectDeleter` | load, store, delete | `LoadingTrait`, `StoringTrait`, `DeletingTrait` | planned |
 
 `ObjectStorage` stays the facade: its public methods and their behavior don't change, they delegate to the

@@ -106,9 +106,10 @@ class MetadataStoreTest extends TestCase
 
         $loaded = $this->store()->load(self::UUID);
 
-        $this->assertSame(self::UUID, $loaded?->getUUID());
-        $this->assertEquals($modified, $loaded?->getTimestampModification());
-        $this->assertNotNull($loaded?->getTimestampCreation());
+        $this->assertNotNull($loaded);
+        $this->assertSame(self::UUID, $loaded->getUUID());
+        $this->assertEquals($modified, $loaded->getTimestampModification());
+        $this->assertNotNull($loaded->getTimestampCreation());
     }
 
     public function testDamagedMetadataIsNoMetadata(): void

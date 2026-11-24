@@ -35,6 +35,7 @@ use melia\ObjectStorage\Storage\LifetimeTrait;
 use melia\ObjectStorage\Storage\ListingTrait;
 use melia\ObjectStorage\Storage\LoadingTrait;
 use melia\ObjectStorage\Storage\MetadataTrait;
+use melia\ObjectStorage\Storage\ObjectCache;
 use melia\ObjectStorage\Storage\ObjectPaths;
 use melia\ObjectStorage\Storage\PathsTrait;
 use melia\ObjectStorage\Storage\StorageAbstract;
@@ -47,7 +48,6 @@ use melia\ObjectStorage\Transfer\RawAccessTrait;
 use melia\ObjectStorage\UUID\IdentityTrait;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
-use Throwable;
 use WeakMap;
 use WeakReference;
 
@@ -383,53 +383,40 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     // ---------------------------------------------------------------------------------------------------------
 
     /**
-     * Adds an object to the cache with the specified TTL (Time-To-Live) or removes it
-     * from the cache if the TTL is less than or equal to zero.
-     *
-     *  Cache policy:
-     *  $ttl === null (cache without expiration)
-     *  $ttl > 0 (cache with TTL)
-     *  $ttl <= 0 (remove from cache - expired)
-     *
-     * @param string $uuid The unique identifier for the cached object.
-     * @param object $object The object to be cached.
-     * @param int|float|null $ttl The time-to-live for the cache entry in seconds.
-     *                            If null, the object is cached indefinitely. If less
-     *                            than or equal to 0, the object is removed from the cache.
-     *
-     * @return void
+     * The cache of loaded objects, with the cache, event dispatcher and logger of the storage as they are now.
      */
-    protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
+    protected function objectCache(): ObjectCache
     {
-        try {
-            $cache = $this->getCache();
+        $cache = $this->getCache();
+        $dispatcher = $this->getEventDispatcher();
+        $logger = $this->getLogger();
 
-            if (null === $cache) {
-                return;
-            }
-
-            if (null !== $ttl && $ttl <= 0) {
-                $this->removeFromCache($uuid);
-            } else {
-                if (null !== $ttl) {
-                    $ttl = (int)$ttl;
-                }
-                $cache->set($uuid, $object, $ttl);
-                $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_ADDED, static fn() => new Context($uuid));
-            }
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::CACHE_WRITE_FAILED, static fn() => new Context($uuid));
-        }
+        return $this->component(
+            ObjectCache::class,
+            [$cache, $dispatcher, $logger],
+            static fn(): ObjectCache => new ObjectCache($cache, $dispatcher, $logger),
+        );
     }
 
     /**
+     * Caches an object for its lifetime, see ObjectCache::add(): without expiration if null, removed if it has
+     * expired (0 or less). A failing cache is logged, not thrown.
+     *
+     * @param int|float|null $ttl The lifetime in seconds.
+     */
+    protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
+    {
+        $this->objectCache()->add($uuid, $object, $ttl);
+    }
+
+    /**
+     * Removes an object from the cache, see ObjectCache::remove().
+     *
      * @throws InvalidArgumentException
      */
     public function removeFromCache(string $uuid): void
     {
-        $this->getCache()?->delete($uuid);
-        $this->getEventDispatcher()?->dispatch(Events::CACHE_ENTRY_REMOVED, static fn() => new Context($uuid));
+        $this->objectCache()->remove($uuid);
     }
 
     /**
@@ -439,7 +426,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     public function clearCache(): void
     {
-        $this->getCache()?->clear();
+        $this->objectCache()->clear();
         $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
         $this->revisions = new WeakMap();
