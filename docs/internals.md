@@ -1,6 +1,6 @@
 # Internals
 
-How `ObjectStorage` loads and stores objects, for developers working on the library. Users of the library need [Getting started](getting-started.md) and [Concepts](concepts.md) instead.
+How `ObjectStorage` loads and stores objects, for developers working on the library. Users of the library need [Getting started](getting-started.md) and [Concepts](concepts.md) instead. How the storage is split into components, and the rules for them: [Architecture](architecture.md).
 
 ## Files of an object
 

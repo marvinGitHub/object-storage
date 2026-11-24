@@ -34,6 +34,7 @@ use melia\ObjectStorage\Storage\LifetimeTrait;
 use melia\ObjectStorage\Storage\ListingTrait;
 use melia\ObjectStorage\Storage\LoadingTrait;
 use melia\ObjectStorage\Storage\MetadataTrait;
+use melia\ObjectStorage\Storage\ObjectPaths;
 use melia\ObjectStorage\Storage\PathsTrait;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
@@ -56,7 +57,9 @@ use WeakReference;
  * The class holds the construction, the configuration and the caches; the rest is grouped by concern in traits of
  * the namespace Storage (each kept apart for readability, together one class):
  *
- * - PathsTrait: the paths of the files, sharded by UUID
+ * - PathsTrait: the paths of the files, sharded by UUID, delegated to the component ObjectPaths
+ *
+ * The traits are being replaced by components with dependencies of their own, see docs/architecture.md.
  * - StoringTrait, LoadingTrait, DeletingTrait: objects, with caches, locks and events
  * - DurabilityTrait: the files of objects as stored (both files as a group, checksums, interrupted writes)
  * - JsonTrait: readJson() and writeJson(), the JSON files of the storage
@@ -127,7 +130,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *
      * @var string
      */
-    protected const string FILE_SUFFIX_METADATA = '.metadata';
+    protected const string FILE_SUFFIX_METADATA = ObjectPaths::SUFFIX_METADATA;
 
     /**
      * The lock resource guarding the registry of class names (classnames.json).
@@ -139,14 +142,14 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *
      * @var string
      */
-    protected const string FILE_SUFFIX_STUB = '.stub';
+    protected const string FILE_SUFFIX_STUB = ObjectPaths::SUFFIX_STUB;
 
     /**
      * The suffix used for object files.
      *
      * @var string
      */
-    protected const string FILE_SUFFIX_OBJECT = '.obj';
+    protected const string FILE_SUFFIX_OBJECT = ObjectPaths::SUFFIX_OBJECT;
 
     /**
      * The revision each object was loaded or stored with by this instance, for optimistic locking.

@@ -5,10 +5,10 @@ namespace melia\ObjectStorage\Storage;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Strategy\StrategyInterface;
-use melia\ObjectStorage\UUID\Helper;
 
 /**
- * The paths of the files of the storage: object, metadata and stub files, sharded by UUID.
+ * The paths of the files of the storage, delegated to ObjectPaths (see docs/architecture.md): the public methods
+ * of the facade stay as they were.
  *
  * Part of ObjectStorage, kept apart for readability.
  *
@@ -16,135 +16,118 @@ use melia\ObjectStorage\UUID\Helper;
  */
 trait PathsTrait
 {
+    /** the paths for the current directory and shard depth, see objectPaths() */
+    private ?ObjectPaths $objectPaths = null;
+
+    /**
+     * The paths of the files of the storage, for its directory and the shard depth of its strategy as they are now:
+     * created again when either changed.
+     */
+    protected function objectPaths(): ObjectPaths
+    {
+        $shardDepth = $this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH;
+        if (null === $this->objectPaths || !$this->objectPaths->isFor($this->storageDir, $shardDepth)) {
+            $this->objectPaths = new ObjectPaths($this->storageDir, $shardDepth);
+        }
+
+        return $this->objectPaths;
+    }
+
     /**
      * Retrieves the directory of the default file locks.
-     *
-     * @return string The full path to the lock directory.
      */
     public function getLockDir(): string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'locks';
+        return $this->objectPaths()->lockDirectory();
     }
 
     /**
      * Retrieves the directory path where shard files are stored.
-     *
-     * @return string The full path to the shard directory.
      */
     public function getShardDir(): string
     {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'shards';
+        return $this->objectPaths()->shardDirectory();
     }
 
     /**
-     * Builds the path of the sharded directory for a UUID: one directory level per leading character of the UUID,
-     * as many levels as the configured shard depth (depth 0 => <storage>/shards). The directory is not created:
-     * the writer creates it when the first file is written, so looking up unknown UUIDs leaves no empty
-     * directories behind.
+     * Builds the path of the sharded directory for a UUID (see ObjectPaths::shardedDirectory()). The directory is
+     * not created: the writer creates it when the first file is written, so looking up unknown UUIDs leaves no
+     * empty directories behind.
      *
-     * @param string $uuid
      * @return string The path of the directory, with a trailing directory separator.
      */
     public function buildShardedDirectory(string $uuid): string
     {
-        $depth = min($this->getStrategy()?->getShardDepth() ?? StrategyInterface::DEFAULT_SHARD_DEPTH, 32);
-
-        return $this->getShardDir() . DIRECTORY_SEPARATOR . chunk_split(substr(Helper::removeHyphens($uuid), 0, $depth), 1, DIRECTORY_SEPARATOR);
+        return $this->objectPaths()->shardedDirectory($uuid);
     }
 
     /**
-     * Generates the file path for a given UUID.
-     *
-     * @param string $uuid The unique identifier used to generate the file path.
-     * @return string The full file path constructed using the UUID.
-     * @throws IOException
+     * The data file of an object.
      */
     public function getFilePathData(string $uuid): string
     {
-        return $this->buildShardedDirectory($uuid) . $uuid . static::FILE_SUFFIX_OBJECT;
+        return $this->objectPaths()->dataFile($uuid);
     }
 
     /**
-     * Generates the file path for the metadata associated with a specific UUID.
-     *
-     * @param string $uuid The unique identifier used to build the metadata file path.
-     * @return string Returns the file path of the metadata corresponding to the provided UUID.
-     * @throws IOException
+     * The metadata file of an object.
      */
     public function getFilePathMetadata(string $uuid): string
     {
-        return $this->buildShardedDirectory($uuid) . $uuid . static::FILE_SUFFIX_METADATA;
+        return $this->objectPaths()->metadataFile($uuid);
     }
 
     /**
-     * Returns the files an object is stored in, in the order they are written: the data before the metadata
-     * holding its checksum, so a committed metadata file always belongs to a committed data file.
+     * The files an object is stored in, in the order they are written (see ObjectPaths::objectFiles()).
      *
-     * @param string $uuid The unique identifier of the object.
      * @return array{string, string} The paths of the data file and the metadata file.
-     * @throws IOException
      */
     protected function getObjectFiles(string $uuid): array
     {
-        return [$this->getFilePathData($uuid), $this->getFilePathMetadata($uuid)];
+        return $this->objectPaths()->objectFiles($uuid);
     }
 
     /**
-     * Generates the file path for a stub associated with a specific class and UUID.
-     *
-     * @param string $className The name of the class for which the stub is being generated.
-     * @param string $uuid The unique identifier used to differentiate the stub file.
-     * @return string The full file path for the stub.
+     * The stub of an object of a class.
      */
     public function getFilePathStub(string $className, string $uuid): string
     {
-        return $this->getClassStubDirectory($className) . DIRECTORY_SEPARATOR . $uuid . '.stub';
+        return $this->objectPaths()->stubFile($className, $uuid);
     }
 
     /**
-     * Retrieves the directory path where the class stub for the given class name is stored.
-     *
-     * @param string $className The name of the class for which the stub directory path is being generated.
-     * @return string The full path to the class stub directory.
+     * The directory of the stubs of a class.
      */
     public function getClassStubDirectory(string $className): string
     {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . md5($className);
+        return $this->objectPaths()->classStubDirectory($className);
     }
 
     /**
-     * Retrieves the path to the stub directory.
-     *
-     * @return string The full path to the stub directory.
+     * The directory of the stubs.
      */
     public function getStubDirectory(): string
     {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'stubs';
+        return $this->objectPaths()->stubDirectory();
     }
 
     /**
-     * Retrieves the file path for the classnames JSON file.
-     *
-     * @return string The file path of the classnames JSON file.
+     * The registry of class names.
      */
     protected function getFilePathClassnames(): string
     {
-        return $this->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
+        return $this->objectPaths()->classNamesFile();
     }
 
     /**
-     * Retrieves the file path for storing corrupted artifacts.
-     *
-     * @return string The file path where corrupted artifacts are stored.
+     * The directory damaged objects are moved to.
      */
     protected function getFilePathCorruptedArtifacts(): string
     {
-        return $this->getStorageDir() . DIRECTORY_SEPARATOR . 'corrupted';
+        return $this->objectPaths()->corruptedDirectory();
     }
 
     /**
-     * @param string $directory
-     * @return void
      * @throws IOException
      * @link Directory::createIfNotExists
      */
