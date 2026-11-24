@@ -189,17 +189,7 @@ final class Manager implements ManagerInterface
      */
     public function getIndexesForClass(string $className): array
     {
-        $indexes = [];
-        try {
-            foreach ($this->list() as $name => $index) {
-                if ($index->getDefinition()->className === $className) {
-                    $indexes[$name] = $index;
-                }
-            }
-        } catch (Throwable $e) {
-            $this->storage->getLogger()?->log($e);
-        }
-        return $indexes;
+        return $this->indexesWhere(static fn(Index $index): bool => $index->getDefinition()->className === $className);
     }
 
     /**
@@ -210,11 +200,24 @@ final class Manager implements ManagerInterface
      */
     public function getIndexesJoiningClass(?string $className): array
     {
+        return $this->indexesWhere(static function (Index $index) use ($className): bool {
+            $joined = $index->getJoinedClasses();
+            return null === $className ? [] !== $joined : in_array($className, $joined, true);
+        });
+    }
+
+    /**
+     * The indexes a condition holds for, by name; if reading them fails, those found so far (the error is logged).
+     *
+     * @param callable(Index): bool $condition
+     * @return array<string, Index>
+     */
+    private function indexesWhere(callable $condition): array
+    {
         $indexes = [];
         try {
             foreach ($this->list() as $name => $index) {
-                $joined = $index->getJoinedClasses();
-                if (null === $className ? [] !== $joined : in_array($className, $joined, true)) {
+                if ($condition($index)) {
                     $indexes[$name] = $index;
                 }
             }
@@ -241,17 +244,13 @@ final class Manager implements ManagerInterface
         // like a query planner: indexes searching the current definition first; for full text, the one searching
         // the most fields; then the smallest one; the name keeps the choice stable
         $fullText = '' !== trim($request->query);
-        usort($usable, static fn(Candidate $a, Candidate $b): int => [
-                IndexInterface::STATUS_READY === $a->status ? 0 : 1,
-                $fullText ? -$a->searchableFields : 0,
-                $a->fields,
-                $a->name,
-            ] <=> [
-                IndexInterface::STATUS_READY === $b->status ? 0 : 1,
-                $fullText ? -$b->searchableFields : 0,
-                $b->fields,
-                $b->name,
-            ]);
+        $rank = static fn(Candidate $c): array => [
+            IndexInterface::STATUS_READY === $c->status ? 0 : 1,
+            $fullText ? -$c->searchableFields : 0,
+            $c->fields,
+            $c->name,
+        ];
+        usort($usable, static fn(Candidate $a, Candidate $b): int => $rank($a) <=> $rank($b));
 
         $ranked = [];
         foreach ($usable as $position => $candidate) {
@@ -458,19 +457,13 @@ final class Manager implements ManagerInterface
 
         // data written: METADATA_SAVED is dispatched for every object whose data changed, also for referenced objects
         $this->listeners[Events::METADATA_SAVED] = function (?Context $context): void {
-            $uuid = $context?->getUUID();
-            $className = null === $uuid ? null : $this->storage->getClassName($uuid);
-            if (null !== $className) {
-                $this->record($uuid, $this->getIndexesForClass($className));
-                $this->recordReference($uuid, $this->getIndexesJoiningClass($className));
-            }
+            $this->recordStored($context);
         };
 
         // the object is no longer of the class of an index
         $this->listeners[Events::CLASSNAME_CHANGED] = function (?ClassnameChangeContext $context): void {
             if (null !== $context?->getUUID()) {
-                $this->record($context->getUUID(), $this->getIndexesForClass($context->getPreviousClassName()));
-                $this->recordReference($context->getUUID(), $this->getIndexesJoiningClass($context->getPreviousClassName()));
+                $this->recordForClass($context->getUUID(), $context->getPreviousClassName());
             }
         };
 
@@ -480,7 +473,7 @@ final class Manager implements ManagerInterface
             if (null !== $context?->getUUID()) {
                 try {
                     $this->record($context->getUUID(), $this->list());
-                    $this->recordReference($context->getUUID(), $this->getIndexesJoiningClass(null));
+                    $this->record($context->getUUID(), $this->getIndexesJoiningClass(null), reference: true);
                 } catch (Throwable $e) {
                     $this->storage->getLogger()?->log($e);
                 }
@@ -494,11 +487,7 @@ final class Manager implements ManagerInterface
 
         // a lifetime set to the past removes the object from the indexes, a longer one adds it again
         $this->listeners[Events::LIFETIME_CHANGED] = function (?Context $context): void {
-            $uuid = $context?->getUUID();
-            $className = null === $uuid ? null : $this->storage->getClassName($uuid);
-            if (null !== $className) {
-                $this->record($uuid, $this->getIndexesForClass($className));
-                $this->recordReference($uuid, $this->getIndexesJoiningClass($className));
+            if ($this->recordStored($context)) {
                 $this->autoSync();
             }
         };
@@ -530,7 +519,7 @@ final class Manager implements ManagerInterface
         }
 
         $this->record($uuid, $candidates);
-        $this->recordReference($uuid, $joining);
+        $this->record($uuid, $joining, reference: true);
         $this->autoSync();
 
         return array_keys($candidates + $joining);
@@ -570,28 +559,42 @@ final class Manager implements ManagerInterface
     }
 
     /**
-     * @param Index[] $indexes
+     * Records the change of a stored object for the indexes of its class and those joining it.
+     *
+     * @return bool Whether the object is stored (its class is known).
      */
-    private function record(string $uuid, array $indexes): void
+    private function recordStored(?Context $context): bool
     {
-        foreach ($indexes as $name => $index) {
-            try {
-                $index->recordChange($uuid);
-                $this->pending[$name] = true;
-            } catch (Throwable $e) {
-                $this->storage->getLogger()?->log($e);
-            }
+        $uuid = $context?->getUUID();
+        $className = null === $uuid ? null : $this->storage->getClassName($uuid);
+        if (null === $className) {
+            return false;
         }
+        $this->recordForClass($uuid, $className);
+        return true;
+    }
+
+    private function recordForClass(string $uuid, string $className): void
+    {
+        $this->record($uuid, $this->getIndexesForClass($className));
+        $this->record($uuid, $this->getIndexesJoiningClass($className), reference: true);
     }
 
     /**
+     * Records a change of an object in indexes; failures are logged.
+     *
      * @param Index[] $indexes
+     * @param bool $reference Whether the object is a referenced object documents were built from.
      */
-    private function recordReference(string $uuid, array $indexes): void
+    private function record(string $uuid, array $indexes, bool $reference = false): void
     {
         foreach ($indexes as $name => $index) {
             try {
-                $index->recordReferenceChange($uuid);
+                if ($reference) {
+                    $index->recordReferenceChange($uuid);
+                } else {
+                    $index->recordChange($uuid);
+                }
                 $this->pending[$name] = true;
             } catch (Throwable $e) {
                 $this->storage->getLogger()?->log($e);

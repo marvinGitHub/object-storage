@@ -8,6 +8,7 @@ use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\ObjectStorage;
+use melia\ObjectStorage\Transfer\RawObject;
 use melia\ObjectStorage\Unique\Exception\DuplicateValuesException;
 use melia\ObjectStorage\Unique\Exception\InvalidUniqueIndexException;
 use melia\ObjectStorage\Unique\Exception\UniqueConstraintViolationException;
@@ -87,9 +88,7 @@ final class Manager implements ConstraintInterface
             $internal->store($definition, $uuid);
             $this->definitions = null;
         } finally {
-            if ($lockAdapter->isLockedByThisProcess($lock)) {
-                $lockAdapter->releaseLock($lock);
-            }
+            $this->unlock([$lock]);
         }
 
         try {
@@ -283,12 +282,9 @@ final class Manager implements ConstraintInterface
         foreach ($this->list() as $definition) {
             $new = $definition->className === $className ? $definition->keyOf($data, $reservedReferenceName) : null;
             $old = $this->ownedKey($definition->name, $uuid);
-            if ($new['key'] ?? null) {
-                if ($new['key'] === $old) {
-                    continue; // unchanged
-                }
-            } elseif (null === $old) {
-                continue; // no key before, none now
+            $newKey = $new['key'] ?? null;
+            if ($newKey ? $newKey === $old : null === $old) {
+                continue; // unchanged, or no key before and none now
             }
             $changes[] = ['definition' => $definition, 'new' => $new, 'old' => $old];
         }
@@ -297,10 +293,8 @@ final class Manager implements ConstraintInterface
         }
 
         // the locks in a fixed order, so processes claiming several keys can't wait for each other
-        usort($changes, static fn(array $a, array $b): int => strcmp(
-            null === $a['new'] ? '' : self::claimUuid($a['definition']->name, $a['new']['key']),
-            null === $b['new'] ? '' : self::claimUuid($b['definition']->name, $b['new']['key'])
-        ));
+        $order = static fn(array $change): string => null === $change['new'] ? '' : self::claimUuid($change['definition']->name, $change['new']['key']);
+        usort($changes, static fn(array $a, array $b): int => strcmp($order($a), $order($b)));
 
         $internal = $this->getInternalStorage();
         $lockAdapter = $internal->getLockAdapter();
@@ -313,7 +307,7 @@ final class Manager implements ConstraintInterface
                     continue;
                 }
                 $claimUuid = self::claimUuid($definition->name, $new['key']);
-                $lock = self::lockUuid('claim', $definition->name . "\0" . $new['key']);
+                $lock = self::claimLockUuid($definition->name, $new['key']);
                 $lockAdapter->acquireExclusiveLock($lock);
                 $locks[] = $lock;
 
@@ -432,21 +426,43 @@ final class Manager implements ConstraintInterface
         return Helper::createFixedUuidV4('melia/object-storage:unique:lock:' . $kind . ':' . $subject, 'sha256');
     }
 
+    private static function claimLockUuid(string $name, string $key): string
+    {
+        return self::lockUuid('claim', $name . "\0" . $key);
+    }
+
     /**
      * Whether an object has a key: it exists, is of the class and has the values, as stored.
      */
     private function holds(string $owner, Definition $definition, string $key): bool
     {
+        $object = $this->readLive($owner);
+        if (null === $object || $object->metadata->getClassName() !== $definition->className) {
+            return false;
+        }
+        return (self::keyOfStored($definition, $object)['key'] ?? null) === $key;
+    }
+
+    /**
+     * An object as stored; null if it doesn't exist or has expired.
+     */
+    private function readLive(string $uuid): ?RawObject
+    {
         try {
-            $object = $this->storage->readRaw($owner);
+            $object = $this->storage->readRaw($uuid);
         } catch (ObjectNotFoundException) {
-            return false;
+            return null;
         }
-        if ($object->isExpired() || $object->metadata->getClassName() !== $definition->className) {
-            return false;
-        }
+        return $object->isExpired() ? null : $object;
+    }
+
+    /**
+     * The key of an object as stored (see Definition::keyOf()); null if it has none.
+     */
+    private static function keyOfStored(Definition $definition, RawObject $object): ?array
+    {
         $data = json_decode($object->data, true);
-        return is_array($data) && ($definition->keyOf($data, $object->metadata->getReservedReferenceName())['key'] ?? null) === $key;
+        return is_array($data) ? $definition->keyOf($data, $object->metadata->getReservedReferenceName()) : null;
     }
 
     private function ownedKey(string $name, string $owner): ?string
@@ -462,7 +478,7 @@ final class Manager implements ConstraintInterface
     {
         $internal = $this->getInternalStorage();
         $lockAdapter = $internal->getLockAdapter();
-        $lock = self::lockUuid('claim', $name . "\0" . $key);
+        $lock = self::claimLockUuid($name, $key);
         $heldBefore = $lockAdapter->isLockedByThisProcess($lock);
 
         if (!$heldBefore) {
@@ -475,8 +491,8 @@ final class Manager implements ConstraintInterface
                 $internal->delete($claimUuid);
             }
         } finally {
-            if (!$heldBefore && $lockAdapter->isLockedByThisProcess($lock)) {
-                $lockAdapter->releaseLock($lock);
+            if (!$heldBefore) {
+                $this->unlock([$lock]);
             }
         }
     }
@@ -494,17 +510,12 @@ final class Manager implements ConstraintInterface
 
         $objects = 0;
         foreach ($this->storage->list($definition->className) as $uuid) {
-            try {
-                $object = $this->storage->readRaw((string)$uuid);
-            } catch (ObjectNotFoundException) {
-                continue;
-            }
-            if ($object->isExpired()) {
+            $object = $this->readLive((string)$uuid);
+            if (null === $object) {
                 continue;
             }
             $objects++;
-            $data = json_decode($object->data, true);
-            $key = is_array($data) ? $definition->keyOf($data, $object->metadata->getReservedReferenceName()) : null;
+            $key = self::keyOfStored($definition, $object);
             if (null === $key) {
                 continue;
             }
@@ -564,11 +575,12 @@ final class Manager implements ConstraintInterface
      */
     private function undo(array $created, array $locks): void
     {
+        $internal = $this->getInternalStorage();
         try {
             foreach ($created as $claimUuid) {
                 // claims of keys nobody had, or stale ones: removing them leaves nothing wrong behind
-                if ($this->getInternalStorage()->exists($claimUuid)) {
-                    $this->getInternalStorage()->delete($claimUuid);
+                if ($internal->exists($claimUuid)) {
+                    $internal->delete($claimUuid);
                 }
             }
         } finally {

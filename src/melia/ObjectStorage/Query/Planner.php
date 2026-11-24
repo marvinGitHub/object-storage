@@ -131,15 +131,11 @@ final class Planner
             $orderBy[] = [$this->bindPosition($order->expression, $items, self::ORDER) ?? $this->bind($order->expression, self::ORDER, true), $order->descending];
         }
 
-        foreach ([...array_column($items, 'expression'), ...array_column($joins, 'on'), $where, ...$groupBy, $having, ...array_column($orderBy, 0)] as $expression) {
-            if (null !== $expression && $this->hasFunction($expression, 'REF')) {
-                throw new QueryException('REF() is for the values of INSERT and UPDATE');
-            }
-        }
+        self::rejectRef(...array_column($items, 'expression'), ...array_column($joins, 'on'), ...[$where], ...$groupBy, ...[$having], ...array_column($orderBy, 0));
 
         $grouped = [] !== $groupBy || null !== $having
-            || [] !== array_filter($items, fn(array $item): bool => null !== $item['expression'] && $this->hasAggregate($item['expression']))
-            || [] !== array_filter($orderBy, fn(array $order): bool => $this->hasAggregate($order[0]));
+            || [] !== array_filter($items, static fn(array $item): bool => null !== $item['expression'] && self::hasAggregate($item['expression']))
+            || [] !== array_filter($orderBy, static fn(array $order): bool => self::hasAggregate($order[0]));
         if ($grouped) {
             $keys = array_map([Printer::class, 'print'], $groupBy);
             foreach ($items as $item) {
@@ -271,9 +267,7 @@ final class Planner
             return self::ORDER === $mode ? new OutputColumn($index) : $expression;
         }
         if (in_array($first, $this->aliases, true)) {
-            if (!in_array($first, $visible, true)) {
-                throw new QueryException(sprintf('"%s" isn\'t joined yet here: ON sees the sources joined before', $first), $column->position);
-            }
+            self::checkVisible($first, $visible, $column->position);
             return new BoundColumn($first, array_slice($segments, 1), $column->uuid);
         }
         if (1 === count($this->aliases)) {
@@ -311,9 +305,7 @@ final class Planner
         $this->aliases = [$source->alias];
         $this->outputs = [];
         $where = null === $statement->where ? null : $this->bind($statement->where, self::PLAIN, false);
-        if (null !== $where && $this->hasFunction($where, 'REF')) {
-            throw new QueryException('REF() is for the values of INSERT and UPDATE');
-        }
+        self::rejectRef($where);
 
         if ($statement instanceof Delete) {
             return new WritePlan(WritePlan::DELETE, $source, [], [], $where);
@@ -376,20 +368,47 @@ final class Planner
         $bound = $this->bind($expression, self::PLAIN, false);
         $inner = $bound instanceof FunctionCall && 'REF' === $bound->name ? $bound->arguments : [$bound];
         foreach ($inner as $part) {
-            if ($this->hasFunction($part, 'REF')) {
+            if (self::hasRef($part)) {
                 throw new QueryException('REF() is a whole value, e.g. SET category = REF(:uuid)');
             }
         }
         return $bound;
     }
 
-    private function hasFunction(Expr $expression, string $name): bool
+    /**
+     * @throws QueryException If an expression has REF(), which is for the values of INSERT and UPDATE only.
+     */
+    private static function rejectRef(?Expr ...$expressions): void
     {
-        if ($expression instanceof FunctionCall && $name === $expression->name) {
+        foreach ($expressions as $expression) {
+            if (null !== $expression && self::hasRef($expression)) {
+                throw new QueryException('REF() is for the values of INSERT and UPDATE');
+            }
+        }
+    }
+
+    private static function hasRef(Expr $expression): bool
+    {
+        return self::contains($expression, static fn(Expr $e): bool => $e instanceof FunctionCall && 'REF' === $e->name);
+    }
+
+    private static function hasAggregate(Expr $expression): bool
+    {
+        return self::contains($expression, static fn(Expr $e): bool => $e instanceof FunctionCall && $e->isAggregate());
+    }
+
+    /**
+     * Whether an expression or one inside it is one the condition holds for.
+     *
+     * @param callable(Expr): bool $condition
+     */
+    private static function contains(Expr $expression, callable $condition): bool
+    {
+        if ($condition($expression)) {
             return true;
         }
         foreach ($expression->children() as $child) {
-            if ($this->hasFunction($child, $name)) {
+            if (self::contains($child, $condition)) {
                 return true;
             }
         }
@@ -421,7 +440,7 @@ final class Planner
         [$min, $max] = self::FUNCTIONS[$call->name] ?? Math::FUNCTIONS[$call->name];
         $count = count($call->arguments);
         if ($count < $min || (null !== $max && $count > $max)) {
-            throw new QueryException(sprintf('%s takes %s', $call->name, $min === $max ? "$min argument" . (1 === $min ? '' : 's') : ($max ? "$min to $max arguments" : "at least $min argument" . (1 === $min ? '' : 's'))), $call->position);
+            throw new QueryException(sprintf('%s takes %s', $call->name, self::arity($min, $max)), $call->position);
         }
         if ('CREATED' === $call->name || 'MODIFIED' === $call->name) {
             return new FunctionCall($call->name, [$this->sourceOf($call, $visible)], false, false, $call->position);
@@ -431,6 +450,17 @@ final class Planner
             Values::regexp($arguments[1]->value, $call->position);
         }
         return new FunctionCall($call->name, $arguments, false, false, $call->position);
+    }
+
+    /** the number of arguments a function takes, in words: "1 argument", "1 to 2 arguments", "at least 2 arguments" */
+    private static function arity(int $min, ?int $max): string
+    {
+        $arguments = static fn(int $n): string => $n . ' argument' . (1 === $n ? '' : 's');
+        return match (true) {
+            $min === $max => $arguments($min),
+            (bool)$max => "$min to $max arguments",
+            default => 'at least ' . $arguments($min),
+        };
     }
 
     /**
@@ -453,10 +483,19 @@ final class Planner
         if (!$argument instanceof Column || 1 !== count($argument->segments) || $argument->uuid || !in_array($argument->segments[0], $this->aliases, true)) {
             throw new QueryException(sprintf('%1$s() takes the alias of a source, e.g. %1$s(%2$s)', $call->name, $this->aliases[0]), $call->position);
         }
-        if (!in_array($argument->segments[0], $visible, true)) {
-            throw new QueryException(sprintf('"%s" isn\'t joined yet here: ON sees the sources joined before', $argument->segments[0]), $argument->position);
-        }
+        self::checkVisible($argument->segments[0], $visible, $argument->position);
         return new BoundColumn($argument->segments[0], []);
+    }
+
+    /**
+     * @param list<string> $visible
+     * @throws QueryException If the alias isn't visible (ON sees the sources joined before).
+     */
+    private static function checkVisible(string $alias, array $visible, ?int $position): void
+    {
+        if (!in_array($alias, $visible, true)) {
+            throw new QueryException(sprintf('"%s" isn\'t joined yet here: ON sees the sources joined before', $alias), $position);
+        }
     }
 
     /** a pattern of REGEXP written in the query is checked before running */
@@ -466,19 +505,6 @@ final class Planner
             Values::regexp($binary->right->value);
         }
         return $binary;
-    }
-
-    private function hasAggregate(Expr $expression): bool
-    {
-        if ($expression instanceof FunctionCall && $expression->isAggregate()) {
-            return true;
-        }
-        foreach ($expression->children() as $child) {
-            if ($this->hasAggregate($child)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

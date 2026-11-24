@@ -113,25 +113,18 @@ final class Parser
         $this->expect(Lexer::KEYWORD, 'INTO');
         $into = $this->source();
         $this->expect(Lexer::SYMBOL, '(');
-        $properties = [];
-        do {
-            $properties[] = $this->property();
-        } while ($this->accept(Lexer::SYMBOL, ','));
+        $properties = $this->list($this->property(...));
         $this->expect(Lexer::SYMBOL, ')');
         $this->expect(Lexer::KEYWORD, 'VALUES');
-        $rows = [];
-        do {
+        $rows = $this->list(function () use ($properties): array {
             $start = $this->expect(Lexer::SYMBOL, '(');
-            $values = [];
-            do {
-                $values[] = $this->expression();
-            } while ($this->accept(Lexer::SYMBOL, ','));
+            $values = $this->list($this->expression(...));
             $this->expect(Lexer::SYMBOL, ')');
             if (count($values) !== count($properties)) {
                 throw $this->error(sprintf('%d values for %d properties', count($values), count($properties)), $start);
             }
-            $rows[] = $values;
-        } while ($this->accept(Lexer::SYMBOL, ','));
+            return $values;
+        });
         return new Insert($into, $properties, $rows);
     }
 
@@ -141,22 +134,13 @@ final class Parser
         // UPDATE Class REMOVE path: REMOVE isn't a keyword, here it isn't the alias
         $source = $this->source(fn(): bool => $this->isWord($this->peek(), 'REMOVE') && $this->peek(1)->is(Lexer::IDENTIFIER));
 
-        $assignments = [];
-        if ($this->accept(Lexer::KEYWORD, 'SET')) {
-            do {
-                $target = $this->target($source, false);
-                $this->expect(Lexer::SYMBOL, '=');
-                $assignments[] = [$target, $this->expression()];
-            } while ($this->accept(Lexer::SYMBOL, ','));
-        }
+        $assignments = !$this->accept(Lexer::KEYWORD, 'SET') ? [] : $this->list(function () use ($source): array {
+            $target = $this->target($source, false);
+            $this->expect(Lexer::SYMBOL, '=');
+            return [$target, $this->expression()];
+        });
 
-        $removals = [];
-        if ($this->isWord($this->peek(), 'REMOVE')) {
-            $this->next();
-            do {
-                $removals[] = $this->target($source, true);
-            } while ($this->accept(Lexer::SYMBOL, ','));
-        }
+        $removals = !$this->acceptWord('REMOVE') ? [] : $this->list(fn(): Target => $this->target($source, true));
 
         if ([] === $assignments && [] === $removals) {
             throw $this->error('SET or REMOVE expected', $this->peek());
@@ -226,10 +210,9 @@ final class Parser
             throw $this->error('ALTER CLASS (or ALTER TABLE) expected', $kind);
         }
         $class = $this->expect(Lexer::IDENTIFIER);
-        $source = new Source(ltrim($class->value, '\\'), substr(strrchr('\\' . $class->value, '\\'), 1), $class->position);
+        $source = new Source(ltrim($class->value, '\\'), self::shortName($class->value), $class->position);
 
-        $attributes = [];
-        do {
+        $attributes = $this->list(function (): string {
             $drop = $this->next();
             if (!$this->isWord($drop, 'DROP')) {
                 throw $this->error('DROP ATTRIBUTE (or DROP COLUMN) expected', $drop);
@@ -239,8 +222,8 @@ final class Parser
             if (($this->isWord($next, 'ATTRIBUTE') || $this->isWord($next, 'COLUMN')) && $this->peek(1)->is(Lexer::IDENTIFIER)) {
                 $this->next();
             }
-            $attributes[] = $this->property();
-        } while ($this->accept(Lexer::SYMBOL, ','));
+            return $this->property();
+        });
 
         return new DropAttributes($source, $attributes);
     }
@@ -260,9 +243,7 @@ final class Parser
             return new TransactionControl(TransactionControl::BEGIN);
         }
 
-        if ($this->isWord($this->peek(), 'WORK')) {
-            $this->next();
-        }
+        $this->acceptWord('WORK');
         return new TransactionControl(match (true) {
             $this->isWord($word, 'BEGIN') => TransactionControl::BEGIN,
             $this->isWord($word, 'COMMIT') => TransactionControl::COMMIT,
@@ -291,10 +272,7 @@ final class Parser
         $this->expect(Lexer::KEYWORD, 'SELECT');
         $distinct = null !== $this->accept(Lexer::KEYWORD, 'DISTINCT');
 
-        $items = [];
-        do {
-            $items[] = $this->selectItem();
-        } while ($this->accept(Lexer::SYMBOL, ','));
+        $items = $this->list($this->selectItem(...));
 
         $this->expect(Lexer::KEYWORD, 'FROM');
         $from = $this->source();
@@ -323,9 +301,7 @@ final class Parser
         $groupBy = [];
         if ($this->accept(Lexer::KEYWORD, 'GROUP')) {
             $this->expect(Lexer::KEYWORD, 'BY');
-            do {
-                $groupBy[] = $this->expression();
-            } while ($this->accept(Lexer::SYMBOL, ','));
+            $groupBy = $this->list($this->expression(...));
         }
 
         $having = $this->accept(Lexer::KEYWORD, 'HAVING') ? $this->expression() : null;
@@ -333,23 +309,18 @@ final class Parser
         $orderBy = [];
         if ($this->accept(Lexer::KEYWORD, 'ORDER')) {
             $this->expect(Lexer::KEYWORD, 'BY');
-            do {
+            $orderBy = $this->list(function (): OrderItem {
                 $expression = $this->expression();
                 $descending = null !== $this->accept(Lexer::KEYWORD, 'DESC');
                 if (!$descending) {
                     $this->accept(Lexer::KEYWORD, 'ASC');
                 }
-                $orderBy[] = new OrderItem($expression, $descending);
-            } while ($this->accept(Lexer::SYMBOL, ','));
+                return new OrderItem($expression, $descending);
+            });
         }
 
-        $limit = $offset = null;
-        if ($this->accept(Lexer::KEYWORD, 'LIMIT')) {
-            $limit = $this->expression();
-        }
-        if ($this->accept(Lexer::KEYWORD, 'OFFSET')) {
-            $offset = $this->expression();
-        }
+        $limit = $this->accept(Lexer::KEYWORD, 'LIMIT') ? $this->expression() : null;
+        $offset = $this->accept(Lexer::KEYWORD, 'OFFSET') ? $this->expression() : null;
 
         return new Select($distinct, $items, $from, $joins, $where, $groupBy, $having, $orderBy, $limit, $offset);
     }
@@ -372,13 +343,7 @@ final class Parser
         $expression = $this->expression();
         $text = trim(substr($this->query, $start, $this->peek()->position - $start));
 
-        $alias = null;
-        if ($this->accept(Lexer::KEYWORD, 'AS')) {
-            $alias = $this->expect(Lexer::IDENTIFIER)->value;
-        } elseif ($this->peek()->is(Lexer::IDENTIFIER)) {
-            $alias = $this->next()->value;
-        }
-        return new SelectItem($expression, $alias, null, $text);
+        return new SelectItem($expression, $this->alias(), null, $text);
     }
 
     /**
@@ -387,15 +352,31 @@ final class Parser
     private function source(?callable $noAlias = null): Source
     {
         $class = $this->expect(Lexer::IDENTIFIER);
-        $alias = null;
-        if ($this->accept(Lexer::KEYWORD, 'AS')) {
-            $alias = $this->expect(Lexer::IDENTIFIER)->value;
-        } elseif ($this->peek()->is(Lexer::IDENTIFIER) && !(null !== $noAlias && $noAlias())) {
-            $alias = $this->next()->value;
-        }
         // without an alias: the short name of the class
-        $alias ??= substr(strrchr('\\' . $class->value, '\\'), 1);
+        $alias = $this->alias($noAlias) ?? self::shortName($class->value);
         return new Source(ltrim($class->value, '\\'), $alias, $class->position);
+    }
+
+    /**
+     * An alias: after AS, or a name that follows (unless $noAlias says it starts a clause); null if none.
+     *
+     * @param (callable(): bool)|null $noAlias
+     */
+    private function alias(?callable $noAlias = null): ?string
+    {
+        if ($this->accept(Lexer::KEYWORD, 'AS')) {
+            return $this->expect(Lexer::IDENTIFIER)->value;
+        }
+        if ($this->peek()->is(Lexer::IDENTIFIER) && !(null !== $noAlias && $noAlias())) {
+            return $this->next()->value;
+        }
+        return null;
+    }
+
+    /** the name of a class without its namespace */
+    private static function shortName(string $class): string
+    {
+        return substr(strrchr('\\' . $class, '\\'), 1);
     }
 
     // ---- expressions, from the lowest precedence ----
@@ -435,9 +416,8 @@ final class Parser
     {
         $left = $this->comparison();
         while (true) {
-            if ($this->peek()->is(Lexer::SYMBOL, '=') || $this->peek()->is(Lexer::SYMBOL, '!=')) {
-                $operator = $this->next()->value;
-                $left = new Binary($operator, $left, $this->comparison());
+            if ($operator = $this->acceptAny(Lexer::SYMBOL, '=', '!=')) {
+                $left = new Binary($operator->value, $left, $this->comparison());
                 continue;
             }
             if ($this->accept(Lexer::KEYWORD, 'IS')) {
@@ -448,16 +428,13 @@ final class Parser
             }
             // [NOT] IN, BETWEEN, LIKE, REGEXP
             $negated = false;
-            if ($this->peek()->is(Lexer::KEYWORD, 'NOT') && ($this->peek(1)->is(Lexer::KEYWORD, 'IN') || $this->peek(1)->is(Lexer::KEYWORD, 'BETWEEN') || $this->peek(1)->is(Lexer::KEYWORD, 'LIKE') || $this->peek(1)->is(Lexer::KEYWORD, 'REGEXP'))) {
+            if ($this->peek()->is(Lexer::KEYWORD, 'NOT') && self::isAny($this->peek(1), Lexer::KEYWORD, 'IN', 'BETWEEN', 'LIKE', 'REGEXP')) {
                 $this->next();
                 $negated = true;
             }
             if ($this->accept(Lexer::KEYWORD, 'IN')) {
                 $this->expect(Lexer::SYMBOL, '(');
-                $values = [];
-                do {
-                    $values[] = $this->expression();
-                } while ($this->accept(Lexer::SYMBOL, ','));
+                $values = $this->list($this->expression(...));
                 $this->expect(Lexer::SYMBOL, ')');
                 $left = new InList($left, $values, $negated);
                 continue;
@@ -486,9 +463,8 @@ final class Parser
     private function comparison(): Expr
     {
         $left = $this->additive();
-        while (in_array($this->peek()->value, ['<', '<=', '>', '>='], true) && $this->peek()->is(Lexer::SYMBOL)) {
-            $operator = $this->next()->value;
-            $left = new Binary($operator, $left, $this->additive());
+        while ($operator = $this->acceptAny(Lexer::SYMBOL, '<', '<=', '>', '>=')) {
+            $left = new Binary($operator->value, $left, $this->additive());
         }
         return $left;
     }
@@ -496,9 +472,8 @@ final class Parser
     private function additive(): Expr
     {
         $left = $this->multiplicative();
-        while (($this->peek()->is(Lexer::SYMBOL, '+') || $this->peek()->is(Lexer::SYMBOL, '-'))) {
-            $operator = $this->next()->value;
-            $left = new Binary($operator, $left, $this->multiplicative());
+        while ($operator = $this->acceptAny(Lexer::SYMBOL, '+', '-')) {
+            $left = new Binary($operator->value, $left, $this->multiplicative());
         }
         return $left;
     }
@@ -507,9 +482,8 @@ final class Parser
     {
         $left = $this->concatenation();
         while (true) {
-            if ($this->peek()->is(Lexer::SYMBOL, '*') || $this->peek()->is(Lexer::SYMBOL, '/') || $this->peek()->is(Lexer::SYMBOL, '%')) {
-                $operator = $this->next()->value;
-                $left = new Binary($operator, $left, $this->concatenation());
+            if ($operator = $this->acceptAny(Lexer::SYMBOL, '*', '/', '%')) {
+                $left = new Binary($operator->value, $left, $this->concatenation());
                 continue;
             }
             // a DIV b, the integer quotient; DIV isn't a keyword: a name followed by something else is an alias
@@ -525,9 +499,9 @@ final class Parser
     /** whether a token can start an operand: a value, a name, a parameter, ( or a sign */
     private function startsOperand(Token $token): bool
     {
-        return $token->is(Lexer::NUMBER) || $token->is(Lexer::STRING) || $token->is(Lexer::IDENTIFIER) || $token->is(Lexer::PARAMETER)
-            || $token->is(Lexer::SYMBOL, '(') || $token->is(Lexer::SYMBOL, '-') || $token->is(Lexer::SYMBOL, '+')
-            || $token->is(Lexer::KEYWORD, 'NULL') || $token->is(Lexer::KEYWORD, 'TRUE') || $token->is(Lexer::KEYWORD, 'FALSE') || $token->is(Lexer::KEYWORD, 'UUID');
+        return in_array($token->type, [Lexer::NUMBER, Lexer::STRING, Lexer::IDENTIFIER, Lexer::PARAMETER], true)
+            || self::isAny($token, Lexer::SYMBOL, '(', '-', '+')
+            || self::isAny($token, Lexer::KEYWORD, 'NULL', 'TRUE', 'FALSE', 'UUID');
     }
 
     private function concatenation(): Expr
@@ -651,12 +625,7 @@ final class Parser
             return new FunctionCall($function, [], false, true, $name->position);
         }
         $distinct = null !== $this->accept(Lexer::KEYWORD, 'DISTINCT');
-        $arguments = [];
-        if (!$this->peek()->is(Lexer::SYMBOL, ')')) {
-            do {
-                $arguments[] = $this->expression();
-            } while ($this->accept(Lexer::SYMBOL, ','));
-        }
+        $arguments = $this->peek()->is(Lexer::SYMBOL, ')') ? [] : $this->list($this->expression(...));
         $this->expect(Lexer::SYMBOL, ')');
         return new FunctionCall($function, $arguments, $distinct, false, $name->position);
     }
@@ -680,6 +649,39 @@ final class Parser
     private function accept(string $type, ?string $value = null): ?Token
     {
         return $this->peek()->is($type, $value) ? $this->next() : null;
+    }
+
+    /** the next token if it is of the type and one of the values, taken; null otherwise */
+    private function acceptAny(string $type, string ...$values): ?Token
+    {
+        return self::isAny($this->peek(), $type, ...$values) ? $this->next() : null;
+    }
+
+    /** the next token if it is the word (see isWord()), taken; null otherwise */
+    private function acceptWord(string $word): ?Token
+    {
+        return $this->isWord($this->peek(), $word) ? $this->next() : null;
+    }
+
+    private static function isAny(Token $token, string $type, string ...$values): bool
+    {
+        return $token->is($type) && in_array($token->value, $values, true);
+    }
+
+    /**
+     * Items separated by commas, at least one.
+     *
+     * @template T
+     * @param callable(): T $item
+     * @return list<T>
+     */
+    private function list(callable $item): array
+    {
+        $items = [];
+        do {
+            $items[] = $item();
+        } while ($this->accept(Lexer::SYMBOL, ','));
+        return $items;
     }
 
     private function expect(string $type, ?string $value = null): Token
