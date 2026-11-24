@@ -1,5 +1,18 @@
 # Upgrading
 
+## From 1.0.0-rc.11 to 1.0.0-rc.12
+
+Nothing has to be migrated: files and behavior are unchanged. An own lock adapter that implements `LockAdapterInterface` directly (not by extending `LockAdapterAbstract`, as `SymfonyLockAdapter` does) adds `releaseLockIfHeld()`:
+
+```php
+public function releaseLockIfHeld(string $uuid): void
+{
+    if ($this->isLockedByThisProcess($uuid)) {
+        $this->releaseLock($uuid);
+    }
+}
+```
+
 ## From 1.0.0-rc.10 to 1.0.0-rc.11
 
 Nothing has to be migrated: the files are written as before. Code using the reader or writer of the storage changes names:

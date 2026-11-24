@@ -4,10 +4,17 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.12] - 2026-11-24
+
+The twelfth release candidate of 1.0: the code is simpler, with the same behavior. Long methods are split into named steps (storing, loading, deleting, transactions, OQL, search), repeated code is in one place (releasing locks, reading objects as stored). Files, behavior, events and safe mode are unchanged. **Read [UPGRADE.md](UPGRADE.md#from-100-rc11-to-100-rc12) before upgrading** if you implement `LockAdapterInterface` yourself.
+
 ### Added
-- `LockAdapterInterface::releaseLockIfHeld($uuid)`: releases a lock if this process holds it, implemented in `LockAdapterAbstract`; an own lock adapter implementing the interface directly adds it. `ObjectStorage::releaseLockUnlessRetained($uuid)` *(internal)* does the same unless a transaction retains the lock. Behavior is unchanged.
+- **Breaking** for own lock adapters: `LockAdapterInterface::releaseLockIfHeld($uuid)`: releases a lock if this process holds it, implemented in `LockAdapterAbstract`; an own lock adapter implementing the interface directly adds it. `ObjectStorage::releaseLockUnlessRetained($uuid)` *(internal)* does the same unless a transaction retains the lock. Behavior is unchanged.
 - `ObjectStorage::findRaw($uuid, includeExpired: false)`: an object as stored, like `readRaw()`, but `null` if nothing is stored or it has expired. `RawObject::decodedData()`: its data as an array, `null` if it isn't one. Used where the storage, OQL, search and unique indexes and transactions read objects as stored.
 - `Reflection::shortName($className)`: the name of a class without its namespace, also of classes that don't exist; used by OQL and the graph visitor.
+
+### Changed
+- Simpler code with the same behavior: `storeObject()`, `hydrateProperties()`, the child persistence and deletion policies, the OQL executor, parser, planner and writer, `Transaction`, `GraphVisitor`, the search and unique index managers, `DocumentBuilder`, `LoupeEngineIndex`, `Journal` and `TransactionRecovery` are split into named steps and lose their repeated code.
 
 ## [1.0.0-rc.11] - 2026-11-23
 
