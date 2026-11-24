@@ -100,8 +100,8 @@ trait DeletingTrait
         } catch (Throwable $e) {
             throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
         } finally {
-            if ($lockedHere && !$this->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
-                $lockAdapter->releaseLock($uuid);
+            if ($lockedHere) {
+                $this->releaseLockUnlessRetained($uuid);
             }
         }
     }
@@ -169,9 +169,7 @@ trait DeletingTrait
             $eventDispatcher?->dispatch(Events::OBJECT_DELETION_FAILURE, static fn() => new Context($uuid));
             throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
         } finally {
-            if (!$this->isLockRetained($uuid) && $lockAdapter?->isLockedByThisProcess($uuid)) {
-                $lockAdapter?->releaseLock($uuid);
-            }
+            $this->releaseLockUnlessRetained($uuid);
         }
     }
 

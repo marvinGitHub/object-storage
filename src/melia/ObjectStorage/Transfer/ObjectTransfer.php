@@ -153,8 +153,8 @@ final class ObjectTransfer
             return 'failed';
         } finally {
             // a transaction on the source retains the locks of the objects it deleted
-            if ($lockedHere && !$this->source->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
-                $lockAdapter->releaseLock($uuid);
+            if ($lockedHere) {
+                $this->source->releaseLockUnlessRetained($uuid);
             }
         }
     }

@@ -595,9 +595,7 @@ final class Manager implements ConstraintInterface
     {
         $lockAdapter = $this->getInternalStorage()->getLockAdapter();
         foreach ($locks as $lock) {
-            if ($lockAdapter->isLockedByThisProcess($lock)) {
-                $lockAdapter->releaseLock($lock);
-            }
+            $lockAdapter->releaseLockIfHeld($lock);
         }
     }
 }

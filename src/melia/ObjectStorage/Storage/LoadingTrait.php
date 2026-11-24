@@ -116,8 +116,8 @@ trait LoadingTrait
 
             return $object;
         } catch (Throwable $e) {
-            if (!$lockedBefore && $lockAdapter?->isLockedByThisProcess($uuid)) {
-                $lockAdapter?->releaseLock($uuid);
+            if (!$lockedBefore) {
+                $lockAdapter?->releaseLockIfHeld($uuid);
             }
             $eventDispatcher?->dispatch(Events::OBJECT_LOADING_FAILURE, static fn() => new Context($uuid));
             throw new ObjectLoadingFailureException(message: sprintf('Unable to load object with uuid: %s', $uuid), previous: $e);

@@ -404,9 +404,7 @@ final class Manager implements ManagerInterface
         } catch (Throwable $e) {
             throw new SearchException(message: sprintf('Unable to create search index "%s".', $name), previous: $e);
         } finally {
-            if ($lockAdapter->isLockedByThisProcess($definitionUuid)) {
-                $lockAdapter->releaseLock($definitionUuid);
-            }
+            $lockAdapter->releaseLockIfHeld($definitionUuid);
         }
 
         return $this->get($name);

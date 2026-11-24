@@ -10,4 +10,11 @@ abstract class LockAdapterAbstract implements LockAdapterInterface
 {
     use StateHandlerAwareTrait;
     use DispatcherAwareTrait;
+
+    public function releaseLockIfHeld(string $uuid): void
+    {
+        if ($this->isLockedByThisProcess($uuid)) {
+            $this->releaseLock($uuid);
+        }
+    }
 }

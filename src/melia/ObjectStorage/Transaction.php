@@ -1,11 +1,5 @@
 <?php
 
-/**
- * Represents a transaction in an object storage system. Transactions
- * enable multiple operations to be performed atomically, ensuring that
- * either all operations are successfully executed, or none are applied.
- */
-
 namespace melia\ObjectStorage;
 
 use melia\ObjectStorage\Exception\Exception;
@@ -49,7 +43,7 @@ class Transaction
 
     private string $transactionId;
 
-    /** @var list<array{type: string, uuid: string, object?: object, timestamp: float}> */
+    /** @var list<array{type: string, uuid: string, object?: object}> */
     private array $operations = [];
 
     /** @var array<string, string> the objects locked (and retained) for the transaction */
@@ -150,8 +144,7 @@ class Transaction
             return;
         }
 
-        $this->lockObject($uuid);
-        $this->recordBefore($uuid);
+        $this->lockAndRecord($uuid);
     }
 
     /**
@@ -261,18 +254,11 @@ class Transaction
      */
     private function executeOperation(array $operation): void
     {
-        switch ($operation['type']) {
-            case self::OPERATION_STORE:
-                $this->getStorage()->store($operation['object'], $operation['uuid']);
-                break;
-
-            case self::OPERATION_DELETE:
-                $this->getStorage()->delete($operation['uuid']);
-                break;
-
-            default:
-                throw new InvalidOperationException('Unknown operation type: ' . $operation['type']);
-        }
+        match ($operation['type']) {
+            self::OPERATION_STORE => $this->getStorage()->store($operation['object'], $operation['uuid']),
+            self::OPERATION_DELETE => $this->getStorage()->delete($operation['uuid']),
+            default => throw new InvalidOperationException('Unknown operation type: ' . $operation['type']),
+        };
     }
 
     /**
@@ -290,17 +276,22 @@ class Transaction
         // as store() of the storage determines it: an object loaded or stored before is updated, not copied
         $uuid ??= $this->getStorage()->getUuidOf($object) ?? $this->getGenerator()->generate();
 
-        $this->lockObject($uuid);
-        $this->recordBefore($uuid);
-
-        $this->operations[] = [
-            'type' => self::OPERATION_STORE,
-            'uuid' => $uuid,
-            'object' => clone $object,
-            'timestamp' => microtime(true),
-        ];
+        $this->lockAndRecord($uuid);
+        $this->operations[] = ['type' => self::OPERATION_STORE, 'uuid' => $uuid, 'object' => clone $object];
 
         return $uuid;
+    }
+
+    /**
+     * Locks an object until the end of the transaction and records its state before it, if not yet done.
+     *
+     * @throws TransactionLockException
+     * @throws TransactionException
+     */
+    private function lockAndRecord(string $uuid): void
+    {
+        $this->lockObject($uuid);
+        $this->recordBefore($uuid);
     }
 
     /**
@@ -382,25 +373,17 @@ class Transaction
     {
         $this->ensureTransactionActive();
 
-        $storedInTransaction = false;
-        foreach ($this->operations as $operation) {
-            if ($operation['uuid'] === $uuid && self::OPERATION_STORE === $operation['type']) {
-                $storedInTransaction = true;
-            }
-        }
+        $storedInTransaction = array_any(
+            $this->operations,
+            static fn(array $operation): bool => $operation['uuid'] === $uuid && self::OPERATION_STORE === $operation['type']
+        );
 
         if (!$storedInTransaction && !$this->getStorage()->exists($uuid)) {
             throw new ObjectNotFoundException("Object with UUID {$uuid} not found");
         }
 
-        $this->lockObject($uuid);
-        $this->recordBefore($uuid);
-
-        $this->operations[] = [
-            'type' => self::OPERATION_DELETE,
-            'uuid' => $uuid,
-            'timestamp' => microtime(true),
-        ];
+        $this->lockAndRecord($uuid);
+        $this->operations[] = ['type' => self::OPERATION_DELETE, 'uuid' => $uuid];
 
         return true;
     }
@@ -507,9 +490,17 @@ class Transaction
         try {
             $this->journal->remove();
         } catch (Throwable $e) {
-            $this->getStorage()->getLogger()?->log(new Exception(message: 'Failed to remove the journal of transaction ' . $this->transactionId, previous: $e));
+            $this->logFailure('Failed to remove the journal of transaction ' . $this->transactionId, $e);
         }
         $this->journal = null;
+    }
+
+    /**
+     * Logs a failure that doesn't stop the transaction from ending.
+     */
+    private function logFailure(string $message, Throwable $e): void
+    {
+        $this->getStorage()->getLogger()?->log(new Exception(message: $message, previous: $e));
     }
 
     /**
@@ -521,7 +512,7 @@ class Transaction
             try {
                 $this->getStorage()->releaseRetainedLock($uuid);
             } catch (Throwable $e) {
-                $this->getStorage()->getLogger()?->log(new Exception(message: "Failed to unlock object {$uuid}: " . $e->getMessage(), previous: $e));
+                $this->logFailure("Failed to unlock object {$uuid}: " . $e->getMessage(), $e);
             }
         }
         $this->lockedObjects = [];
@@ -538,12 +529,9 @@ class Transaction
         $this->transactionLocked = false;
         $lockUuid = TransactionRecovery::lockUuid($this->transactionId);
         try {
-            $lockAdapter = $this->getStorage()->getLockAdapter();
-            if (null !== $lockAdapter && $lockAdapter->isLockedByThisProcess($lockUuid)) {
-                $lockAdapter->releaseLock($lockUuid);
-            }
+            $this->getStorage()->getLockAdapter()?->releaseLockIfHeld($lockUuid);
         } catch (Throwable $e) {
-            $this->getStorage()->getLogger()?->log(new Exception(message: 'Failed to release the lock of transaction ' . $this->transactionId, previous: $e));
+            $this->logFailure('Failed to release the lock of transaction ' . $this->transactionId, $e);
         }
     }
 
@@ -568,7 +556,7 @@ class Transaction
             } catch (Throwable $e) {
                 // Must not let anything escape a destructor (fatal); catch Throwable, not just
                 // the library's own Exception type.
-                $this->getStorage()->getLogger()?->log(new Exception(message: "Auto-rollback failed in destructor: " . $e->getMessage(), previous: $e));
+                $this->logFailure('Auto-rollback failed in destructor: ' . $e->getMessage(), $e);
             }
         }
     }

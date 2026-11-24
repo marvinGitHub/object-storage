@@ -233,8 +233,8 @@ final class Writer
                 throw $this->stopped($done, $changed, count($uuids), $e);
             } finally {
                 // a transaction retains the locks of the objects it changed
-                if ($lockedHere && !$this->storage->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
-                    $lockAdapter->releaseLock($uuid);
+                if ($lockedHere) {
+                    $this->storage->releaseLockUnlessRetained($uuid);
                 }
             }
         }
@@ -539,8 +539,8 @@ final class Writer
                 throw $this->stopped('deleted', $deleted, count($uuids), $e);
             } finally {
                 // a transaction retains the locks of the objects it changed
-                if ($lockedHere && !$this->storage->isLockRetained($uuid) && $lockAdapter->isLockedByThisProcess($uuid)) {
-                    $lockAdapter->releaseLock($uuid);
+                if ($lockedHere) {
+                    $this->storage->releaseLockUnlessRetained($uuid);
                 }
             }
         }

@@ -285,9 +285,7 @@ final class Registry
         } catch (Throwable $e) {
             throw new ConfigurationException(message: sprintf('Unable to save the configuration "%s".', $configuration->name), previous: $e);
         } finally {
-            if ($lockAdapter->isLockedByThisProcess($uuid)) {
-                $lockAdapter->releaseLock($uuid);
-            }
+            $lockAdapter->releaseLockIfHeld($uuid);
         }
     }
 

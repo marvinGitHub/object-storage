@@ -18,6 +18,11 @@ interface LockAdapterInterface
 
     public function releaseLock(string $uuid): void;
 
+    /**
+     * Releases the lock of a UUID if this process holds it; does nothing otherwise.
+     */
+    public function releaseLockIfHeld(string $uuid): void;
+
     public function isLockedByOtherProcess(?string $uuid): bool;
 
     public function isLockedByThisProcess(?string $uuid): bool;

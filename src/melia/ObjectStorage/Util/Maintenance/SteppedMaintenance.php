@@ -92,9 +92,7 @@ abstract class SteppedMaintenance
         try {
             return $callback();
         } finally {
-            if ($lockAdapter->isLockedByThisProcess($lockUuid)) {
-                $lockAdapter->releaseLock($lockUuid);
-            }
+            $lockAdapter->releaseLockIfHeld($lockUuid);
         }
     }
 

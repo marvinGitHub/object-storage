@@ -127,9 +127,7 @@ trait StoringTrait
 
             $this->storeObject($object, $uuid, $ttl);
 
-            if (!$this->isLockRetained($uuid) && $lockAdapter?->isLockedByThisProcess($uuid)) {
-                $lockAdapter?->releaseLock($uuid);
-            }
+            $this->releaseLockUnlessRetained($uuid);
 
             if ($exists) {
                 $eventDispatcher?->dispatch(Events::AFTER_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
@@ -139,9 +137,7 @@ trait StoringTrait
 
             return $uuid;
         } catch (Throwable $e) {
-            if (!$this->isLockRetained($uuid) && $lockAdapter?->isLockedByThisProcess($uuid)) {
-                $lockAdapter?->releaseLock($uuid);
-            }
+            $this->releaseLockUnlessRetained($uuid);
             $eventDispatcher?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
 
             // passed on as they are (ObjectSavingFailureExceptions too), so callers can catch the conflict or the
@@ -234,85 +230,25 @@ trait StoringTrait
             $lifetimeChanged = $ttl !== $loadedMetadata?->getLifetime();
 
             $writeGraph = $checksumChanged || $classNameChanged;
+            // the metadata (and the cached object) also if only the lifetime changed
+            $writeMetadata = $writeGraph || $lifetimeChanged;
             $writeStub = !$exists || $classNameChanged;
-            $writeMetadata = $checksumChanged || $classNameChanged || $lifetimeChanged;
-            $writeCache = $checksumChanged || $classNameChanged || $lifetimeChanged;
 
             // store() locks the object it stores, but not the referenced objects it writes along with it:
             // lock an object while writing it, so concurrent writers can't mix up its files. The lock is only
             // taken now, after its referenced objects are written, so no more than two locks are held at once.
             $lockAdapter = $this->getLockAdapter();
             $lockedHere = false;
-            if (($writeGraph || $writeMetadata) && null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock($uuid)) {
+            if ($writeMetadata && null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock($uuid)) {
                 $lockAdapter->acquireExclusiveLock($uuid);
                 $lockedHere = true;
             }
 
             try {
-                $currentMetadata = null;
-
-                if ($writeGraph || $writeMetadata) {
-                    // the revision is read from disk under the lock: the cached metadata may be outdated
-                    $tracked = isset($this->revisions[$object]);
-                    $currentMetadata = ($exists || $tracked) ? $this->reloadMetadata($uuid) : null;
-                    $currentRevision = $currentMetadata?->getRevision() ?? 0;
-
-                    // optimistic locking: the object was stored since this instance loaded or stored it; an object
-                    // deleted in the meantime (by this or another process) is created again, which is no conflict
-                    if ($tracked && null !== $currentMetadata && true === $strategy?->optimisticLockingEnabled() && $this->revisions[$object] !== $currentRevision) {
-                        $expectedRevision = $this->revisions[$object];
-                        $eventDispatcher?->dispatch(Events::REVISION_CONFLICT, static fn() => new Context($uuid));
-                        throw new RevisionConflictException(sprintf(
-                            'Object with uuid %s has been changed in the meantime. Expected revision: %u Current: %u',
-                            $uuid,
-                            $expectedRevision,
-                            $currentRevision
-                        ));
-                    }
-
-                    $metadata->setRevision($writeGraph ? $currentRevision + 1 : $currentRevision);
-                    // as on disk (the cache may be outdated); a write of the data is a modification
-                    if (null !== $currentMetadata) {
-                        $metadata->setTimestampCreation($currentMetadata->getTimestampCreation());
-                        $metadata->setTimestampModification($currentMetadata->getTimestampModification());
-                    }
-                    if ($writeGraph) {
-                        // a new object: modified when created
-                        $metadata->setTimestampModification(null === $currentMetadata ? $metadata->getTimestampCreation() : microtime(true));
-                    }
-                }
+                $currentMetadata = $writeMetadata ? $this->stampRevision($object, $uuid, $metadata, $exists, $writeGraph) : null;
 
                 if ($writeGraph) {
-                    // the previous object must be loaded before the data file is overwritten, otherwise the
-                    // new data would be validated against the old metadata (checksum mismatch → safe mode);
-                    // it is read from the files, not the cache, which holds the object being stored, and is
-                    // not cached, so it doesn't replace the current object there
-                    $previousObject = null;
-                    if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
-                        try {
-                            $previousObject = $this->loadFromFiles($uuid, addToCache: false);
-                        } catch (Throwable $e) {
-                            $this->getLogger()?->log($e);
-                        }
-                    }
-
-                    $revision = $metadata->getRevision();
-                    $previousRevision = $currentMetadata?->getRevision();
-                    $contextBuilderObjectPersistenceContext = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject, $revision, $previousRevision);
-
-                    // under the lock of the object, with the data as it will be stored; a violation prevents the write
-                    $finalizeConstraints = $this->checkConstraints($uuid, $className, $serializedGraph, $metadata->getReservedReferenceName());
-                    $written = false;
-                    try {
-                        $this->writeObjectFiles($uuid, $serializedGraph, $metadata);
-                        $written = true;
-                        $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $contextBuilderObjectPersistenceContext);
-                    } catch (Throwable $e) {
-                        $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $contextBuilderObjectPersistenceContext);
-                        throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
-                    } finally {
-                        $finalizeConstraints($written);
-                    }
+                    $this->writeGraph($object, $uuid, $serializedGraph, $metadata, $currentMetadata?->getRevision(), $exists);
                 }
 
                 if ($classNameChanged) {
@@ -326,11 +262,8 @@ trait StoringTrait
                     $this->writeMetadata($metadata);
                 }
 
-                if ($writeGraph || $writeMetadata) {
+                if ($writeMetadata) {
                     $this->revisions[$object] = $metadata->getRevision();
-                }
-
-                if ($writeCache) {
                     $this->addToCache($uuid, $object, $ttl);
                 }
 
@@ -345,6 +278,113 @@ trait StoringTrait
             }
         } finally {
             unset($this->processingStack[$object]);
+        }
+    }
+
+    /**
+     * Whether an object referenced by the object being stored is stored along, by the child persistence policy of
+     * the strategy. A callback that fails stores nothing (fail-closed).
+     */
+    private function shouldWriteChild(GraphBuilderContext $context, object $child, string $uuid, array $path): bool
+    {
+        $strategy = $this->getStrategy();
+        $exists = $this->exists($uuid);
+
+        switch ($strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
+            case ChildPersistence::IF_NOT_EXIST:
+                return !$exists;
+            case ChildPersistence::NEVER:
+                return false;
+            case ChildPersistence::CALLBACK:
+                try {
+                    return $strategy?->shouldPersistChild($context, $child, $uuid, $exists, $path) ?? false;
+                } catch (Throwable $e) {
+                    $this->getLogger()?->log($e);
+                    return false;
+                }
+            default: // ChildPersistence::ALWAYS
+                return true;
+        }
+    }
+
+    /**
+     * Sets the revision and the timestamps of the metadata to write, from the metadata on disk (read under the lock:
+     * the cached metadata may be outdated); a write of the data is a new revision and a modification.
+     *
+     * @return Metadata|null The metadata on disk, null for a new object.
+     * @throws RevisionConflictException With optimistic locking, if the object was stored since this instance loaded
+     *         or stored it.
+     */
+    private function stampRevision(object $object, string $uuid, Metadata $metadata, bool $exists, bool $writeGraph): ?Metadata
+    {
+        $tracked = isset($this->revisions[$object]);
+        $currentMetadata = ($exists || $tracked) ? $this->reloadMetadata($uuid) : null;
+        $currentRevision = $currentMetadata?->getRevision() ?? 0;
+
+        // an object deleted in the meantime (by this or another process) is created again, which is no conflict
+        if ($tracked && null !== $currentMetadata && true === $this->getStrategy()?->optimisticLockingEnabled() && $this->revisions[$object] !== $currentRevision) {
+            $expectedRevision = $this->revisions[$object];
+            $this->getEventDispatcher()?->dispatch(Events::REVISION_CONFLICT, static fn() => new Context($uuid));
+            throw new RevisionConflictException(sprintf(
+                'Object with uuid %s has been changed in the meantime. Expected revision: %u Current: %u',
+                $uuid,
+                $expectedRevision,
+                $currentRevision
+            ));
+        }
+
+        $metadata->setRevision($writeGraph ? $currentRevision + 1 : $currentRevision);
+        // as on disk (the cache may be outdated)
+        if (null !== $currentMetadata) {
+            $metadata->setTimestampCreation($currentMetadata->getTimestampCreation());
+            $metadata->setTimestampModification($currentMetadata->getTimestampModification());
+        }
+        if ($writeGraph) {
+            // a new object: modified when created
+            $metadata->setTimestampModification(null === $currentMetadata ? $metadata->getTimestampCreation() : microtime(true));
+        }
+
+        return $currentMetadata;
+    }
+
+    /**
+     * Writes the data and metadata files of an object under its lock: constraints are checked first (a violation
+     * prevents the write), OBJECT_SAVED or OBJECT_WRITE_FAILED is dispatched with the previous object.
+     *
+     * @throws ObjectSavingFailureException
+     * @throws ConstraintViolationException
+     */
+    private function writeGraph(object $object, string $uuid, string $serializedGraph, Metadata $metadata, ?int $previousRevision, bool $exists): void
+    {
+        $eventDispatcher = $this->getEventDispatcher();
+
+        // the previous object must be loaded before the data file is overwritten, otherwise the new data would be
+        // validated against the old metadata (checksum mismatch → safe mode); it is read from the files, not the
+        // cache, which holds the object being stored, and is not cached, so it doesn't replace the current object
+        $previousObject = null;
+        if ($exists && $this->hasListeners(Events::OBJECT_SAVED, Events::OBJECT_WRITE_FAILED)) {
+            try {
+                $previousObject = $this->loadFromFiles($uuid, addToCache: false);
+            } catch (Throwable $e) {
+                $this->getLogger()?->log($e);
+            }
+        }
+
+        $revision = $metadata->getRevision();
+        $context = static fn(): ObjectPersistenceContext => new ObjectPersistenceContext($uuid, $object, $previousObject, $revision, $previousRevision);
+
+        // with the data as it will be stored
+        $finalizeConstraints = $this->checkConstraints($uuid, $metadata->getClassName(), $serializedGraph, $metadata->getReservedReferenceName());
+        $written = false;
+        try {
+            $this->writeObjectFiles($uuid, $serializedGraph, $metadata);
+            $written = true;
+            $eventDispatcher?->dispatch(Events::OBJECT_SAVED, $context);
+        } catch (Throwable $e) {
+            $eventDispatcher?->dispatch(Events::OBJECT_WRITE_FAILED, $context);
+            throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
+        } finally {
+            $finalizeConstraints($written);
         }
     }
 
@@ -490,33 +530,7 @@ trait StoringTrait
             if (false === isset($this->processingStack[$value])) {
                 $context->increaseLevel();
                 try {
-                    $exists = $this->exists($referencedUuid);
-                    $writeChild = true;
-
-                    switch ($strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
-                        case ChildPersistence::IF_NOT_EXIST:
-                            if ($exists) {
-                                $writeChild = false;
-                            }
-                            break;
-                        case ChildPersistence::NEVER:
-                            $writeChild = false;
-                            break;
-                        case ChildPersistence::CALLBACK:
-                            try {
-                                $writeChild = $strategy?->shouldPersistChild($context, $value, $referencedUuid, $exists, $path) ?? false;
-                            } catch (Throwable $e) {
-                                $this->getLogger()?->log($e);
-                                $writeChild = false; // fail-closed; change to true if you prefer fail-open
-                            }
-                            break;
-                        default:
-                        case ChildPersistence::ALWAYS:
-                            // ignore
-                            break;
-                    }
-
-                    if ($writeChild) {
+                    if ($this->shouldWriteChild($context, $value, $referencedUuid, $path)) {
                         $this->storeObject(
                             $value,
                             $referencedUuid,
@@ -540,16 +554,11 @@ trait StoringTrait
             try {
                 foreach ($value as $k => $v) {
                     try {
-                        $isSupportedKey = is_string($k) || is_int($k);
-
-                        if (false === $isSupportedKey) {
+                        if (!is_string($k) && !is_int($k)) {
                             throw new UnsupportedKeyException('Only string and integer keys are supported.');
                         }
 
-                        $childPath = $path;
-                        $childPath[] = $k;
-
-                        $out[$k] = $this->transformValueForGraph($context, $v, $childPath);
+                        $out[$k] = $this->transformValueForGraph($context, $v, [...$path, $k]);
                     } catch (ResourceSerializationNotSupportedException|ClosureSerializationNotSupportedException|UnsupportedKeyException $e) {
                         $this->getLogger()?->log($e);
                     }

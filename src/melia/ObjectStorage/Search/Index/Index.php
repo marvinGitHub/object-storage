@@ -736,9 +736,7 @@ final class Index implements IndexInterface
         } catch (Throwable $e) {
             throw new SearchException(message: sprintf('Unable to change the %s UUIDs of search index "%s".', $kind, $this->getName()), previous: $e);
         } finally {
-            if ($lockAdapter->isLockedByThisProcess($uuid)) {
-                $lockAdapter->releaseLock($uuid);
-            }
+            $lockAdapter->releaseLockIfHeld($uuid);
         }
     }
 
@@ -857,9 +855,7 @@ final class Index implements IndexInterface
         } catch (Throwable $e) {
             throw new SearchException(message: sprintf('Search index "%s": %s', $this->getName(), $e->getMessage()), previous: $e);
         } finally {
-            if ($lockAdapter->isLockedByThisProcess($lockUuid)) {
-                $lockAdapter->releaseLock($lockUuid);
-            }
+            $lockAdapter->releaseLockIfHeld($lockUuid);
         }
     }
 

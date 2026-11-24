@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+### Added
+- `LockAdapterInterface::releaseLockIfHeld($uuid)`: releases a lock if this process holds it, implemented in `LockAdapterAbstract`; an own lock adapter implementing the interface directly adds it. `ObjectStorage::releaseLockUnlessRetained($uuid)` *(internal)* does the same unless a transaction retains the lock. Behavior is unchanged.
+
 ## [1.0.0-rc.11] - 2026-11-23
 
 The eleventh release candidate of 1.0: `ObjectStorage` is split into traits by concern, and files are read and written in layers, each with `read()` and `write()` — the bytes (`File\Files`, atomic and flushed to disk), JSON (`File\JsonFiles`), and in the storage `readJson()`/`writeJson()` and the files of objects. Files, behavior and safe mode are unchanged. **Read [UPGRADE.md](UPGRADE.md#from-100-rc10-to-100-rc11) before upgrading** if you use the reader or writer of the storage (e.g. `getWriter()->setSyncEnabled(false)`).
