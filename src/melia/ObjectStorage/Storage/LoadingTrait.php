@@ -198,7 +198,6 @@ trait LoadingTrait
      */
     protected function hydrateObject(string $uuid, array $data, Metadata $metadata, bool $addToCache): object
     {
-
         // build object using the single metadata instance
         $object = $this->createInstance($metadata->getClassName());
 
@@ -235,10 +234,7 @@ trait LoadingTrait
      */
     protected function createInstance(string $className): object
     {
-        $classNameOverride = $this->getClassRenameMap()?->getAlias($className);
-        if ($classNameOverride) {
-            $className = $classNameOverride;
-        }
+        $className = $this->getClassRenameMap()?->getAlias($className) ?: $className;
 
         if (false === class_exists($className)) {
             // don't create alias from a stable class, otherwise all unknown aliases will be stored as a placeholder class
@@ -270,35 +266,14 @@ trait LoadingTrait
         $strategy = $this->getStrategy();
         $className = $metadata->getClassName();
         $reflection = new Reflection($object);
+        $byCallback = PropertyHydration::CALLBACK === ($strategy?->getPolicyPropertyHydration() ?? StrategyInterface::DEFAULT_POLICY_PROPERTY_HYDRATION);
 
         foreach ($data as $propertyName => $value) {
-            if ((($strategy?->getPolicyPropertyHydration() ?? StrategyInterface::DEFAULT_POLICY_PROPERTY_HYDRATION) === PropertyHydration::CALLBACK) && true !== $strategy->shouldHydrateProperty($reflection, $propertyName, $value)) {
+            if ($byCallback && true !== $strategy->shouldHydrateProperty($reflection, $propertyName, $value)) {
                 continue;
             }
 
-            $finalValue = $value;
-            $type = Reflection::getPropertyType($object, $propertyName);
-
-            if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
-                $finalValue = $this->restoreDateTime($value, $metadata, $type);
-            } else if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $referencedUuid = $value[$metadata->getReservedReferenceName()];
-                if (false === Validator::validate($referencedUuid)) {
-                    /* reference UUID is not valid, so we just set the property to the value */
-                    $finalValue = [$metadata->getReservedReferenceName() => $referencedUuid];
-                } else {
-                    $reference = new LazyLoadReference($this, $referencedUuid, $object, [$propertyName]);
-
-                    if (false === $this->supportsLazyReference($type)) {
-                        $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, static fn() => new LazyTypeNotSupportedContext($className, $propertyName));
-                        $reference = $reference->getObject();
-                    }
-
-                    $finalValue = $reference;
-                }
-            } else if (is_array($value)) {
-                $finalValue = $this->hydrateArray($metadata, $object, $value, [$propertyName]);
-            }
+            $finalValue = $this->propertyValue($object, $propertyName, $value, $metadata);
 
             try {
                 $strategy?->hydrateProperty($reflection, $propertyName, $finalValue);
@@ -311,6 +286,43 @@ trait LoadingTrait
         }
 
         return $object;
+    }
+
+    /**
+     * The value of a property as loaded: a date restored (converted to the declared type), a reference as a
+     * LazyLoadReference (the referenced object itself if the type of the property doesn't allow one), arrays
+     * hydrated (hydrateArray()); other values as stored.
+     *
+     * @throws InvalidUUIDException
+     * @throws ReflectionException
+     */
+    private function propertyValue(object $object, int|string $propertyName, mixed $value, Metadata $metadata): mixed
+    {
+        $type = Reflection::getPropertyType($object, $propertyName);
+        $reserved = $metadata->getReservedReferenceName();
+
+        if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
+            return $this->restoreDateTime($value, $metadata, $type);
+        }
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (!isset($value[$reserved])) {
+            return $this->hydrateArray($metadata, $object, $value, [$propertyName]);
+        }
+
+        $referencedUuid = $value[$reserved];
+        if (false === Validator::validate($referencedUuid)) {
+            return [$reserved => $referencedUuid]; // not a valid reference: the value as stored
+        }
+
+        $reference = new LazyLoadReference($this, $referencedUuid, $object, [$propertyName]);
+        if ($this->supportsLazyReference($type)) {
+            return $reference;
+        }
+        $className = $metadata->getClassName();
+        $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, static fn() => new LazyTypeNotSupportedContext($className, $propertyName));
+        return $reference->getObject();
     }
 
     /**
@@ -330,8 +342,7 @@ trait LoadingTrait
     {
         $processed = [];
         foreach ($array as $key => $value) {
-            $childPath = $path;
-            $childPath[] = $key;
+            $childPath = [...$path, $key];
 
             if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
                 $processed[$key] = $this->restoreDateTime($value, $metadata);

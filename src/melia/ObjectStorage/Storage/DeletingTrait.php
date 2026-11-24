@@ -98,7 +98,7 @@ trait DeletingTrait
         } catch (ObjectDeletionFailureException $e) {
             throw $e;
         } catch (Throwable $e) {
-            throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
+            throw self::deletionFailure($uuid, $e);
         } finally {
             if ($lockedHere) {
                 $this->releaseLockUnlessRetained($uuid);
@@ -150,7 +150,7 @@ trait DeletingTrait
             $children = $this->findChildrenToDelete($uuid, (string)$className, $filePath);
 
             if (!$adapter->unlink($filePath)) {
-                throw new ObjectDeletionFailureException('Object with uuid ' . $uuid . ' could not be deleted');
+                throw self::deletionFailure($uuid);
             }
 
             $filePathMetadata = $this->getFilePathMetadata($uuid);
@@ -167,10 +167,15 @@ trait DeletingTrait
             return $children;
         } catch (Throwable $e) {
             $eventDispatcher?->dispatch(Events::OBJECT_DELETION_FAILURE, static fn() => new Context($uuid));
-            throw new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $e);
+            throw self::deletionFailure($uuid, $e);
         } finally {
             $this->releaseLockUnlessRetained($uuid);
         }
+    }
+
+    private static function deletionFailure(string $uuid, ?Throwable $previous = null): ObjectDeletionFailureException
+    {
+        return new ObjectDeletionFailureException(message: 'Object with uuid ' . $uuid . ' could not be deleted', previous: $previous);
     }
 
     /**
@@ -214,29 +219,32 @@ trait DeletingTrait
             if ($childUuid === $uuid || isset($children[$childUuid])) {
                 continue;
             }
-
-            if (ChildDeletion::CALLBACK === $policy) {
-                $childClassName = $this->getClassName($childUuid);
-                if (null === $childClassName) {
-                    continue; // not stored (anymore)
-                }
-
-                try {
-                    $delete = $strategy->shouldDeleteChild($uuid, $className, $childUuid, $childClassName, $path);
-                } catch (Throwable $e) {
-                    $this->getLogger()?->log($e);
-                    $delete = false; // fail-closed: keep the referenced object
-                }
-
-                if (true !== $delete) {
-                    continue;
-                }
+            if (ChildDeletion::CALLBACK === $policy && !$this->callbackDeletesChild($uuid, $className, $childUuid, $path)) {
+                continue;
             }
-
             $children[$childUuid] = true;
         }
 
         return array_keys($children);
+    }
+
+    /**
+     * Whether the callback of the strategy deletes a referenced object along; not one that isn't stored (anymore),
+     * nor if the callback fails (fail-closed: the referenced object is kept).
+     */
+    private function callbackDeletesChild(string $uuid, string $className, string $childUuid, array $path): bool
+    {
+        $childClassName = $this->getClassName($childUuid);
+        if (null === $childClassName) {
+            return false;
+        }
+
+        try {
+            return true === $this->getStrategy()->shouldDeleteChild($uuid, $className, $childUuid, $childClassName, $path);
+        } catch (Throwable $e) {
+            $this->getLogger()?->log($e);
+            return false;
+        }
     }
 
     /**
