@@ -2,6 +2,7 @@
 
 namespace melia\ObjectStorage;
 
+use Closure;
 use melia\ObjectStorage\Cache\InMemoryCache;
 use melia\ObjectStorage\Configuration\Configuration;
 use melia\ObjectStorage\Configuration\Exception\ConfigurationException;
@@ -168,6 +169,13 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      */
     private ?WeakReference $activeTransaction = null;
 
+    /**
+     * The components of the storage, by name, with the key of the inputs they were created from (see component()).
+     *
+     * @var array<string, array{key: string, component: object}>
+     */
+    private array $components = [];
+
     // ---------------------------------------------------------------------------------------------------------
     // Creating and configuring the storage
     // ---------------------------------------------------------------------------------------------------------
@@ -259,6 +267,26 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         // transactions interrupted by a crash are rolled back; without any, this is a single directory lookup
         TransactionRecovery::recoverAll($this);
+    }
+
+    /**
+     * A component of the storage (see docs/architecture.md), created when first needed and created again when one
+     * of its inputs has changed, e.g. by a setter of the storage: components don't follow changes themselves.
+     *
+     * @template T of object
+     * @param list<mixed> $inputs What the component is created from: objects compared by identity, other values by
+     *        value. Only what the component holds: an object it doesn't keep could be freed and its id reused.
+     * @param Closure(): T $create
+     * @return T
+     */
+    private function component(string $name, array $inputs, Closure $create): object
+    {
+        $key = serialize(array_map(static fn(mixed $input): mixed => is_object($input) ? '#' . spl_object_id($input) : $input, $inputs));
+        if (($this->components[$name]['key'] ?? null) !== $key) {
+            $this->components[$name] = ['key' => $key, 'component' => $create()];
+        }
+
+        return $this->components[$name]['component'];
     }
 
     /**
@@ -415,7 +443,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         $this->identityMap = new WeakMap();
         $this->processingStack = new WeakMap();
         $this->revisions = new WeakMap();
-        $this->registeredClassNamesCache = null;
+        $this->classNameRegistry()->forget();
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
     }

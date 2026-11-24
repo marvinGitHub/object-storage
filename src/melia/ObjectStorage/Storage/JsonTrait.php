@@ -2,8 +2,6 @@
 
 namespace melia\ObjectStorage\Storage;
 
-use melia\ObjectStorage\Event\Context\IOContext;
-use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\CorruptedFileException;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
@@ -13,10 +11,9 @@ use melia\ObjectStorage\Strategy\StrategyInterface;
 use Random\RandomException;
 
 /**
- * The JSON files of the storage (metadata, the registry of class names): readJson() reads and decodes, writeJson()
- * encodes and writes, through the files of the storage (JsonFiles on top of getFiles()).
- *
- * A file that holds no valid JSON is a damaged file of the storage: safe mode is enabled.
+ * The JSON files of the storage (metadata, the registry of class names), delegated to the component JsonStore:
+ * through the files of the storage (JsonFiles on top of getFiles()), a file that holds no valid JSON enables safe
+ * mode.
  *
  * Part of ObjectStorage, kept apart for readability.
  *
@@ -25,27 +22,16 @@ use Random\RandomException;
 trait JsonTrait
 {
     /**
-     * The decoded JSON of a file of the storage.
+     * The decoded JSON of a file of the storage, see JsonStore::read().
      *
      * @return array|null Null if there is no such file.
-     * @throws IOException If the file exists but can't be read (logged, IO_READ_FAILURE dispatched).
-     * @throws CorruptedFileException If it holds no valid JSON (JSON_DECODING_FAILURE dispatched, safe mode enabled).
+     * @throws IOException If the file exists but can't be read.
+     * @throws CorruptedFileException If it holds no valid JSON (safe mode is enabled).
      * @throws SafeModeActivationFailedException If safe mode can't be enabled.
      */
     protected function readJson(string $path): ?array
     {
-        try {
-            return $this->jsonFiles()->read($path);
-        } catch (IOException $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::IO_READ_FAILURE, static fn() => new IOContext($path));
-            throw $e;
-        } catch (CorruptedFileException $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, static fn() => new IOContext($path));
-            $this->getStateHandler()?->enableSafeMode();
-            throw $e;
-        }
+        return $this->jsonStore()->read($path);
     }
 
     /**
@@ -57,14 +43,25 @@ trait JsonTrait
      */
     protected function writeJson(string $path, mixed $value): void
     {
-        $this->jsonFiles()->write($path, $value);
+        $this->jsonStore()->write($path, $value);
     }
 
     /**
-     * Created per use, so files or a strategy set later are used.
+     * The JSON files of the storage, with its files, the maximum depth of its strategy, its logger, event
+     * dispatcher and state handler as they are now.
      */
-    private function jsonFiles(): JsonFiles
+    protected function jsonStore(): JsonStore
     {
-        return new JsonFiles($this->getFiles(), $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH);
+        $files = $this->getFiles();
+        $maxDepth = $this->getStrategy()?->getMaxDepth() ?? StrategyInterface::DEFAULT_MAX_DEPTH;
+        $logger = $this->getLogger();
+        $dispatcher = $this->getEventDispatcher();
+        $stateHandler = $this->getStateHandler();
+
+        return $this->component(
+            JsonStore::class,
+            [$files, $maxDepth, $logger, $dispatcher, $stateHandler],
+            static fn(): JsonStore => new JsonStore(new JsonFiles($files, $maxDepth), $logger, $dispatcher, $stateHandler),
+        );
     }
 }

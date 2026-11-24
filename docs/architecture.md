@@ -14,9 +14,10 @@ The storage is being split into components, one concern each, step by step and w
 | Component | Concern | Replaces | State |
 |---|---|---|---|
 | `Storage\ObjectPaths` | the paths of all files of a storage, sharded by UUID | `PathsTrait` | done |
-| `Storage\ClassNameRegistry` | `classnames.json`: the classes of stored objects, under its lock | registry part of `StubsTrait` | planned |
-| `Storage\StubIndex` | the stubs: objects by class | stub part of `StubsTrait`, `ListingTrait` | planned |
-| `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes, JSON | `DurabilityTrait`, `JsonTrait` | planned |
+| `Storage\JsonStore` | JSON files with the rules of the storage for failures (damaged JSON enables safe mode) | `JsonTrait` | done |
+| `Storage\ClassNameRegistry` | `classnames.json`: the classes of stored objects, under its lock, kept in memory | registry part of `StubsTrait` | done |
+| `Storage\StubIndex` | the stubs: objects by class | stub part of `StubsTrait`, listing by class of `ListingTrait` | done |
+| `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes | `DurabilityTrait` | planned |
 | `Storage\MetadataStore` | metadata through its cache | `MetadataTrait` | planned |
 | `Storage\ObjectCache` | the cache of loaded objects | cache methods of `ObjectStorage` | planned |
 | `Storage\ObjectReader`, `ObjectWriter`, `ObjectDeleter` | load, store, delete | `LoadingTrait`, `StoringTrait`, `DeletingTrait` | planned |
@@ -31,10 +32,16 @@ components. Code using the storage doesn't notice the split.
   is what they need).
 - **Dependencies through the constructor.** A component gets what it uses as constructor arguments: no `$this` of
   another class, no static state, no service locator.
-- **Immutable components.** The facade has setters (`setStorageDir()`, `setIOAdapter()`, `setStrategy()`, …), and the
-  shard depth of a strategy can change at runtime (maintenance, configuration). A component therefore doesn't follow
-  changes: the facade creates it when first needed and creates it again when one of its inputs has changed.
-- **The order of the layers:** paths → files → metadata, stubs, registry → reader, writer, deleter → facade.
+- **Fixed dependencies.** The facade has setters (`setStorageDir()`, `setIOAdapter()`, `setStrategy()`, …), and the
+  shard depth of a strategy can change at runtime (maintenance, configuration). A component therefore never changes
+  its dependencies: the facade creates it when first needed and creates it again when one of its inputs has changed
+  (`ObjectStorage::component()`: objects compared by identity, other values by value). State that is the
+  component's own concern stays with it, e.g. the class names the registry keeps in memory; it is lost when the
+  component is created again, which is always safe.
+- **The order of the layers:** paths → JSON files, object files → metadata, registry → stubs → reader, writer,
+  deleter → facade.
+- **Each component has a unit test of its own** (`tests/melia/ObjectStorage/Storage/`), without a storage: what the
+  facade tests can't show (e.g. that the registry is read again under its lock) is tested there.
 - **Same behavior while splitting:** every step is checked by the whole test suite, PHPStan (level 5, see
   `phpstan.neon`) and the assertions per test, which must stay the same.
 

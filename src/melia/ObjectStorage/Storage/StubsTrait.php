@@ -3,7 +3,6 @@
 namespace melia\ObjectStorage\Storage;
 
 use melia\ObjectStorage\Event\Context\Context;
-use melia\ObjectStorage\Event\Context\StubContext;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ClassnameRegistrationFailureException;
 use melia\ObjectStorage\Exception\IOException;
@@ -12,7 +11,6 @@ use melia\ObjectStorage\Exception\SerializationFailureException;
 use melia\ObjectStorage\Exception\StubDeletionFailureException;
 use melia\ObjectStorage\Exception\StubSavingFailureException;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
-use Throwable;
 
 /**
  * The stubs (the index of objects by class) and the registry of class names; rebuilding them, moving damaged
@@ -24,134 +22,82 @@ use Throwable;
  */
 trait StubsTrait
 {
-    /** @var array<string>|null */
-    protected ?array $registeredClassNamesCache = null;
     /**
-     * @param string $className
-     * @param string $uuid
+     * The registry of class names of the storage, with its paths, IO adapter, JSON files and lock adapter as they
+     * are now; it keeps the registry in memory once read.
+     */
+    protected function classNameRegistry(): ClassNameRegistry
+    {
+        $paths = $this->objectPaths();
+        $io = $this->getIOAdapter();
+        $json = $this->jsonStore();
+        $locks = $this->getLockAdapter();
+
+        return $this->component(
+            ClassNameRegistry::class,
+            [$paths, $io, $json, $locks],
+            static fn(): ClassNameRegistry => new ClassNameRegistry($paths, $io, $json, $locks),
+        );
+    }
+
+    /**
+     * The stubs of the storage, with its paths, IO adapter, registry of class names, event dispatcher and logger as
+     * they are now.
+     */
+    protected function stubIndex(): StubIndex
+    {
+        $paths = $this->objectPaths();
+        $io = $this->getIOAdapter();
+        $registry = $this->classNameRegistry();
+        $dispatcher = $this->getEventDispatcher();
+        $logger = $this->getLogger();
+
+        return $this->component(
+            StubIndex::class,
+            [$paths, $io, $registry, $dispatcher, $logger],
+            static fn(): StubIndex => new StubIndex($paths, $io, $registry, $dispatcher, $logger),
+        );
+    }
+
+    /**
+     * Adds the stub of an object, see StubIndex::add().
+     *
      * @throws StubSavingFailureException
      */
     public function createStub(string $className, string $uuid): void
     {
-        try {
-            $adapter = $this->getIOAdapter();
-
-            // registered also for an existing stub: the registry may have been lost (e.g. while rebuilding stubs)
-            $this->registerClassname($className);
-
-            $pathname = $this->getFilePathStub($className, $uuid);
-            if ($adapter->isFile($pathname)) {
-                return;
-            }
-
-            $this->createDirectoryIfNotExist(pathinfo($pathname, PATHINFO_DIRNAME));
-            $adapter->touch($pathname);
-            $this->getEventDispatcher()?->dispatch(Events::STUB_CREATED, static fn() => new StubContext($uuid, $className));
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::STUB_WRITE_FAILED, static fn() => new StubContext($uuid, $className));
-            throw new StubSavingFailureException(message: sprintf('Stub creation failed for uuid: %s and class: %s', $uuid, $className), previous: $e);
-        }
+        $this->stubIndex()->add($className, $uuid);
     }
 
     /**
-     * Deletes a stub file for the specified class name and UUID if it exists.
+     * Removes the stub of an object if it exists, see StubIndex::remove().
      *
-     * @param string $className The name of the class associated with the stub.
-     * @param string $uuid The unique identifier associated with the stub.
-     * @return void
      * @throws StubDeletionFailureException If the stub file could not be deleted.
      */
     protected function deleteStub(string $className, string $uuid): void
     {
-        $filePathStub = $this->getFilePathStub($className, $uuid);
-        $adapter = $this->getIOAdapter();
-
-        if ($adapter->isFile($filePathStub) && !$adapter->unlink($filePathStub)) {
-            throw new StubDeletionFailureException(sprintf('Stub for uuid %s and classname %s could not be deleted', $uuid, $className));
-        }
-        $this->getEventDispatcher()?->dispatch(Events::STUB_REMOVED, static fn() => new StubContext($uuid, $className));
+        $this->stubIndex()->remove($className, $uuid);
     }
 
     /**
-     * @throws SerializationFailureException
-     * @throws SafeModeActivationFailedException
+     * Registers a class name, see ClassNameRegistry::register().
+     *
      * @throws ClassnameRegistrationFailureException
      */
     protected function registerClassname(string $className): void
     {
-        $registeredClassnames = $this->getRegisteredClassnames(); // cached in memory
-        if (isset($registeredClassnames[$className])) {
-            return;
-        }
-
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
-        try {
-            // the registry is written as a whole: without the lock, processes registering at the same time
-            // overwrite each other's class names
-            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
-                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
-                $lockedHere = true;
-            }
-
-            // other processes may have registered class names since the registry was read
-            $this->registeredClassNamesCache = null;
-            $registry = $this->readRegistry();
-            // an unreadable registry is not written over: the class names in it would be lost
-            if (null === $registry) {
-                throw new IOException('Unable to read the class name registry ' . $this->getFilePathClassnames());
-            }
-            $registry[$className] = $className;
-            $this->registeredClassNamesCache = $registry;
-
-            $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->writeJson($this->getFilePathClassnames(), $this->registeredClassNamesCache);
-        } catch (Throwable $e) {
-            throw new ClassnameRegistrationFailureException(message: sprintf('Unable to register classname: %s', $className), previous: $e);
-        } finally {
-            if ($lockedHere) {
-                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
-            }
-        }
+        $this->classNameRegistry()->register($className);
     }
 
     /**
+     * The registered class names, see ClassNameRegistry::all().
+     *
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
      */
     public function getRegisteredClassnames(): ?array
     {
-        if ($this->registeredClassNamesCache !== null) {
-            return $this->registeredClassNamesCache;
-        }
-
-        // unreadable: nothing is cached, so registerClassname() doesn't write over it and the next call reads again
-        $registry = $this->readRegistry();
-        if (null === $registry) {
-            return [];
-        }
-
-        return $this->registeredClassNamesCache = $registry;
-    }
-
-    /**
-     * The class name registry as stored: empty if there is none yet, null if it can't be read.
-     *
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     */
-    private function readRegistry(): ?array
-    {
-        $filenameClassnames = $this->getFilePathClassnames();
-        if (!$this->getIOAdapter()->isFile($filenameClassnames)) {
-            return [];
-        }
-        try {
-            return $this->readJson($filenameClassnames);
-        } catch (IOException) {
-            return null;
-        }
+        return $this->classNameRegistry()->all();
     }
 
     /**
@@ -206,19 +152,13 @@ trait StubsTrait
      */
     public function rebuildClassnameRegistry(): array
     {
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
+        $stubs = $this->stubIndex();
 
-        try {
-            if (null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock(static::LOCK_CLASSNAMES)) {
-                $lockAdapter->acquireExclusiveLock(static::LOCK_CLASSNAMES);
-                $lockedHere = true;
-            }
-
-            // the stub directories are named after the hash of the class name: the class is read from an object
+        // the stub directories are named after the hash of the class name: the class is read from an object
+        return $this->classNameRegistry()->rebuild(function () use ($stubs): array {
             $classNames = [];
-            foreach (glob($this->getStubDirectory() . DIRECTORY_SEPARATOR . '*', GLOB_ONLYDIR) ?: [] as $classStubDirectory) {
-                foreach ($this->createStubIterator($classStubDirectory) as $uuid) {
+            foreach ($stubs->classDirectories() as $classStubDirectory) {
+                foreach (StubIndex::uuidsIn($classStubDirectory) as $uuid) {
                     $className = $this->getClassName($uuid);
                     if (null !== $className && md5($className) === basename($classStubDirectory)) {
                         $classNames[$className] = $className;
@@ -226,20 +166,8 @@ trait StubsTrait
                     }
                 }
             }
-            ksort($classNames);
-
-            $this->createDirectoryIfNotExist($this->getStubDirectory());
-            $this->writeJson($this->getFilePathClassnames(), $classNames);
-            $this->registeredClassNamesCache = $classNames;
-
             return $classNames;
-        } catch (Throwable $e) {
-            throw new ClassnameRegistrationFailureException(message: 'Unable to rebuild the registry of class names', previous: $e);
-        } finally {
-            if ($lockedHere) {
-                $lockAdapter->releaseLock(static::LOCK_CLASSNAMES);
-            }
-        }
+        });
     }
 
     /**

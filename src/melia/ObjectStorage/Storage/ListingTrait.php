@@ -2,10 +2,7 @@
 
 namespace melia\ObjectStorage\Storage;
 
-use FilterIterator;
 use Generator;
-use GlobIterator;
-use Iterator;
 use IteratorAggregate;
 use melia\ObjectStorage\Exception\MemoryConsumptionDetectionFailureException;
 use melia\ObjectStorage\Exception\ObjectExistenceEvaluationFailureException;
@@ -46,57 +43,21 @@ trait ListingTrait
      */
     public function list(?string $className = null): Traversable
     {
-        if ((null !== $className) && $this->getIOAdapter()->isDir($pathClassStubs = $this->getClassStubDirectory($className))) {
-            return $this->createStubIterator($pathClassStubs);
+        if (null !== $className && $this->stubIndex()->hasClass($className)) {
+            return $this->stubIndex()->uuidsOf($className);
         }
 
         return $this->createObjectIterator($className);
     }
 
     /**
-     * Creates an iterator for traversing through stub files located in the specified
-     * class stubs directory, applying a filter to match files with the stub file suffix.
+     * The UUIDs of the stubs in a directory of stubs, see StubIndex::uuidsIn().
      *
-     * @param string $pathClassStubs The path to the directory containing class stub files.
-     *
-     * @return Traversable An iterator that provides filtered access to stub files in the directory.
+     * @return Traversable<string, string> UUID => UUID
      */
     protected function createStubIterator(string $pathClassStubs): Traversable
     {
-        $pattern = $pathClassStubs . DIRECTORY_SEPARATOR . '*' . static::FILE_SUFFIX_STUB;
-
-        return new class (new GlobIterator($pattern), static::FILE_SUFFIX_STUB, $pathClassStubs) extends FilterIterator {
-            private string $extension;
-            private string $pathClassStubs;
-
-            public function __construct(Iterator $iterator, string $extension, string $pathClassStubs)
-            {
-                parent::__construct($iterator);
-                $this->extension = $extension;
-                $this->pathClassStubs = $pathClassStubs;
-            }
-
-            public function rewind(): void
-            {
-                clearstatcache(true, $this->pathClassStubs);
-                parent::rewind();
-            }
-
-            public function accept(): bool
-            {
-                return true;
-            }
-
-            public function current(): string
-            {
-                return basename(parent::current(), $this->extension);
-            }
-
-            public function key(): string
-            {
-                return $this->current();
-            }
-        };
+        return StubIndex::uuidsIn($pathClassStubs);
     }
 
     /**
