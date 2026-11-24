@@ -6,7 +6,6 @@ use melia\ObjectStorage\Event\Context\TransactionContext;
 use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\LockException;
-use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\TransactionRollbackException;
 use melia\ObjectStorage\Journal\Journal;
 use melia\ObjectStorage\Journal\JournalInterface;
@@ -269,11 +268,7 @@ final class TransactionRecovery
             return;
         }
 
-        try {
-            $current = $storage->readRaw($uuid);
-        } catch (ObjectNotFoundException) {
-            $current = null;
-        }
+        $current = $storage->findRaw($uuid, includeExpired: true);
 
         // unchanged, e.g. the commit failed before getting to it
         if (null !== $current

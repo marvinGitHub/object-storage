@@ -33,4 +33,13 @@ final readonly class RawObject
         $lifetime = $this->metadata->getLifetime();
         return null !== $lifetime && $lifetime <= 0;
     }
+
+    /**
+     * The data decoded as an array of properties; null if it isn't one (or not valid JSON).
+     */
+    public function decodedData(): ?array
+    {
+        $data = json_decode($this->data, true);
+        return is_array($data) ? $data : null;
+    }
 }

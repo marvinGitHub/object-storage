@@ -6,7 +6,6 @@ use Closure;
 use melia\ObjectStorage\Constraint\ConstraintInterface;
 use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\Events;
-use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Transfer\RawObject;
 use melia\ObjectStorage\Unique\Exception\DuplicateValuesException;
@@ -436,7 +435,7 @@ final class Manager implements ConstraintInterface
      */
     private function holds(string $owner, Definition $definition, string $key): bool
     {
-        $object = $this->readLive($owner);
+        $object = $this->storage->findRaw($owner);
         if (null === $object || $object->metadata->getClassName() !== $definition->className) {
             return false;
         }
@@ -444,25 +443,12 @@ final class Manager implements ConstraintInterface
     }
 
     /**
-     * An object as stored; null if it doesn't exist or has expired.
-     */
-    private function readLive(string $uuid): ?RawObject
-    {
-        try {
-            $object = $this->storage->readRaw($uuid);
-        } catch (ObjectNotFoundException) {
-            return null;
-        }
-        return $object->isExpired() ? null : $object;
-    }
-
-    /**
      * The key of an object as stored (see Definition::keyOf()); null if it has none.
      */
     private static function keyOfStored(Definition $definition, RawObject $object): ?array
     {
-        $data = json_decode($object->data, true);
-        return is_array($data) ? $definition->keyOf($data, $object->metadata->getReservedReferenceName()) : null;
+        $data = $object->decodedData();
+        return null === $data ? null : $definition->keyOf($data, $object->metadata->getReservedReferenceName());
     }
 
     private function ownedKey(string $name, string $owner): ?string
@@ -510,7 +496,7 @@ final class Manager implements ConstraintInterface
 
         $objects = 0;
         foreach ($this->storage->list($definition->className) as $uuid) {
-            $object = $this->readLive((string)$uuid);
+            $object = $this->storage->findRaw((string)$uuid);
             if (null === $object) {
                 continue;
             }

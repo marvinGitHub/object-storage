@@ -7,7 +7,6 @@ use Generator;
 use JsonException;
 use melia\ObjectStorage\Exception\LockException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
-use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\File\Directory;
 use melia\ObjectStorage\Locking\LockAdapterInterface;
 use melia\ObjectStorage\Metadata\Metadata;
@@ -944,16 +943,12 @@ final class Index implements IndexInterface
      */
     private function readObject(string $uuid): ?array
     {
-        try {
-            $object = $this->storage->readRaw($uuid);
-        } catch (ObjectNotFoundException) {
+        $object = $this->storage->findRaw($uuid);
+        if (null === $object) {
             return null;
         }
 
-        if ($object->isExpired()) {
-            return null;
-        }
-
+        // unlike RawObject::decodedData(), invalid JSON is an error of the document
         $data = json_decode($object->data, true, 512, JSON_THROW_ON_ERROR);
 
         return [$object->metadata, is_array($data) ? $data : []];

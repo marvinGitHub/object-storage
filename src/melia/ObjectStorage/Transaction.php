@@ -326,12 +326,7 @@ class Transaction
         }
 
         try {
-            try {
-                $raw = $this->getStorage()->readRaw($uuid);
-            } catch (ObjectNotFoundException) {
-                $raw = null;
-            }
-
+            $raw = $this->getStorage()->findRaw($uuid, includeExpired: true);
             $this->journal?->append(TransactionRecovery::ENTRY_BEFORE, TransactionRecovery::encodeBefore($uuid, $raw));
         } catch (Throwable $e) {
             throw new TransactionException(sprintf('The state of the object %s can\'t be recorded: %s', $uuid, $e->getMessage()), 0, $e);

@@ -24,6 +24,22 @@ use Throwable;
 trait RawAccessTrait
 {
     /**
+     * Reads an object as stored, like readRaw(); null if nothing is stored, or if it has expired (unless
+     * $includeExpired, e.g. to record its state).
+     *
+     * @throws ObjectLoadingFailureException If it exists but can't be read, see readRaw().
+     */
+    public function findRaw(string $uuid, bool $includeExpired = false): ?RawObject
+    {
+        try {
+            $object = $this->readRaw($uuid);
+        } catch (ObjectNotFoundException) {
+            return null;
+        }
+        return $includeExpired || !$object->isExpired() ? $object : null;
+    }
+
+    /**
      * Reads an object as stored, without loading it: its data and metadata, unchanged, e.g. to write it into
      * another storage with writeRaw(). The checksum is verified, so damaged data isn't passed on.
      *

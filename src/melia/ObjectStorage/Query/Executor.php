@@ -5,7 +5,6 @@ namespace melia\ObjectStorage\Query;
 use DateTimeImmutable;
 use DateTimeZone;
 use Generator;
-use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
 use melia\ObjectStorage\Path\Path;
@@ -264,15 +263,14 @@ final class Executor
     {
         $this->objectsRead++;
         try {
-            return self::objectOf($this->storage->readRaw($uuid));
-        } catch (ObjectNotFoundException) {
-            return null;
+            $raw = $this->storage->findRaw($uuid);
         } catch (Throwable $e) {
             if (!$strict) {
                 return null;
             }
             throw new QueryException(sprintf('The referenced object %s can\'t be read: %s', $uuid, $e->getMessage()), null, $e);
         }
+        return null === $raw ? null : self::objectOf($raw);
     }
 
     /**
@@ -285,8 +283,8 @@ final class Executor
      */
     public static function objectOf(RawObject $raw): ?array
     {
-        $data = $raw->isExpired() ? null : json_decode($raw->data, true);
-        return is_array($data)
+        $data = $raw->isExpired() ? null : $raw->decodedData();
+        return null !== $data
             ? [
                 'uuid' => $raw->uuid, 'class' => (string)$raw->metadata->getClassName(), 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName(),
                 'created' => $raw->metadata->getTimestampCreation(), 'modified' => $raw->metadata->getTimestampModification(),

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ### Added
 - `LockAdapterInterface::releaseLockIfHeld($uuid)`: releases a lock if this process holds it, implemented in `LockAdapterAbstract`; an own lock adapter implementing the interface directly adds it. `ObjectStorage::releaseLockUnlessRetained($uuid)` *(internal)* does the same unless a transaction retains the lock. Behavior is unchanged.
+- `ObjectStorage::findRaw($uuid, includeExpired: false)`: an object as stored, like `readRaw()`, but `null` if nothing is stored or it has expired. `RawObject::decodedData()`: its data as an array, `null` if it isn't one. Used where the storage, OQL, search and unique indexes and transactions read objects as stored.
 
 ## [1.0.0-rc.11] - 2026-11-23
 
