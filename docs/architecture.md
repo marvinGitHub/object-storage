@@ -17,8 +17,8 @@ The storage is being split into components, one concern each, step by step and w
 | `Storage\JsonStore` | JSON files with the rules of the storage for failures (damaged JSON enables safe mode) | `JsonTrait` | done |
 | `Storage\ClassNameRegistry` | `classnames.json`: the classes of stored objects, under its lock, kept in memory | registry part of `StubsTrait` | done |
 | `Storage\StubIndex` | the stubs: objects by class | stub part of `StubsTrait`, listing by class of `ListingTrait` | done |
-| `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes | `DurabilityTrait` | planned |
-| `Storage\MetadataStore` | metadata through its cache | `MetadataTrait` | planned |
+| `Storage\MetadataStore` | metadata through its cache, completed from its files (UUID, times) | `MetadataTrait` | done |
+| `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes | `DurabilityTrait` | done |
 | `Storage\ObjectCache` | the cache of loaded objects | cache methods of `ObjectStorage` | planned |
 | `Storage\ObjectReader`, `ObjectWriter`, `ObjectDeleter` | load, store, delete | `LoadingTrait`, `StoringTrait`, `DeletingTrait` | planned |
 
@@ -38,8 +38,9 @@ components. Code using the storage doesn't notice the split.
   (`ObjectStorage::component()`: objects compared by identity, other values by value). State that is the
   component's own concern stays with it, e.g. the class names the registry keeps in memory; it is lost when the
   component is created again, which is always safe.
-- **The order of the layers:** paths → JSON files, object files → metadata, registry → stubs → reader, writer,
-  deleter → facade.
+- **The order of the layers:** paths → JSON files → metadata, registry → object files, stubs → reader, writer,
+  deleter → facade. Recording changes in the active transaction stays with the facade: it changes with every
+  transaction, the components only read and write files.
 - **Each component has a unit test of its own** (`tests/melia/ObjectStorage/Storage/`), without a storage: what the
   facade tests can't show (e.g. that the registry is read again under its lock) is tested there.
 - **Same behavior while splitting:** every step is checked by the whole test suite, PHPStan (level 5, see
