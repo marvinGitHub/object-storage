@@ -297,7 +297,7 @@ trait StoringTrait
                 return false;
             case ChildPersistence::CALLBACK:
                 try {
-                    return $strategy?->shouldPersistChild($context, $child, $uuid, $exists, $path) ?? false;
+                    return $strategy->shouldPersistChild($context, $child, $uuid, $exists, $path);
                 } catch (Throwable $e) {
                     $this->getLogger()?->log($e);
                     return false;

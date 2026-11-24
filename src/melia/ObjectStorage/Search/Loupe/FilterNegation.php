@@ -181,6 +181,7 @@ final class FilterNegation
                 $text = implode(' ' . strtoupper($node[0]) . ' ', array_map(static fn(array $child): string => static::serialize($child), $node[1]));
                 return $top ? $text : '(' . $text . ')';
             })(),
+            default => throw new SearchException(sprintf('Unknown node "%s" of the filter.', $node[0])),
         };
     }
 
@@ -191,6 +192,7 @@ final class FilterNegation
             'and' => ['or', array_map(static fn(array $child): array => static::negate($child), $node[1])],
             'or' => ['and', array_map(static fn(array $child): array => static::negate($child), $node[1])],
             'condition' => static::negateCondition($node[1]),
+            default => throw new SearchException(sprintf('Unknown node "%s" of the filter.', $node[0])),
         };
     }
 

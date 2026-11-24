@@ -183,7 +183,7 @@ final class Factory
     {
         return preg_replace_callback('/%env\(([A-Za-z_][A-Za-z0-9_]*)\)%/', static function (array $match): string {
             $resolved = $_ENV[$match[1]] ?? $_SERVER[$match[1]] ?? getenv($match[1]);
-            if (false === $resolved || null === $resolved || is_array($resolved)) {
+            if (false === $resolved || is_array($resolved)) {
                 throw new InvalidConfigurationException(sprintf('The environment variable %s is not set.', $match[1]));
             }
             return (string)$resolved;

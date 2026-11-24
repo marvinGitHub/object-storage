@@ -364,7 +364,7 @@ final class Manager implements ManagerInterface
             }
         }
 
-        return new Candidate($index->getName(), $engine, $status, array_values($reasons), null, count($searchable), count($fields));
+        return new Candidate($index->getName(), $engine, $status, $reasons, null, count($searchable), count($fields));
     }
 
     public function create(Definition $definition): Index

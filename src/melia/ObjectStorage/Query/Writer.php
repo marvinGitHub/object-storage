@@ -56,6 +56,7 @@ final class Writer
             WritePlan::UPDATE => $this->update($plan, $class, $dryRun),
             WritePlan::DELETE => $this->delete($plan, $dryRun),
             WritePlan::DROP => $this->drop($plan, $class, $dryRun),
+            default => throw new QueryException('Unknown statement ' . $plan->statement),
         };
         return new Result(['UUID'], array_map(static fn(?string $uuid): array => [$uuid], $uuids), $plan->statement, $dryRun);
     }

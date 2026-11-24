@@ -687,9 +687,11 @@ final class Executor
     {
         $value = fn(Expr $child): mixed => $this->evaluate($child, $row, $group);
 
-        $wildcard = self::wildcardOperand($expression);
-        if (null !== $wildcard) {
-            return $this->anyElement($expression, $wildcard, $row, $group);
+        if ($expression instanceof Binary || $expression instanceof InList || $expression instanceof Between || $expression instanceof Like) {
+            $wildcard = self::wildcardOperand($expression);
+            if (null !== $wildcard) {
+                return $this->anyElement($expression, $wildcard, $row, $group);
+            }
         }
 
         return match (true) {
@@ -802,12 +804,11 @@ final class Executor
      * The column with * a condition compares directly (=, <, IN, BETWEEN, LIKE …), if any: such a condition is
      * checked for each element of the list.
      */
-    private static function wildcardOperand(Expr $expression): ?BoundColumn
+    private static function wildcardOperand(Binary|InList|Between|Like $expression): ?BoundColumn
     {
         $operands = match (true) {
-            $expression instanceof Binary && in_array($expression->operator, [...self::COMPARISONS, 'REGEXP'], true) => [$expression->left, $expression->right],
-            $expression instanceof InList, $expression instanceof Between, $expression instanceof Like => [$expression->operand],
-            default => [],
+            $expression instanceof Binary => in_array($expression->operator, [...self::COMPARISONS, 'REGEXP'], true) ? [$expression->left, $expression->right] : [],
+            default => [$expression->operand],
         };
         foreach ($operands as $operand) {
             if ($operand instanceof BoundColumn && Path::hasWildcard($operand->path)) {
@@ -1077,6 +1078,7 @@ final class Executor
             'HOUR' => (int)$date->format('G'),
             'MINUTE' => (int)$date->format('i'),
             'SECOND' => (int)$date->format('s'),
+            default => throw new QueryException('Unknown function ' . $name),
         };
     }
 

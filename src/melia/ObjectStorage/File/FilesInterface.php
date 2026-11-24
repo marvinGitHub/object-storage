@@ -25,6 +25,7 @@ interface FilesInterface
      * Writes a file atomically, replacing its previous contents; a missing directory is created.
      *
      * @throws IOException If the file can't be written; its previous contents are kept.
+     * @throws \Random\RandomException If no random bytes can be generated for the name of the staging file.
      */
     public function write(string $path, string $contents): void;
 

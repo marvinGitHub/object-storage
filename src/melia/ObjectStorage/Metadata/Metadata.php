@@ -265,7 +265,7 @@ class Metadata implements JsonSerializable
             'version' => $this->version ?? self::VERSION,
             'revision' => $this->revision,
             'checksum' => $this->checksum ?? '',
-            'checksumAlgorithm' => $this->checksumAlgorithm ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT,
+            'checksumAlgorithm' => $this->checksumAlgorithm,
             'timestampExpiresAt' => $this->timestampExpiresAt ?? null,
             'uuid' => $this->uuid ?? '',
             ...$this->reservedNamesToArray(),

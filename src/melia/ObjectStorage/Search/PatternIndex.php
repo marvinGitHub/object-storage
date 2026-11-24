@@ -121,7 +121,6 @@ enum PatternIndex: string
                 $exact = 1 === count($literals) && [self::ANY, $literals[0], self::ANY] === $tokens && self::NGRAM_SIZE === mb_strlen(self::fold($literals[0]), 'UTF-8');
                 return ['terms' => $terms, 'exact' => $exact];
         }
-        return null;
     }
 
     /**

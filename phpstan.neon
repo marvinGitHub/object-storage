@@ -1,5 +1,12 @@
+includes:
+    # findings in tests that are intentional: invalid input on purpose, properties of fixtures only written
+    - phpstan-baseline.neon
+
 parameters:
-    level: 3
+    level: 5
+    # types in PHPDoc aren't enforced at runtime: checks of them (is_string() on a parameter documented as string)
+    # are kept as validation, not reported as always true
+    treatPhpDocTypesAsCertain: false
     paths:
         - src
         - tests

@@ -220,9 +220,9 @@ final class LoupeEngineIndex implements EngineIndexInterface
     private function resetFilterParser(): void
     {
         try {
-            // private properties of Loupe; if they change, nothing is reset
-            $engine = (fn() => $this->engine ?? null)->call($this->getLoupe());
-            $parser = null === $engine ? null : (fn() => $this->filterParser ?? null)->call($engine);
+            // private properties of Loupe, read by name: if they change, nothing is reset
+            $engine = (fn() => get_object_vars($this)['engine'] ?? null)->call($this->getLoupe());
+            $parser = is_object($engine) ? (fn() => get_object_vars($this)['filterParser'] ?? null)->call($engine) : null;
             if (null !== $parser) {
                 (function (): void {
                     while (isset($this->groups) && !$this->groups->isEmpty()) {

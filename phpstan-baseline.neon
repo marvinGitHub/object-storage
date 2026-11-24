@@ -1,0 +1,151 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Call to function method_exists\(\) with melia\\ObjectStorage\\File\\Files and ''setIOAdapter'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 2
+			path: tests/melia/ObjectStorage/FilesRecoveryTest.php
+
+		-
+			message: '#^Call to function method_exists\(\) with ''melia\\\\ObjectStorage\\\\ObjectStorage'' and ''getStateHandler'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/GraphVisitorTest.php
+
+		-
+			message: '#^Call to function method_exists\(\) with ''melia\\\\ObjectStorage\\\\State\\\\StateHandler'' and ''safeModeEnabled'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/GraphVisitorTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertNotNull\(\) with string will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/HelperTest.php
+
+		-
+			message: '#^Method class@anonymous/tests/melia/ObjectStorage/HelperTest\.php\:77\:\:getUUID\(\) never returns null so it can be removed from the return type\.$#'
+			identifier: return.unusedType
+			count: 1
+			path: tests/melia/ObjectStorage/HelperTest.php
+
+		-
+			message: '#^Method melia\\ObjectStorage\\UUID\\AwareInterface@anonymous/tests/melia/ObjectStorage/HelperTest\.php\:56\:\:getUUID\(\) never returns null so it can be removed from the return type\.$#'
+			identifier: return.unusedType
+			count: 1
+			path: tests/melia/ObjectStorage/HelperTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertSame\(\) with float\|null and float\|null will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/ModificationTimestampTest.php
+
+		-
+			message: '#^Property melia\\ObjectStorage\\Logger\\LoggerInterface@anonymous/tests/melia/ObjectStorage/ObjectStorageChecksumSafeModeTest\.php\:53\:\:\$logged is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageChecksumSafeModeTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsArray\(\) with array and ''Child calls should…'' will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageChildUpdateTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsArray\(\) with array and ''Parent calls should…'' will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageChildUpdateTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertNotNull\(\) with string and ''Parent UUID should…'' will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageChildUpdateTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertIsArray\(\) with array will always evaluate to true\.$#'
+			identifier: method.alreadyNarrowedType
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageTest.php
+
+		-
+			message: '#^Call to method PHPUnit\\Framework\\Assert\:\:assertNull\(\) with string will always evaluate to false\.$#'
+			identifier: method.impossibleType
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageTest.php
+
+		-
+			message: '#^Expression "\$lazyLoadReference\-\>someAttribute" on a separate line does not do anything\.$#'
+			identifier: expr.resultUnused
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageTest.php
+
+		-
+			message: '#^Expression "\$someObject\-\>test\-\>someAttribute" on a separate line does not do anything\.$#'
+			identifier: expr.resultUnused
+			count: 1
+			path: tests/melia/ObjectStorage/ObjectStorageTest.php
+
+		-
+			message: '#^Property Tests\\melia\\ObjectStorage\\Query\\OqlSqliteTest\:\:\$seed is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: tests/melia/ObjectStorage/Query/OqlSqliteTest.php
+
+		-
+			message: '#^Anonymous function never returns null so it can be removed from the return type\.$#'
+			identifier: return.unusedType
+			count: 1
+			path: tests/melia/ObjectStorage/Search/DateFieldTest.php
+
+		-
+			message: '#^Parameter \#1 \$array of function array_diff_key expects array, null given\.$#'
+			identifier: argument.type
+			count: 2
+			path: tests/melia/ObjectStorage/Search/IndexManagerTest.php
+
+		-
+			message: '#^Anonymous function never returns null so it can be removed from the return type\.$#'
+			identifier: return.unusedType
+			count: 1
+			path: tests/melia/ObjectStorage/Search/JoinTest.php
+
+		-
+			message: '#^Parameter \$patterns of class melia\\ObjectStorage\\Search\\Field constructor expects array\<melia\\ObjectStorage\\Search\\PatternIndex\>, array\<int, string\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: tests/melia/ObjectStorage/Search/PatternIndexTest.php
+
+		-
+			message: '#^Property Tests\\melia\\ObjectStorage\\TestObject\:\:\$someAttributeWithoutDefaultValue is unused\.$#'
+			identifier: property.unused
+			count: 1
+			path: tests/melia/ObjectStorage/TestObject.php
+
+		-
+			message: '#^Property Tests\\melia\\ObjectStorage\\TestObject\:\:\$someNullablePrivateAttribute \(string\|null\) is never assigned null so it can be removed from the property type\.$#'
+			identifier: property.unusedType
+			count: 1
+			path: tests/melia/ObjectStorage/TestObject.php
+
+		-
+			message: '#^Property Tests\\melia\\ObjectStorage\\TestObject\:\:\$someNullablePrivateAttribute is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: tests/melia/ObjectStorage/TestObject.php
+
+		-
+			message: '#^Property Tests\\melia\\ObjectStorage\\TestObject\:\:\$somePrivateAttribute is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: tests/melia/ObjectStorage/TestObject.php
+
+		-
+			message: '#^Parameter \#1 \$iterator of function iterator_to_array expects iterable, object\|null given\.$#'
+			identifier: argument.type
+			count: 1
+			path: tests/melia/ObjectStorage/UuidTrieTest.php

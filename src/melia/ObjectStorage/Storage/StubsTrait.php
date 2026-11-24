@@ -97,12 +97,13 @@ trait StubsTrait
 
             // other processes may have registered class names since the registry was read
             $this->registeredClassNamesCache = null;
-            $this->getRegisteredClassnames();
+            $registry = $this->readRegistry();
             // an unreadable registry is not written over: the class names in it would be lost
-            if (null === $this->registeredClassNamesCache) {
+            if (null === $registry) {
                 throw new IOException('Unable to read the class name registry ' . $this->getFilePathClassnames());
             }
-            $this->registeredClassNamesCache[$className] = $className;
+            $registry[$className] = $className;
+            $this->registeredClassNamesCache = $registry;
 
             $this->createDirectoryIfNotExist($this->getStubDirectory());
             $this->writeJson($this->getFilePathClassnames(), $this->registeredClassNamesCache);
@@ -125,23 +126,32 @@ trait StubsTrait
             return $this->registeredClassNamesCache;
         }
 
-        $filenameClassnames = $this->getFilePathClassnames();
-        if ($this->getIOAdapter()?->isFile($filenameClassnames)) {
-            // unreadable: nothing is cached, so registerClassname() doesn't write over it and the next call reads again
-            try {
-                $registered = $this->readJson($filenameClassnames);
-            } catch (IOException) {
-                return [];
-            }
-            if (null === $registered) {
-                return [];
-            }
-            $this->registeredClassNamesCache = $registered;
-        } else {
-            $this->registeredClassNamesCache = [];
+        // unreadable: nothing is cached, so registerClassname() doesn't write over it and the next call reads again
+        $registry = $this->readRegistry();
+        if (null === $registry) {
+            return [];
         }
 
-        return $this->registeredClassNamesCache;
+        return $this->registeredClassNamesCache = $registry;
+    }
+
+    /**
+     * The class name registry as stored: empty if there is none yet, null if it can't be read.
+     *
+     * @throws SafeModeActivationFailedException
+     * @throws SerializationFailureException
+     */
+    private function readRegistry(): ?array
+    {
+        $filenameClassnames = $this->getFilePathClassnames();
+        if (!$this->getIOAdapter()->isFile($filenameClassnames)) {
+            return [];
+        }
+        try {
+            return $this->readJson($filenameClassnames);
+        } catch (IOException) {
+            return null;
+        }
     }
 
     /**

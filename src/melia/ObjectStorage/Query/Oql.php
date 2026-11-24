@@ -176,7 +176,7 @@ final class Oql
      * @param array<int|string, mixed> $parameters
      * @param string|null $kind Set to the kind of statement (Statistics::$statement) once it is read.
      * @param Executor|null $executor Set to the executor of the statement once there is one.
-     * @param-out string|null $kind
+     * @param-out string $kind
      * @param-out Executor|null $executor
      * @throws QueryException
      */
@@ -191,8 +191,7 @@ final class Oql
             $statement instanceof Insert => 'INSERT',
             $statement instanceof Update => 'UPDATE',
             $statement instanceof Delete => 'DELETE',
-            $statement instanceof DropAttributes => 'ALTER',
-            default => null,
+            default => 'ALTER', // DropAttributes
         };
         if ($statement instanceof TransactionControl) {
             if ($explain) {
