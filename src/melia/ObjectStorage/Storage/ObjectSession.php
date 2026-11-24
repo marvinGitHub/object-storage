@@ -21,6 +21,8 @@ final class ObjectSession
     private WeakMap $revisions;
     /** @var WeakMap<object, true> */
     private WeakMap $storing;
+    /** @var array<string, object> objects whose __unserialize() is running, by UUID */
+    private array $restoring = [];
     /** referenced objects being loaded (nested), whose instances aren't remembered (see rememberLoaded()) */
     private int $loadingReferences = 0;
 
@@ -115,6 +117,32 @@ final class ObjectSession
     public function isBeingStored(object $object): bool
     {
         return isset($this->storing[$object]);
+    }
+
+    /**
+     * Restores an object by its __unserialize(): while it runs, a reference cycle back to the object gets this
+     * instance (restored()) instead of loading it again endlessly (as PHP's unserialize() does).
+     *
+     * @template T
+     * @param Closure(): T $restore
+     * @return T
+     */
+    public function restoring(string $uuid, object $object, Closure $restore): mixed
+    {
+        $this->restoring[$uuid] = $object;
+        try {
+            return $restore();
+        } finally {
+            unset($this->restoring[$uuid]);
+        }
+    }
+
+    /**
+     * The object being restored under a UUID right now (restoring()), if any.
+     */
+    public function restored(string $uuid): ?object
+    {
+        return $this->restoring[$uuid] ?? null;
     }
 
     public function startStoring(object $object): void

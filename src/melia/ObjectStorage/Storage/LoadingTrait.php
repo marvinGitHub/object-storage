@@ -2,40 +2,15 @@
 
 namespace melia\ObjectStorage\Storage;
 
-use DateTimeImmutable;
-use DateTimeInterface;
-use melia\ObjectStorage\Event\Context\ClassAliasCreationContext;
 use melia\ObjectStorage\Event\Context\Context;
-use melia\ObjectStorage\Event\Context\IOContext;
-use melia\ObjectStorage\Event\Context\LazyTypeNotSupportedContext;
 use melia\ObjectStorage\Event\Events;
-use melia\ObjectStorage\Exception\ClassAliasCreationFailureException;
 use melia\ObjectStorage\Exception\CorruptedFileException;
-use melia\ObjectStorage\Exception\DanglingReferenceException;
-use melia\ObjectStorage\Exception\DateTimeRestorationFailureException;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
-use melia\ObjectStorage\Exception\PropertyHydrationFailureException;
-use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
-use melia\ObjectStorage\Exception\SerializationFailureException;
-use melia\ObjectStorage\Exception\TypeConversionFailureException;
-use melia\ObjectStorage\LazyLoadReference;
-use melia\ObjectStorage\Metadata\Metadata;
-use melia\ObjectStorage\Reflection\Reflection;
-use melia\ObjectStorage\Serialization\DateTimeValue;
-use melia\ObjectStorage\Serialization\LifecycleGuard;
-use melia\ObjectStorage\Strategy\Policy\PropertyHydration;
-use melia\ObjectStorage\Strategy\StrategyInterface;
-use melia\ObjectStorage\UUID\Exception\InvalidUUIDException;
-use melia\ObjectStorage\UUID\Helper;
-use melia\ObjectStorage\UUID\Validator;
-use ReflectionException;
-use ReflectionNamedType;
-use ReflectionType;
 use Throwable;
 
 /**
- * Loading objects: load() → loadFromFiles() → readObjectFiles() → hydrateObject().
+ * Loading objects: load() (cache, locks, events) → ObjectReader::read() → ObjectFiles::read().
  *
  * Part of ObjectStorage, kept apart for readability.
  *
@@ -44,12 +19,26 @@ use Throwable;
 trait LoadingTrait
 {
     /**
-     * Objects whose __unserialize() is running, so a reference cycle gets the instance being restored
-     * instead of loading it again endlessly (as PHP's unserialize() does).
-     *
-     * @var array<string, object>
+     * The reading of objects, with the components and the strategy, class rename map, state handler, event
+     * dispatcher and logger of the storage as they are now.
      */
-    private array $restoring = [];
+    protected function objectReader(): ObjectReader
+    {
+        $objectFiles = $this->objectFiles();
+        $session = $this->session;
+        $cache = $this->objectCache();
+        $strategy = $this->getStrategy();
+        $classRenameMap = $this->getClassRenameMap();
+        $stateHandler = $this->getStateHandler();
+        $dispatcher = $this->getEventDispatcher();
+        $logger = $this->getLogger();
+
+        return $this->component(
+            ObjectReader::class,
+            [$objectFiles, $session, $cache, $strategy, $classRenameMap, $stateHandler, $dispatcher, $logger],
+            fn(): ObjectReader => new ObjectReader($this, $objectFiles, $session, $cache, $strategy, $classRenameMap, $stateHandler, $dispatcher, $logger),
+        );
+    }
 
     /**
      * Loads an object from persistent storage using its unique identifier.
@@ -145,278 +134,17 @@ trait LoadingTrait
     }
 
     /**
-     * Loads an object based on a UUID from its files.
+     * Loads an object from its files, see ObjectReader::read().
      *
-     * @param string $uuid The unique ID of the object to be loaded.
      * @param bool $addToCache Whether the loaded object is put into the cache; false to read a stored state
      *                         without replacing the cached object, e.g. the previous state of an object being stored.
      * @return object|null The loaded object or null if it doesn't exist.
      * @throws InvalidFileFormatException
-     * @throws InvalidUUIDException
-     * @throws ReflectionException
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     * @throws TypeConversionFailureException|Throwable
+     * @throws CorruptedFileException
+     * @throws Throwable
      */
     protected function loadFromFiles(string $uuid, bool $addToCache = true): ?object
     {
-        $stored = $this->readObjectFiles($uuid);
-        if (null === $stored) {
-            return null;
-        }
-        [$raw, $metadata, $filename] = $stored;
-
-        // the data is verified by its checksum: data that can't be decoded all the same is a damaged file
-        try {
-            $data = $this->getStrategy()?->unserialize($raw) ?? [];
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $this->getEventDispatcher()?->dispatch(Events::JSON_DECODING_FAILURE, static fn() => new IOContext($filename));
-            $this->getStateHandler()?->enableSafeMode();
-            throw new CorruptedFileException($filename, sprintf('The data file %s holds no valid data: %s', $filename, $e->getMessage()), $e);
-        }
-
-        return $this->hydrateObject($uuid, $data, $metadata, $addToCache);
-    }
-
-    /**
-     * Builds the object from its decoded data and its metadata, and puts it into the cache.
-     *
-     * @throws Throwable
-     */
-    protected function hydrateObject(string $uuid, array $data, Metadata $metadata, bool $addToCache): object
-    {
-        // build object using the single metadata instance
-        $object = $this->createInstance($metadata->getClassName());
-
-        if (LifecycleGuard::supportsUnserialize($object)) {
-            // a cycle back to this object gets this instance, although it is not fully restored yet
-            $this->restoring[$uuid] = $object;
-            try {
-                LifecycleGuard::unserialize($object, $this->resolveReferences($data, $metadata));
-            } finally {
-                unset($this->restoring[$uuid]);
-            }
-        } else {
-            $this->hydrateProperties($object, $data, $metadata);
-        }
-
-        Helper::assign($object, $uuid);
-        $this->session->recordRevision($object, $metadata->getRevision());
-
-        if ($addToCache) {
-            $this->addToCache($uuid, $object, $metadata->getLifetime());
-        }
-
-        return $object;
-    }
-
-    /**
-     * Creates an instance of the specified class name. If the class does not exist,
-     * attempts to create a class alias and dispatches an event upon successful creation.
-     *
-     * @param string $className The name of the class to instantiate.
-     * @return object An instance of the specified class.
-     * @throws ClassAliasCreationFailureException If the class alias could not be created for an unknown class.
-     * @throws ReflectionException If the class cannot be reflected or instantiated.
-     */
-    protected function createInstance(string $className): object
-    {
-        $className = $this->getClassRenameMap()?->getAlias($className) ?: $className;
-
-        if (false === class_exists($className)) {
-            // don't create alias from a stable class, otherwise all unknown aliases will be stored as a placeholder class
-            if (false === class_alias(get_class(new #[\AllowDynamicProperties] class {
-                }), $className)) {
-                throw new ClassAliasCreationFailureException('Unable to create class alias for unknown class ' . $className);
-            }
-            $this->getEventDispatcher()?->dispatch(Events::CLASS_ALIAS_CREATED, static fn() => new ClassAliasCreationContext($className));
-        }
-
-        return Reflection::getReflectionClass($className)->newInstanceWithoutConstructor();
-    }
-
-    /**
-     * Hydrates the properties of an object from its loaded data (references become lazy load references, see
-     * hydrateArray()), for objects without __unserialize().
-     *
-     * @param object $object
-     * @param array $data An associative array containing property names and their corresponding values.
-     * @param Metadata $metadata
-     * @return object An instance of the specified class with its properties populated from the provided data.
-     * @throws DanglingReferenceException
-     * @throws InvalidUUIDException
-     * @throws ReflectionException
-     * @throws PropertyHydrationFailureException
-     */
-    protected function hydrateProperties(object $object, array $data, Metadata $metadata): object
-    {
-        $strategy = $this->getStrategy();
-        $className = $metadata->getClassName();
-        $reflection = new Reflection($object);
-        $byCallback = PropertyHydration::CALLBACK === ($strategy?->getPolicyPropertyHydration() ?? StrategyInterface::DEFAULT_POLICY_PROPERTY_HYDRATION);
-
-        foreach ($data as $propertyName => $value) {
-            if ($byCallback && true !== $strategy->shouldHydrateProperty($reflection, $propertyName, $value)) {
-                continue;
-            }
-
-            $finalValue = $this->propertyValue($object, $propertyName, $value, $metadata);
-
-            try {
-                $strategy?->hydrateProperty($reflection, $propertyName, $finalValue);
-            } catch (Throwable $e) {
-                throw new PropertyHydrationFailureException(
-                    message: sprintf('Unable to hydrate property "%s" of class "%s"', $propertyName, $className),
-                    previous: $e,
-                );
-            }
-        }
-
-        return $object;
-    }
-
-    /**
-     * The value of a property as loaded: a date restored (converted to the declared type), a reference as a
-     * LazyLoadReference (the referenced object itself if the type of the property doesn't allow one), arrays
-     * hydrated (hydrateArray()); other values as stored.
-     *
-     * @throws InvalidUUIDException
-     * @throws ReflectionException
-     */
-    private function propertyValue(object $object, int|string $propertyName, mixed $value, Metadata $metadata): mixed
-    {
-        $type = Reflection::getPropertyType($object, $propertyName);
-        $reserved = $metadata->getReservedReferenceName();
-
-        if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
-            return $this->restoreDateTime($value, $metadata, $type);
-        }
-        if (!is_array($value)) {
-            return $value;
-        }
-        if (!isset($value[$reserved])) {
-            return $this->hydrateArray($metadata, $object, $value, [$propertyName]);
-        }
-
-        $referencedUuid = $value[$reserved];
-        if (false === Validator::validate($referencedUuid)) {
-            return [$reserved => $referencedUuid]; // not a valid reference: the value as stored
-        }
-
-        $reference = new LazyLoadReference($this, $referencedUuid, $object, [$propertyName]);
-        if ($this->supportsLazyReference($type)) {
-            return $reference;
-        }
-        $className = $metadata->getClassName();
-        $this->getEventDispatcher()?->dispatch(Events::LAZY_TYPE_NOT_SUPPORTED, static fn() => new LazyTypeNotSupportedContext($className, $propertyName));
-        return $reference->getObject();
-    }
-
-    /**
-     * Hydrates an array of loaded data: references to other objects become lazy load references, nested arrays are
-     * hydrated recursively, based on the metadata provided.
-     *
-     * @param Metadata $metadata The metadata object used to identify and process reserved references.
-     * @param object $object The object to be used in creating LazyLoadReference instances.
-     * @param array $array The input array to be processed.
-     * @param array $path An array representing the traversal path within the structure for recursion.
-     *
-     * @return array The processed array, with applicable elements converted into lazy load references
-     *               or recursively processed subarrays.
-     * @throws InvalidUUIDException
-     */
-    protected function hydrateArray(Metadata $metadata, object $object, array $array, array $path): array
-    {
-        $processed = [];
-        foreach ($array as $key => $value) {
-            $childPath = [...$path, $key];
-
-            if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
-                $processed[$key] = $this->restoreDateTime($value, $metadata);
-            } else if (is_array($value) && isset($value[$metadata->getReservedReferenceName()])) {
-                $processed[$key] = new LazyLoadReference($this, $value[$metadata->getReservedReferenceName()], $object, $childPath);
-            } else if (is_array($value)) {
-                $processed[$key] = $this->hydrateArray($metadata, $object, $value, $childPath);
-            } else {
-                $processed[$key] = $value;
-            }
-        }
-        return $processed;
-    }
-
-    /**
-     * Replaces the references in the data passed to __unserialize() by the referenced objects, so it gets
-     * what __serialize() returned. Unlike properties, the data has no types to decide whether a
-     * LazyLoadReference fits, so the referenced objects are loaded right away.
-     *
-     * @param array $data The stored data, nested arrays included.
-     * @param Metadata $metadata The metadata holding the reserved reference name.
-     * @return array The data with the referenced objects, or null for objects that no longer exist.
-     * @throws ObjectLoadingFailureException If a referenced object cannot be loaded.
-     */
-    protected function resolveReferences(array $data, Metadata $metadata): array
-    {
-        $reserved = $metadata->getReservedReferenceName();
-
-        foreach ($data as $key => $value) {
-            if (false === is_array($value)) {
-                continue;
-            }
-
-            if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
-                $data[$key] = $this->restoreDateTime($value, $metadata);
-            } else if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
-                $data[$key] = $this->restoring[$value[$reserved]] ?? $this->loadReferenced($value[$reserved]);
-            } else {
-                $data[$key] = $this->resolveReferences($value, $metadata);
-            }
-        }
-
-        return $data;
-    }
-
-    /**
-     * Restores a date stored inline (see Serialization\DateTimeValue). With the declared type of a property, a date of
-     * another class is converted to it, e.g. a stored DateTime for a property declared as DateTimeImmutable.
-     * What can't be restored as stored (an unknown class or time zone) is logged.
-     *
-     * @param array $value The encoded date.
-     * @param Metadata $metadata The metadata holding the reserved key of dates.
-     * @param ReflectionType|null $type The declared type of the property, if any.
-     * @throws DateTimeRestorationFailureException If the point in time can't be read.
-     */
-    protected function restoreDateTime(array $value, Metadata $metadata, ?ReflectionType $type = null): DateTimeInterface
-    {
-        $logger = $this->getLogger();
-        $onFailure = static function (Throwable $e) use ($logger): void {
-            $logger?->log($e);
-        };
-
-        $date = DateTimeValue::decode($value, $metadata->getReservedDateTimeName(), $this->getClassRenameMap(), $onFailure);
-
-        if ($type instanceof ReflectionNamedType && false === $type->isBuiltin()) {
-            $className = $type->getName();
-            if (false === $date instanceof $className) {
-                $date = DateTimeValue::convert($date, $className, $onFailure);
-            }
-        }
-
-        return $date;
-    }
-
-    /**
-     * Determines if the given type supports lazy references based on the provided type reflection.
-     * It checks various scenarios, including no type-hint, named types, and union types.
-     *
-     * @param ReflectionType|null $type The reflection of the type to check, which can be null,
-     *                                  a named type, or a union type.
-     *
-     * @return bool Returns true if the type supports lazy references; otherwise, false.
-     * @see Reflection::acceptsLazyReference()
-     */
-    protected function supportsLazyReference(?ReflectionType $type): bool
-    {
-        return Reflection::acceptsLazyReference($type);
+        return $this->objectReader()->read($uuid, $addToCache);
     }
 }

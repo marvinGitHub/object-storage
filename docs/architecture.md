@@ -23,7 +23,8 @@ The storage is being split into components, one concern each, step by step and w
 | `Locking\ObjectLocks` | the locks of objects as operations take them: only if not held, released only if taken here and not retained by a transaction (`Locking\RetainedLocks`) | the copies of that pattern, the locks of `RetainedLocksTrait` | done |
 | `Storage\ObjectSession` | what the storage instance knows of the objects it loaded and stored: their UUIDs, the revisions read, the objects being stored | `identityMap`, `revisions`, `processingStack` of `ObjectStorage` | done |
 | `Storage\ObjectDeleter` | deleting objects, with the objects they reference by the child deletion policy (`Storage\References`) | `DeletingTrait` | done |
-| `Storage\ObjectReader`, `ObjectWriter` | load, store | `LoadingTrait`, `StoringTrait` | planned |
+| `Storage\ObjectReader` | reading objects: built from their files, properties hydrated, references lazy (or loaded for `__unserialize()`), dates restored; `load()` with cache, locks and events stays the facade's | `LoadingTrait` | done |
+| `Storage\ObjectWriter` | store | `StoringTrait` | planned |
 
 `ObjectStorage` stays the facade: its public methods and their behavior don't change, they delegate to the
 components. Code using the storage doesn't notice the split.
@@ -32,7 +33,7 @@ components. Code using the storage doesn't notice the split.
 
 - **One concern per component**, named after it. A component knows only the components below it, never the facade
   (with one exception: `LazyLoadReference` and `__unserialize()` load referenced objects through the facade, which
-  is what they need).
+  is what they need; `ObjectReader` gets the facade for that).
 - **Dependencies through the constructor.** A component gets what it uses as constructor arguments: no `$this` of
   another class, no static state, no service locator.
 - **Fixed dependencies.** The facade has setters (`setStorageDir()`, `setIOAdapter()`, `setStrategy()`, …), and the
