@@ -29,11 +29,7 @@ trait ListingTrait
      */
     public function exists(string $uuid): bool
     {
-        try {
-            return $this->getIOAdapter()->isFile($this->getFilePathData($uuid));
-        } catch (Throwable $e) {
-            throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
-        }
+        return $this->objectFiles()->exists($uuid);
     }
 
     /**

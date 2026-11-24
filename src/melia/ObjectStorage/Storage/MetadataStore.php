@@ -119,6 +119,16 @@ final readonly class MetadataStore
     }
 
     /**
+     * Removes the metadata of an object from the cache, e.g. once its files are deleted.
+     *
+     * @throws \Psr\SimpleCache\InvalidArgumentException
+     */
+    public function forget(string $uuid): void
+    {
+        $this->cache?->delete($uuid);
+    }
+
+    /**
      * Puts metadata into the cache, e.g. metadata written with the data of its object.
      */
     public function cache(Metadata $metadata): void

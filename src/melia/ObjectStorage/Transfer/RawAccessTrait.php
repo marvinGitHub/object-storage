@@ -9,6 +9,7 @@ use melia\ObjectStorage\Exception\ObjectAlreadyExistsException;
 use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
+use melia\ObjectStorage\Storage\References;
 use Throwable;
 
 /**
@@ -72,7 +73,7 @@ trait RawAccessTrait
                     $decoded = null;
                 }
                 if (null !== $decoded) {
-                    foreach (static::findReferences($decoded, $metadata->getReservedReferenceName()) as [$reference]) {
+                    foreach (References::in($decoded, $metadata->getReservedReferenceName()) as [$reference]) {
                         if ($reference !== $uuid) {
                             $references[$reference] = true;
                         }

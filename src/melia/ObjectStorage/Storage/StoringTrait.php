@@ -39,7 +39,6 @@ use melia\ObjectStorage\UUID\Helper;
 use Psr\SimpleCache\InvalidArgumentException;
 use ReflectionException;
 use Throwable;
-use WeakMap;
 
 /**
  * Storing objects: store() → storeObject() (per object of the graph) → serializeGraph() → writeObjectFiles().
@@ -50,7 +49,6 @@ use WeakMap;
  */
 trait StoringTrait
 {
-    protected WeakMap $processingStack;
     /**
      * Stores a given object in the storage system, assigning a UUID if necessary.
      * If the object is an instance of LazyLoadReference and is not loaded, it directly returns its UUID.
@@ -112,7 +110,7 @@ trait StoringTrait
             }
 
             // 2) update mapping (important for references and later store calls)
-            $this->identityMap[$object] = $uuid;
+            $this->session->remember($object, $uuid);
 
             // 3) no early return: ALWAYS call storeObject so that updates are detected via checksum
             $lockAdapter?->acquireExclusiveLock($uuid);
@@ -179,17 +177,15 @@ trait StoringTrait
         $eventDispatcher = $this->getEventDispatcher();
 
         try {
-            if (!isset($this->identityMap[$object])) {
-                $this->identityMap[$object] = $uuid;
-            }
+            $this->session->rememberIfUnknown($object, $uuid);
 
             Helper::assign($object, $uuid);
 
-            if (isset($this->processingStack[$object])) {
+            if ($this->session->isBeingStored($object)) {
                 return;
             }
 
-            $this->processingStack[$object] = true;
+            $this->session->startStoring($object);
 
             $metadata = new Metadata();
             $metadata->setChecksumAlgorithm($this->getStrategy()?->getChecksumAlgorithm() ?? static::CHECKSUM_ALGORITHM_DEFAULT);
@@ -257,7 +253,7 @@ trait StoringTrait
                 }
 
                 if ($writeMetadata) {
-                    $this->revisions[$object] = $metadata->getRevision();
+                    $this->session->recordRevision($object, $metadata->getRevision());
                     $this->addToCache($uuid, $object, $ttl);
                 }
 
@@ -266,7 +262,7 @@ trait StoringTrait
                 }
             }, $writeMetadata);
         } finally {
-            unset($this->processingStack[$object]);
+            $this->session->stopStoring($object);
         }
     }
 
@@ -306,13 +302,13 @@ trait StoringTrait
      */
     private function stampRevision(object $object, string $uuid, Metadata $metadata, bool $exists, bool $writeGraph): ?Metadata
     {
-        $tracked = isset($this->revisions[$object]);
+        $expectedRevision = $this->session->revisionOf($object);
+        $tracked = null !== $expectedRevision;
         $currentMetadata = ($exists || $tracked) ? $this->reloadMetadata($uuid) : null;
         $currentRevision = $currentMetadata?->getRevision() ?? 0;
 
         // an object deleted in the meantime (by this or another process) is created again, which is no conflict
-        if ($tracked && null !== $currentMetadata && true === $this->getStrategy()?->optimisticLockingEnabled() && $this->revisions[$object] !== $currentRevision) {
-            $expectedRevision = $this->revisions[$object];
+        if ($tracked && null !== $currentMetadata && true === $this->getStrategy()?->optimisticLockingEnabled() && $expectedRevision !== $currentRevision) {
             $this->getEventDispatcher()?->dispatch(Events::REVISION_CONFLICT, static fn() => new Context($uuid));
             throw new RevisionConflictException(sprintf(
                 'Object with uuid %s has been changed in the meantime. Expected revision: %u Current: %u',
@@ -512,11 +508,11 @@ trait StoringTrait
             }
 
             $metadata = $context->getMetadata();
-            $referencedUuid = Helper::getAssigned($value) ?? $this->identityMap[$value] ?? $this->getNextAvailableUuid();
+            $referencedUuid = Helper::getAssigned($value) ?? $this->session->uuidOf($value) ?? $this->getNextAvailableUuid();
 
-            $this->identityMap[$value] = $referencedUuid;
+            $this->session->remember($value, $referencedUuid);
 
-            if (false === isset($this->processingStack[$value])) {
+            if (false === $this->session->isBeingStored($value)) {
                 $context->increaseLevel();
                 try {
                     if ($this->shouldWriteChild($context, $value, $referencedUuid, $path)) {

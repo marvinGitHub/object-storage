@@ -21,8 +21,9 @@ The storage is being split into components, one concern each, step by step and w
 | `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes | `DurabilityTrait` | done |
 | `Storage\ObjectCache` | the cache of loaded objects, with its events | cache methods of `ObjectStorage` | done |
 | `Locking\ObjectLocks` | the locks of objects as operations take them: only if not held, released only if taken here and not retained by a transaction (`Locking\RetainedLocks`) | the copies of that pattern, the locks of `RetainedLocksTrait` | done |
-| `Storage\ObjectSession` | what the storage instance knows of the objects it loaded and stored: their UUIDs, the revisions read, the objects being stored | `identityMap`, `revisions`, `processingStack` of `ObjectStorage` | planned |
-| `Storage\ObjectReader`, `ObjectWriter`, `ObjectDeleter` | load, store, delete | `LoadingTrait`, `StoringTrait`, `DeletingTrait` | planned |
+| `Storage\ObjectSession` | what the storage instance knows of the objects it loaded and stored: their UUIDs, the revisions read, the objects being stored | `identityMap`, `revisions`, `processingStack` of `ObjectStorage` | done |
+| `Storage\ObjectDeleter` | deleting objects, with the objects they reference by the child deletion policy (`Storage\References`) | `DeletingTrait` | done |
+| `Storage\ObjectReader`, `ObjectWriter` | load, store | `LoadingTrait`, `StoringTrait` | planned |
 
 `ObjectStorage` stays the facade: its public methods and their behavior don't change, they delegate to the
 components. Code using the storage doesn't notice the split.
@@ -42,8 +43,9 @@ components. Code using the storage doesn't notice the split.
   component is created again, which is always safe. State that must survive (the locks retained by a
   transaction) is kept by the facade in an object of its own and passed in like any other dependency.
 - **The order of the layers:** paths → JSON files → metadata, registry → object files, stubs, locks → reader,
-  writer, deleter → facade. Recording changes in the active transaction stays with the facade: it changes with every
-  transaction, the components only read and write files.
+  writer, deleter → facade. The active transaction is passed with each call (e.g. `ObjectDeleter::delete()`): it
+  changes with every transaction, so it is no dependency of a component. The session (`ObjectSession`) is state of
+  the facade, created once and cleared with `clearCache()`.
 - **Each component has a unit test of its own** (`tests/melia/ObjectStorage/Storage/`), without a storage: what the
   facade tests can't show (e.g. that the registry is read again under its lock) is tested there.
 - **Same behavior while splitting:** every step is checked by the whole test suite, PHPStan (level 5, see

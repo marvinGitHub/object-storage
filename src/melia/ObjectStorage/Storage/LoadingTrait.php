@@ -51,8 +51,6 @@ trait LoadingTrait
      */
     private array $restoring = [];
 
-    /** how many loads of referenced objects are running (loadReferenced()), nested ones included */
-    private int $loadingReferences = 0;
     /**
      * Loads an object from persistent storage using its unique identifier.
      * The method optionally applies locking mechanisms during the loading process.
@@ -130,12 +128,7 @@ trait LoadingTrait
      */
     public function loadReferenced(string $uuid): ?object
     {
-        $this->loadingReferences++;
-        try {
-            return $this->load($uuid);
-        } finally {
-            $this->loadingReferences--;
-        }
+        return $this->session->loadingReferences(fn(): ?object => $this->load($uuid));
     }
 
     /**
@@ -148,9 +141,7 @@ trait LoadingTrait
      */
     private function rememberLoaded(object $object, string $uuid): void
     {
-        if (0 === $this->loadingReferences && !isset($this->identityMap[$object])) {
-            $this->identityMap[$object] = $uuid;
-        }
+        $this->session->rememberLoaded($object, $uuid);
     }
 
     /**
@@ -211,7 +202,7 @@ trait LoadingTrait
         }
 
         Helper::assign($object, $uuid);
-        $this->revisions[$object] = $metadata->getRevision();
+        $this->session->recordRevision($object, $metadata->getRevision());
 
         if ($addToCache) {
             $this->addToCache($uuid, $object, $metadata->getLifetime());

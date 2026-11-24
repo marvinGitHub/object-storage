@@ -9,6 +9,7 @@ use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\Exception\ObjectExistenceEvaluationFailureException;
 use melia\ObjectStorage\File\FilesInterface;
 use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\File\Json;
@@ -35,6 +36,20 @@ final readonly class ObjectFiles
         private ?LoggerInterface     $logger = null,
     )
     {
+    }
+
+    /**
+     * Whether an object is stored: whether its data file exists.
+     *
+     * @throws ObjectExistenceEvaluationFailureException If that can't be told.
+     */
+    public function exists(string $uuid): bool
+    {
+        try {
+            return $this->io->isFile($this->paths->dataFile($uuid));
+        } catch (Throwable $e) {
+            throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
+        }
     }
 
     /**

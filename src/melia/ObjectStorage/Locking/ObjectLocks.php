@@ -75,6 +75,17 @@ final readonly class ObjectLocks
     }
 
     /**
+     * Locks an object exclusively, for operations that release the lock afterwards in any case (unless retained,
+     * releaseUnlessRetained()), also one the caller held before: store(), deleting.
+     *
+     * @throws LockException If the lock can't be acquired.
+     */
+    public function acquireExclusive(string $uuid): void
+    {
+        $this->adapter?->acquireExclusiveLock($uuid);
+    }
+
+    /**
      * Locks an object exclusively (unless this process holds the lock already) and retains the lock: operations
      * don't release it until releaseRetained().
      *

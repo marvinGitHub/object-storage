@@ -37,6 +37,7 @@ use melia\ObjectStorage\Storage\LoadingTrait;
 use melia\ObjectStorage\Storage\MetadataTrait;
 use melia\ObjectStorage\Storage\ObjectCache;
 use melia\ObjectStorage\Storage\ObjectPaths;
+use melia\ObjectStorage\Storage\ObjectSession;
 use melia\ObjectStorage\Storage\PathsTrait;
 use melia\ObjectStorage\Storage\StorageAbstract;
 use melia\ObjectStorage\Storage\StorageMemoryConsumptionInterface;
@@ -48,7 +49,6 @@ use melia\ObjectStorage\Transfer\RawAccessTrait;
 use melia\ObjectStorage\UUID\IdentityTrait;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
-use WeakMap;
 use WeakReference;
 
 /**
@@ -153,11 +153,10 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     protected const string FILE_SUFFIX_OBJECT = ObjectPaths::SUFFIX_OBJECT;
 
     /**
-     * The revision each object was loaded or stored with by this instance, for optimistic locking.
-     *
-     * @var WeakMap<object, int>
+     * What this instance knows of the objects it loaded and stored: their UUIDs, their revisions (for optimistic
+     * locking), the objects being stored.
      */
-    protected WeakMap $revisions;
+    private ObjectSession $session;
 
     /**
      * The transaction running on this storage instance: every change of object files through this instance is
@@ -214,9 +213,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     {
         $factory = null === $configuration ? null : new ConfigurationFactory();
         $strategyPassed = null !== $strategy;
-        $this->identityMap = new WeakMap();
-        $this->processingStack = new WeakMap();
-        $this->revisions = new WeakMap();
+        $this->session = new ObjectSession();
 
         $this->setStorageDir($storageDir);
         $this->setClassRenameMap(new ClassRenameMap());
@@ -427,9 +424,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     public function clearCache(): void
     {
         $this->objectCache()->clear();
-        $this->identityMap = new WeakMap();
-        $this->processingStack = new WeakMap();
-        $this->revisions = new WeakMap();
+        $this->session->clear();
         $this->classNameRegistry()->forget();
         $this->getMetadataCache()?->clear();
         $this->getEventDispatcher()?->dispatch(Events::CACHE_CLEARED);
