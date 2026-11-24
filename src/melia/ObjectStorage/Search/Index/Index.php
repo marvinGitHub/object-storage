@@ -187,7 +187,7 @@ final class Index implements IndexInterface
 
     public function recordChange(string ...$uuids): void
     {
-        $this->changeTrie(self::TRIE_PENDING, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
+        $this->addToTrie(self::TRIE_PENDING, $uuids);
     }
 
     /**
@@ -196,7 +196,7 @@ final class Index implements IndexInterface
      */
     public function recordReferenceChange(string ...$uuids): void
     {
-        $this->changeTrie(self::TRIE_REFERENCED, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
+        $this->addToTrie(self::TRIE_REFERENCED, $uuids);
     }
 
     /**
@@ -224,20 +224,17 @@ final class Index implements IndexInterface
 
             $this->expandReferenceChanges($state);
 
-            // taken out before they are applied: a change recorded meanwhile is recorded again and not lost
-            while ((null === $maxChanges || $applied < $maxChanges) && [] !== ($uuids = $this->changeTrie(self::TRIE_PENDING, static function (UuidTrie $trie) use ($batchSize, $maxChanges, $applied): array {
-                    $uuids = $trie->first(null === $maxChanges ? $batchSize : max(1, min($batchSize, $maxChanges - $applied)));
-                    $trie->remove(...$uuids);
-                    return $uuids;
-                }))) {
+            while (null === $maxChanges || $applied < $maxChanges) {
+                // taken out before they are applied: a change recorded meanwhile is recorded again and not lost
+                $uuids = $this->takeFromTrie(self::TRIE_PENDING, null === $maxChanges ? $batchSize : max(1, min($batchSize, $maxChanges - $applied)));
+                if ([] === $uuids) {
+                    break;
+                }
                 try {
                     if (null !== $state->generation) {
                         $state->errors = $this->applyChanges($state->generation, $uuids, $state->errors)['errors'];
                     }
-                    // a running build has read some of these objects before: they are applied to it at its end
-                    if (null !== $state->build) {
-                        $this->changeTrie(self::TRIE_REPLAY, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
-                    }
+                    $this->replayIfBuilding($state, $uuids);
                 } catch (Throwable $e) {
                     $this->recordChange(...$uuids);
                     throw $e;
@@ -268,11 +265,7 @@ final class Index implements IndexInterface
     {
         $generations = array_values(array_filter([$state->generation, $state->build['generation'] ?? null], static fn(?int $generation): bool => null !== $generation));
 
-        while ([] !== ($uuids = $this->changeTrie(self::TRIE_REFERENCED, static function (UuidTrie $trie): array {
-                $uuids = $trie->first(self::REFERENCED_BATCH);
-                $trie->remove(...$uuids);
-                return $uuids;
-            }))) {
+        while ([] !== ($uuids = $this->takeFromTrie(self::TRIE_REFERENCED, self::REFERENCED_BATCH))) {
             $dependents = [];
             try {
                 foreach ($generations as $generation) {
@@ -282,8 +275,7 @@ final class Index implements IndexInterface
                 }
             } catch (Throwable $e) {
                 // e.g. a generation built before documents recorded their referenced objects: rebuilding it helps
-                $this->storage->getLogger()?->log($e);
-                $state->errors = array_slice([...$state->errors, 'Referenced objects: ' . $e->getMessage()], -self::MAX_ERRORS);
+                $this->addError($state, 'Referenced objects', $e);
                 continue;
             }
 
@@ -353,8 +345,7 @@ final class Index implements IndexInterface
                 $uuids = array_values(array_diff($handle->expired(microtime(true), max(1, $batchSize)), array_keys($seen)));
             } catch (Throwable $e) {
                 // e.g. a generation built before the expiration was indexed: rebuilding it helps
-                $this->storage->getLogger()?->log($e);
-                $state->errors = array_slice([...$state->errors, 'Expired objects: ' . $e->getMessage()], -self::MAX_ERRORS);
+                $this->addError($state, 'Expired objects', $e);
                 break;
             }
 
@@ -370,15 +361,34 @@ final class Index implements IndexInterface
             $state->errors = $this->applyChanges($state->generation, $uuids, $state->errors)['errors'];
             $removed += max(0, $before - $handle->count());
 
-            // a running build may have read these objects before they expired: they are applied to it at its end
-            if (null !== $state->build) {
-                $this->changeTrie(self::TRIE_REPLAY, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
-            }
+            $this->replayIfBuilding($state, $uuids);
         }
 
         $state->lastExpiredRemoved = $removed;
 
         return $removed;
+    }
+
+    /**
+     * A running build may have read the objects before they changed: they are applied to it at its end.
+     *
+     * @param string[] $uuids
+     * @throws SearchException
+     */
+    private function replayIfBuilding(State $state, array $uuids): void
+    {
+        if (null !== $state->build) {
+            $this->addToTrie(self::TRIE_REPLAY, $uuids);
+        }
+    }
+
+    /**
+     * Logs an error and keeps it in the state (the last MAX_ERRORS).
+     */
+    private function addError(State $state, string $context, Throwable $e): void
+    {
+        $this->storage->getLogger()?->log($e);
+        $state->errors = array_slice([...$state->errors, $context . ': ' . $e->getMessage()], -self::MAX_ERRORS);
     }
 
     public function startBuild(): array
@@ -439,9 +449,10 @@ final class Index implements IndexInterface
             }
 
             // one more than needed tells whether this is the last step
-            $uuids = $this->readTrie(self::TRIE_BUILD)->first(max(1, $batchSize) + 1, $build['cursor']);
-            $finished = count($uuids) <= max(1, $batchSize);
-            $uuids = array_slice($uuids, 0, max(1, $batchSize));
+            $batchSize = max(1, $batchSize);
+            $uuids = $this->readTrie(self::TRIE_BUILD)->first($batchSize + 1, $build['cursor']);
+            $finished = count($uuids) <= $batchSize;
+            $uuids = array_slice($uuids, 0, $batchSize);
 
             if ([] !== $uuids) {
                 $result = $this->applyChanges($build['generation'], $uuids, $state->errors);
@@ -647,22 +658,15 @@ final class Index implements IndexInterface
         $this->close();
 
         foreach ($this->listGenerations() as $generation) {
-            try {
-                $this->engine->remove($this->generationPath($generation), $this->getGenerationDefinition($generation));
-            } catch (Throwable $e) {
-                $this->storage->getLogger()?->log($e);
-            }
+            $this->removeEngineData($generation);
         }
 
         try {
-            $uuids = [
-                static::definitionUuid($this->getName()),
-                static::stateUuid($this->getName()),
-                static::trieUuid($this->getName(), self::TRIE_PENDING),
-                static::trieUuid($this->getName(), self::TRIE_REFERENCED),
-                static::trieUuid($this->getName(), self::TRIE_BUILD),
-                static::trieUuid($this->getName(), self::TRIE_REPLAY),
-            ];
+            $name = $this->getName();
+            $uuids = [static::definitionUuid($name), static::stateUuid($name)];
+            foreach ([self::TRIE_PENDING, self::TRIE_REFERENCED, self::TRIE_BUILD, self::TRIE_REPLAY] as $kind) {
+                $uuids[] = static::trieUuid($name, $kind);
+            }
             foreach ($uuids as $uuid) {
                 if ($this->meta->exists($uuid)) {
                     $this->meta->delete($uuid); // waits for a running change
@@ -736,6 +740,32 @@ final class Index implements IndexInterface
                 $lockAdapter->releaseLock($uuid);
             }
         }
+    }
+
+    /**
+     * Adds UUIDs to a set of UUIDs.
+     *
+     * @param string[] $uuids
+     * @throws SearchException
+     */
+    private function addToTrie(string $kind, array $uuids): void
+    {
+        $this->changeTrie($kind, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
+    }
+
+    /**
+     * Takes the first UUIDs out of a set of UUIDs.
+     *
+     * @return string[]
+     * @throws SearchException
+     */
+    private function takeFromTrie(string $kind, int $count): array
+    {
+        return $this->changeTrie($kind, static function (UuidTrie $trie) use ($count): array {
+            $uuids = $trie->first($count);
+            $trie->remove(...$uuids);
+            return $uuids;
+        });
     }
 
     /**
@@ -971,14 +1001,20 @@ final class Index implements IndexInterface
     private function removeGeneration(int $generation): void
     {
         $this->closeGeneration($generation);
+        $this->removeEngineData($generation);
+        Directory::remove($this->generationPath($generation));
+    }
 
+    /**
+     * Lets the engine remove the data of a generation; a failure is only logged.
+     */
+    private function removeEngineData(int $generation): void
+    {
         try {
             $this->engine->remove($this->generationPath($generation), $this->getGenerationDefinition($generation));
         } catch (Throwable $e) {
             $this->storage->getLogger()?->log($e);
         }
-
-        Directory::remove($this->generationPath($generation));
     }
 
     /**
@@ -988,7 +1024,7 @@ final class Index implements IndexInterface
      */
     private function getGenerationDefinition(int $generation): Definition
     {
-        $path = $this->generationPath($generation) . DIRECTORY_SEPARATOR . self::FILE_DEFINITION;
+        $path = $this->generationDefinitionPath($generation);
         $content = is_file($path) ? @file_get_contents($path) : false;
 
         try {
@@ -1009,8 +1045,8 @@ final class Index implements IndexInterface
      */
     private function writeGenerationDefinition(int $generation, Definition $definition): void
     {
-        $path = $this->generationPath($generation) . DIRECTORY_SEPARATOR . self::FILE_DEFINITION;
-        $json = json_encode($definition->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $path = $this->generationDefinitionPath($generation);
+        $json =json_encode($definition->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         if (false === $json || false === @file_put_contents($path, $json)) {
             throw new SearchException(sprintf('Unable to write %s.', $path));
@@ -1062,6 +1098,11 @@ final class Index implements IndexInterface
     private function generationPath(int $generation): string
     {
         return $this->directory . DIRECTORY_SEPARATOR . self::DIR_GENERATION_PREFIX . $generation;
+    }
+
+    private function generationDefinitionPath(int $generation): string
+    {
+        return $this->generationPath($generation) . DIRECTORY_SEPARATOR . self::FILE_DEFINITION;
     }
 
     /**

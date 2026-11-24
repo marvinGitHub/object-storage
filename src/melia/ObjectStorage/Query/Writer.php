@@ -88,26 +88,36 @@ final class Writer
             $this->executor->checkpoint();
             try {
                 $uuid = $this->storage->getNextAvailableUuid();
-                $metadata = new Metadata();
-                $metadata->setUuid($uuid);
-                $metadata->setClassName($class);
-                $metadata->setVersion(Metadata::VERSION);
-                $metadata->setTimestampCreation($now = microtime(true));
-                $metadata->setTimestampModification($now);
-                foreach ($reservedNames as $kind => $name) {
-                    $metadata->setReservedName($kind, $name);
-                }
-                $metadata->setChecksumAlgorithm($this->storage->getStrategy()?->getChecksumAlgorithm() ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT);
                 $json = $this->serialize($data);
-                $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
-                $metadata->setRevision(1);
-                $this->storage->writeRaw(new RawObject($uuid, $json, $metadata));
+                $this->storage->writeRaw(new RawObject($uuid, $json, $this->newMetadata($uuid, $class, $reservedNames, $json)));
                 $uuids[] = $uuid;
             } catch (Throwable $e) {
                 throw $this->stopped('inserted', $uuids, count($objects), $e);
             }
         }
         return $uuids;
+    }
+
+    /**
+     * The metadata of a new object: created now, revision 1, the checksum of its data.
+     *
+     * @param array<string, string> $reservedNames kind => name
+     */
+    private function newMetadata(string $uuid, string $class, array $reservedNames, string $json): Metadata
+    {
+        $metadata = new Metadata();
+        $metadata->setUuid($uuid);
+        $metadata->setClassName($class);
+        $metadata->setVersion(Metadata::VERSION);
+        $metadata->setTimestampCreation($now = microtime(true));
+        $metadata->setTimestampModification($now);
+        foreach ($reservedNames as $kind => $name) {
+            $metadata->setReservedName($kind, $name);
+        }
+        $metadata->setChecksumAlgorithm($this->storage->getStrategy()?->getChecksumAlgorithm() ?? ObjectStorage::CHECKSUM_ALGORITHM_DEFAULT);
+        $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
+        $metadata->setRevision(1);
+        return $metadata;
     }
 
     /**

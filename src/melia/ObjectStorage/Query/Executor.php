@@ -52,6 +52,12 @@ final class Executor
     /** the most referenced objects kept while a query runs, for paths into them */
     public const int MAX_REFERENCED = 10000;
 
+    /** the units of DATE_ADD and DATE_SUB, as names of PHP's relative formats */
+    private const array DATE_UNITS = ['SECOND' => 'second', 'MINUTE' => 'minute', 'HOUR' => 'hour', 'DAY' => 'day', 'WEEK' => 'week', 'MONTH' => 'month', 'YEAR' => 'year'];
+
+    /** the comparison operators */
+    private const array COMPARISONS = ['=', '!=', '<', '<=', '>', '>='];
+
     /** @var array<string, ?array{uuid: string, data: array, reserved: string}> referenced objects read, by UUID */
     private array $referenced = [];
 
@@ -99,9 +105,7 @@ final class Executor
      */
     public function checkpoint(): void
     {
-        if (null !== $this->interrupt) {
-            ($this->interrupt)();
-        }
+        $this->interrupt?->__invoke();
     }
 
     /**
@@ -190,14 +194,19 @@ final class Executor
             }
         })();
         foreach ($plan->joins as $join) {
-            $alias = $join['source']->alias;
-            $rows = $this->join($rows, $join, array_key_exists($alias, $keep) ? $keep[$alias] : []);
+            $rows = $this->join($rows, $join, self::keepOf($keep, $join['source']->alias));
         }
         foreach ($rows as $row) {
-            if (null === $plan->where || true === Values::truth($this->evaluate($plan->where, $row))) {
+            if ($this->holds($plan->where, $row)) {
                 yield $row;
             }
         }
+    }
+
+    /** whether a condition is true for a row; no condition always is */
+    private function holds(?Expr $condition, array $row, ?array $group = null): bool
+    {
+        return null === $condition || true === Values::truth($this->evaluate($condition, $row, $group));
     }
 
     /**
@@ -233,7 +242,7 @@ final class Executor
         $this->referenced = [];
         foreach ($this->objectsOf($source, $where) as $object) {
             $row = [$source->alias => $object];
-            if (null === $where || true === Values::truth($this->evaluate($where, $row))) {
+            if ($this->holds($where, $row)) {
                 yield $row;
             }
         }
@@ -319,39 +328,70 @@ final class Executor
     private static function keysUsed(Plan $plan): array
     {
         $keys = array_fill_keys($plan->aliases(), []);
-        $collect = static function (?Expr $expression) use (&$collect, &$keys): void {
-            if (null === $expression) {
+        $collect = static function (Expr $expression) use (&$keys): void {
+            if (!$expression instanceof BoundColumn || [] === $expression->path || !is_array($keys[$expression->alias] ?? null)) {
                 return;
             }
-            if ($expression instanceof BoundColumn && [] !== $expression->path && is_array($keys[$expression->alias] ?? null)) {
-                $first = $expression->path[0];
-                if (is_string($first)) {
-                    $keys[$expression->alias][$first] = true;
-                } elseif (PathSegment::KEY === $first->kind) {
-                    $keys[$expression->alias][(string)$first->value] = true;
-                } else {
-                    $keys[$expression->alias] = null; // p[0], p.*: any property
-                }
-            }
-            foreach ($expression->children() as $child) {
-                $collect($child);
+            $first = $expression->path[0];
+            if (is_string($first)) {
+                $keys[$expression->alias][$first] = true;
+            } elseif (PathSegment::KEY === $first->kind) {
+                $keys[$expression->alias][(string)$first->value] = true;
+            } else {
+                $keys[$expression->alias] = null; // p[0], p.*: any property
             }
         };
         foreach ($plan->items as $item) {
             if (null === $item['expression']) {
-                foreach ('*' === $item['starOf'] ? $plan->aliases() : [$item['starOf']] as $alias) {
+                foreach (self::starAliases($plan, $item) as $alias) {
                     $keys[$alias] = null;
                 }
             }
-            $collect($item['expression']);
         }
-        foreach ($plan->joins as $join) {
-            $collect($join['on']);
-        }
-        foreach ([$plan->where, $plan->having, ...$plan->groupBy, ...array_column($plan->orderBy, 0)] as $expression) {
-            $collect($expression);
+        $expressions = [
+            ...array_column($plan->items, 'expression'), ...array_column($plan->joins, 'on'),
+            $plan->where, $plan->having, ...$plan->groupBy, ...array_column($plan->orderBy, 0),
+        ];
+        foreach ($expressions as $expression) {
+            self::walk($expression, $collect);
         }
         return $keys;
+    }
+
+    /**
+     * Calls $visit for an expression and, unless it returns false, for its children, and so on.
+     *
+     * @param \Closure(Expr): (bool|void) $visit
+     */
+    private static function walk(?Expr $expression, \Closure $visit): void
+    {
+        if (null === $expression || false === $visit($expression)) {
+            return;
+        }
+        foreach ($expression->children() as $child) {
+            self::walk($child, $visit);
+        }
+    }
+
+    /**
+     * The aliases an item * or alias.* stands for.
+     *
+     * @return list<string>
+     */
+    private static function starAliases(Plan $plan, array $item): array
+    {
+        return '*' === $item['starOf'] ? $plan->aliases() : [$item['starOf']];
+    }
+
+    /**
+     * The properties to keep of the objects of an alias (null: all, none if the query reads none).
+     *
+     * @param array<string, ?array<string, true>> $keep
+     * @return ?array<string, true>
+     */
+    private static function keepOf(array $keep, string $alias): ?array
+    {
+        return array_key_exists($alias, $keep) ? $keep[$alias] : [];
     }
 
     /**
@@ -446,28 +486,16 @@ final class Executor
      */
     private function ungrouped(Plan $plan, iterable $rows, ?int $needed): array
     {
-        $heap = null;
-        if (null !== $needed && [] !== $plan->orderBy) {
-            // the needed rows that sort first: the greatest is dropped when there are more
-            $compare = fn(array $a, array $b): int => $this->compareResults($plan, $a, $b);
-            $heap = new class($compare) extends SplHeap {
-                public function __construct(private readonly \Closure $compare)
-                {
-                }
-
-                protected function compare(mixed $value1, mixed $value2): int
-                {
-                    return ($this->compare)($value1, $value2);
-                }
-            };
+        if (0 === $needed) {
+            return [];
         }
+        $sorted = [] !== $plan->orderBy;
+        // with ORDER BY and LIMIT, the needed rows that sort first: the greatest is dropped when there are more
+        $heap = null !== $needed && $sorted ? $this->resultHeap($plan) : null;
 
         $results = [];
         $seen = [];
         $position = 0;
-        if (0 === $needed) {
-            return [];
-        }
         foreach ($rows as $row) {
             $result = $this->result($plan, $row, null, $position++);
             if ($plan->distinct) {
@@ -485,11 +513,27 @@ final class Executor
                 continue;
             }
             $results[] = $result;
-            if (null !== $needed && [] === $plan->orderBy && count($results) >= $needed) {
+            if (null !== $needed && !$sorted && count($results) >= $needed) {
                 break; // enough
             }
         }
         return null === $heap ? $results : iterator_to_array($heap, false);
+    }
+
+    /** a heap of results with the one that sorts last on top */
+    private function resultHeap(Plan $plan): SplHeap
+    {
+        $compare = fn(array $a, array $b): int => $this->compareResults($plan, $a, $b);
+        return new class($compare) extends SplHeap {
+            public function __construct(private readonly \Closure $compare)
+            {
+            }
+
+            protected function compare(mixed $value1, mixed $value2): int
+            {
+                return ($this->compare)($value1, $value2);
+            }
+        };
     }
 
     /**
@@ -498,22 +542,8 @@ final class Executor
      */
     private function grouped(Plan $plan, iterable $rows, array $keep): array
     {
-        $aggregates = [];
-        $collect = static function (?Expr $expression) use (&$collect, &$aggregates): void {
-            if (null === $expression) {
-                return;
-            }
-            if ($expression instanceof FunctionCall && $expression->isAggregate()) {
-                $aggregates[spl_object_id($expression)] = $expression;
-                return;
-            }
-            foreach ($expression->children() as $child) {
-                $collect($child);
-            }
-        };
-        foreach ([...array_column($plan->items, 'expression'), $plan->having, ...array_column($plan->orderBy, 0)] as $expression) {
-            $collect($expression);
-        }
+        $aggregates = self::aggregatesOf($plan);
+        $newStates = static fn(): array => array_map(static fn(): array => self::newState(), $aggregates);
 
         $groups = [];
         foreach ($rows as $row) {
@@ -521,26 +551,47 @@ final class Executor
             if (!isset($groups[$key])) {
                 $first = [];
                 foreach ($row as $alias => $object) {
-                    $first[$alias] = self::stripped($object, array_key_exists($alias, $keep) ? $keep[$alias] : []);
+                    $first[$alias] = self::stripped($object, self::keepOf($keep, $alias));
                 }
-                $groups[$key] = ['row' => $first, 'states' => array_map(static fn() => self::newState(), $aggregates)];
+                $groups[$key] = ['row' => $first, 'states' => $newStates()];
             }
             foreach ($aggregates as $id => $aggregate) {
                 $this->accumulate($aggregate, $groups[$key]['states'][$id], $row);
             }
         }
         if ([] === $plan->groupBy && [] === $groups) {
-            $groups[] = ['row' => array_fill_keys($plan->aliases(), null), 'states' => array_map(static fn() => self::newState(), $aggregates)];
+            $groups[] = ['row' => array_fill_keys($plan->aliases(), null), 'states' => $newStates()];
         }
 
         $results = [];
         $position = 0;
         foreach ($groups as $group) {
-            if (null === $plan->having || true === Values::truth($this->evaluate($plan->having, $group['row'], $group['states']))) {
+            if ($this->holds($plan->having, $group['row'], $group['states'])) {
                 $results[] = $this->result($plan, $group['row'], $group['states'], $position++);
             }
         }
         return $results;
+    }
+
+    /**
+     * The aggregates of the selection, HAVING and ORDER BY, by their id (not those inside aggregates).
+     *
+     * @return array<int, FunctionCall>
+     */
+    private static function aggregatesOf(Plan $plan): array
+    {
+        $aggregates = [];
+        $collect = static function (Expr $expression) use (&$aggregates): bool {
+            if ($expression instanceof FunctionCall && $expression->isAggregate()) {
+                $aggregates[spl_object_id($expression)] = $expression;
+                return false;
+            }
+            return true;
+        };
+        foreach ([...array_column($plan->items, 'expression'), $plan->having, ...array_column($plan->orderBy, 0)] as $expression) {
+            self::walk($expression, $collect);
+        }
+        return $aggregates;
     }
 
     /**
@@ -552,23 +603,21 @@ final class Executor
         $values = [];
         $stars = [];
         foreach ($plan->items as $i => $item) {
-            if (null === $item['expression']) {
-                foreach ('*' === $item['starOf'] ? $plan->aliases() : [$item['starOf']] as $alias) {
-                    $stars[$alias] = $row[$alias]['data'] ?? null;
-                }
+            if (null !== $item['expression']) {
+                $values[$i] = $this->evaluate($item['expression'], $row, $states);
                 continue;
             }
-            $values[$i] = $this->evaluate($item['expression'], $row, $states);
+            // the references of * are read with the row
+            foreach (self::starAliases($plan, $item) as $alias) {
+                $object = $row[$alias] ?? null;
+                $stars[$alias] = null === ($object['data'] ?? null)
+                    ? null
+                    : ['data' => $object['data'], 'reserved' => $object['reserved'], 'dateTime' => $object['dateTime'], 'uuid' => $object['uuid']];
+            }
         }
         $keys = array_map(fn(array $order): mixed => $order[0] instanceof OutputColumn
             ? $values[$order[0]->index] ?? null
             : $this->evaluate($order[0], $row, $states), $plan->orderBy);
-        // the references of * are read with the row
-        foreach ($stars as $alias => $data) {
-            if (null !== $data) {
-                $stars[$alias] = ['data' => $data, 'reserved' => $row[$alias]['reserved'], 'dateTime' => $row[$alias]['dateTime'], 'uuid' => $row[$alias]['uuid']];
-            }
-        }
         return [$values, $keys, $stars, $position];
     }
 
@@ -598,7 +647,7 @@ final class Executor
                 $columns[] = [$item['name'], $i, null, null];
                 continue;
             }
-            foreach ('*' === $item['starOf'] ? $aliases : [$item['starOf']] as $alias) {
+            foreach (self::starAliases($plan, $item) as $alias) {
                 $properties = [];
                 foreach ($results as $result) {
                     foreach (array_keys($result[2][$alias]['data'] ?? []) as $property) {
@@ -644,79 +693,108 @@ final class Executor
             return $this->anyElement($expression, $wildcard, $row, $group);
         }
 
-        switch (true) {
-            case $expression instanceof Literal:
-                return $expression->value;
-            case $expression instanceof BoundColumn:
-                $object = $row[$expression->alias] ?? null;
-                if (null === $object) {
-                    return null;
-                }
-                if ([] === $expression->path) {
-                    return $object['uuid'];
-                }
-                $found = DocumentBuilder::extract($object['data'], $expression->path, $object['reserved'], $this->follow);
-                // p.category.UUID: a reference there is its UUID; anything else isn't one
-                if ($expression->uuid) {
-                    if (is_array($found) && Path::hasWildcard($expression->path)) {
-                        $uuids = array_values(array_filter($found, static fn(mixed $v): bool => is_string($v) && UuidValidator::validate($v)));
-                        return [] === $uuids ? null : $uuids;
-                    }
-                    return is_string($found) && UuidValidator::validate($found) ? $found : null;
-                }
-                return self::valueOf($found, $object);
-            case $expression instanceof FunctionCall:
-                if ('REF' === $expression->name) {
-                    $uuid = Values::text($value($expression->arguments[0]));
-                    return null === $uuid ? null : new Reference($uuid);
-                }
-                // CREATED(p), MODIFIED(p): of the metadata of the object of the alias
-                if ('CREATED' === $expression->name || 'MODIFIED' === $expression->name) {
-                    $column = $expression->arguments[0];
-                    $timestamp = $column instanceof BoundColumn ? ($row[$column->alias][strtolower($expression->name)] ?? null) : null;
-                    return null === $timestamp ? null : DateValue::ofTimestamp((float)$timestamp);
-                }
-                return $expression->isAggregate()
-                    ? $this->aggregate($expression, $group ?? throw new QueryException(sprintf('%s needs a group', $expression->name)))
-                    : $this->function($expression->name, array_map($value, $expression->arguments));
-            case $expression instanceof Unary:
-                $operand = $value($expression->operand);
-                if ('NOT' === $expression->operator) {
-                    return Values::not(Values::truth($operand));
-                }
-                $number = Values::number($operand);
-                return null === $number ? null : -$number;
-            case $expression instanceof Binary:
-                return $this->binary($expression, $value);
-            case $expression instanceof IsNull:
-                return (null === $value($expression->operand)) !== $expression->negated;
-            case $expression instanceof InList:
-                $operand = $value($expression->operand);
-                $result = false;
-                foreach ($expression->values as $candidate) {
-                    $result = Values::or($result, self::equals($operand, $value($candidate)));
-                    if (true === $result) {
-                        break;
-                    }
-                }
-                return $expression->negated ? Values::not($result) : $result;
-            case $expression instanceof Between:
-                $operand = $value($expression->operand);
-                $low = Values::compare($operand, $value($expression->low));
-                $high = Values::compare($operand, $value($expression->high));
-                $result = Values::and(null === $low ? null : $low >= 0, null === $high ? null : $high <= 0);
-                return $expression->negated ? Values::not($result) : $result;
-            case $expression instanceof Like:
-                $operand = Values::text($value($expression->operand));
-                $pattern = Values::text($value($expression->pattern));
-                if (null === $operand || null === $pattern) {
-                    return null;
-                }
-                $matches = Values::like($operand, $pattern);
-                return null === $matches ? null : $matches !== $expression->negated;
-            default:
-                throw new QueryException('Unknown expression ' . $expression::class);
+        return match (true) {
+            $expression instanceof Literal => $expression->value,
+            $expression instanceof BoundColumn => $this->column($expression, $row),
+            $expression instanceof FunctionCall => $this->call($expression, $row, $group, $value),
+            $expression instanceof Unary => self::unary($expression, $value),
+            $expression instanceof Binary => $this->binary($expression, $value),
+            $expression instanceof IsNull => (null === $value($expression->operand)) !== $expression->negated,
+            $expression instanceof InList => self::inList($expression, $value),
+            $expression instanceof Between => self::between($expression, $value),
+            $expression instanceof Like => self::like($expression, $value),
+            default => throw new QueryException('Unknown expression ' . $expression::class),
+        };
+    }
+
+    /**
+     * The value of a column: the UUID of the object of its alias, or the value at its path; with .UUID, the UUID of
+     * a reference there (UUIDs of references for a path with *).
+     */
+    private function column(BoundColumn $column, array $row): mixed
+    {
+        $object = $row[$column->alias] ?? null;
+        if (null === $object) {
+            return null;
         }
+        if ([] === $column->path) {
+            return $object['uuid'];
+        }
+        $found = DocumentBuilder::extract($object['data'], $column->path, $object['reserved'], $this->follow);
+        if (!$column->uuid) {
+            return self::valueOf($found, $object);
+        }
+        // p.category.UUID: a reference there is its UUID; anything else isn't one
+        $isUuid = static fn(mixed $v): bool => is_string($v) && UuidValidator::validate($v);
+        if (is_array($found) && Path::hasWildcard($column->path)) {
+            $uuids = array_values(array_filter($found, $isUuid));
+            return [] === $uuids ? null : $uuids;
+        }
+        return $isUuid($found) ? $found : null;
+    }
+
+    /**
+     * The value of a call: REF(), CREATED() and MODIFIED() (of the metadata of the object of the alias), an
+     * aggregate of the group or a function of the values of its arguments.
+     */
+    private function call(FunctionCall $call, array $row, ?array $group, \Closure $value): mixed
+    {
+        switch ($call->name) {
+            case 'REF':
+                $uuid = Values::text($value($call->arguments[0]));
+                return null === $uuid ? null : new Reference($uuid);
+            case 'CREATED':
+            case 'MODIFIED':
+                $column = $call->arguments[0];
+                $timestamp = $column instanceof BoundColumn ? ($row[$column->alias][strtolower($call->name)] ?? null) : null;
+                return null === $timestamp ? null : DateValue::ofTimestamp((float)$timestamp);
+        }
+        return $call->isAggregate()
+            ? $this->aggregate($call, $group ?? throw new QueryException(sprintf('%s needs a group', $call->name)))
+            : $this->function($call->name, array_map($value, $call->arguments));
+    }
+
+    private static function unary(Unary $expression, \Closure $value): mixed
+    {
+        $operand = $value($expression->operand);
+        if ('NOT' === $expression->operator) {
+            return Values::not(Values::truth($operand));
+        }
+        $number = Values::number($operand);
+        return null === $number ? null : -$number;
+    }
+
+    private static function inList(InList $expression, \Closure $value): ?bool
+    {
+        $operand = $value($expression->operand);
+        $result = false;
+        foreach ($expression->values as $candidate) {
+            $result = Values::or($result, self::equals($operand, $value($candidate)));
+            if (true === $result) {
+                break;
+            }
+        }
+        return $expression->negated ? Values::not($result) : $result;
+    }
+
+    private static function between(Between $expression, \Closure $value): ?bool
+    {
+        $operand = $value($expression->operand);
+        $low = Values::compare($operand, $value($expression->low));
+        $high = Values::compare($operand, $value($expression->high));
+        $result = Values::and(null === $low ? null : $low >= 0, null === $high ? null : $high <= 0);
+        return $expression->negated ? Values::not($result) : $result;
+    }
+
+    private static function like(Like $expression, \Closure $value): ?bool
+    {
+        $operand = Values::text($value($expression->operand));
+        $pattern = Values::text($value($expression->pattern));
+        if (null === $operand || null === $pattern) {
+            return null;
+        }
+        $matches = Values::like($operand, $pattern);
+        return null === $matches ? null : $matches !== $expression->negated;
     }
 
     // ---- paths with * ----
@@ -728,7 +806,7 @@ final class Executor
     private static function wildcardOperand(Expr $expression): ?BoundColumn
     {
         $operands = match (true) {
-            $expression instanceof Binary && in_array($expression->operator, ['=', '!=', '<', '<=', '>', '>=', 'REGEXP'], true) => [$expression->left, $expression->right],
+            $expression instanceof Binary && in_array($expression->operator, [...self::COMPARISONS, 'REGEXP'], true) => [$expression->left, $expression->right],
             $expression instanceof InList, $expression instanceof Between, $expression instanceof Like => [$expression->operand],
             default => [],
         };
@@ -832,7 +910,7 @@ final class Executor
 
         $left = $value($expression->left);
         $right = $value($expression->right);
-        if (in_array($operator, ['=', '!=', '<', '<=', '>', '>='], true)) {
+        if (in_array($operator, self::COMPARISONS, true)) {
             $order = Values::compare($left, $right);
             return null === $order ? null : match ($operator) {
                 '=' => 0 === $order,
@@ -843,15 +921,13 @@ final class Executor
                 '>=' => $order >= 0,
             };
         }
-        if ('REGEXP' === $operator) {
+        if ('REGEXP' === $operator || '||' === $operator) {
             $left = Values::text($left);
             $right = Values::text($right);
-            return null === $left || null === $right ? null : Values::matches($left, $right);
-        }
-        if ('||' === $operator) {
-            $left = Values::text($left);
-            $right = Values::text($right);
-            return null === $left || null === $right ? null : $left . $right;
+            if (null === $left || null === $right) {
+                return null;
+            }
+            return 'REGEXP' === $operator ? Values::matches($left, $right) : $left . $right;
         }
 
         $left = Values::number($left);
@@ -881,14 +957,10 @@ final class Executor
         [$first] = $arguments + [null];
         switch ($name) {
             case 'CONCAT':
-                // as in PostgreSQL and SQLite: NULL is left out (|| gives NULL)
-                return implode('', array_map([Values::class, 'text'], array_values(array_filter($arguments, static fn(mixed $v): bool => null !== $v))));
+                return self::concat('', $arguments);
             case 'CONCAT_WS':
                 $separator = Values::text($first);
-                if (null === $separator) {
-                    return null;
-                }
-                return implode($separator, array_map([Values::class, 'text'], array_values(array_filter(array_slice($arguments, 1), static fn(mixed $v): bool => null !== $v))));
+                return null === $separator ? null : self::concat($separator, array_slice($arguments, 1));
             case 'COALESCE':
                 foreach ($arguments as $argument) {
                     if (null !== $argument) {
@@ -943,20 +1015,7 @@ final class Executor
                 // $1 or \1 for the groups
                 return @preg_replace(Values::regexp($pattern), $replacement, Values::text($first));
             case 'SUBSTR':
-                // from 1; a negative start counts from the end
-                $text = Values::text($first);
-                $start = (int)Values::number($arguments[1]);
-                $length = array_key_exists(2, $arguments) && null !== $arguments[2] ? (int)Values::number($arguments[2]) : null;
-                if (null !== $length && $length < 0) {
-                    return '';
-                }
-                if ($start > 0) {
-                    return mb_substr($text, $start - 1, $length, 'UTF-8');
-                }
-                if ($start < 0) {
-                    return mb_substr($text, $start, $length, 'UTF-8');
-                }
-                return null === $length ? $text : mb_substr($text, 0, max(0, $length - 1), 'UTF-8');
+                return self::substr(Values::text($first), $arguments[1], $arguments[2] ?? null);
             case 'DATETIME':
                 return $this->date($first, $arguments[1] ?? null);
             case 'DATE':
@@ -966,17 +1025,7 @@ final class Executor
             case 'HOUR':
             case 'MINUTE':
             case 'SECOND':
-                $timezone = self::timezone($arguments[1] ?? null);
-                $date = $this->date($first, $timezone)?->in($timezone);
-                return null === $date ? null : match ($name) {
-                    'DATE' => $date->format('x-m-d'),
-                    'YEAR' => (int)$date->format('Y'),
-                    'MONTH' => (int)$date->format('n'),
-                    'DAY' => (int)$date->format('j'),
-                    'HOUR' => (int)$date->format('G'),
-                    'MINUTE' => (int)$date->format('i'),
-                    'SECOND' => (int)$date->format('s'),
-                };
+                return $this->datePart($name, $first, $arguments[1] ?? null);
             case 'DATE_ADD':
                 return $this->dateAdd($first, $arguments[1], $arguments[2]);
             case 'DATE_SUB':
@@ -986,6 +1035,50 @@ final class Executor
             return Math::call($name, $arguments);
         }
         throw new QueryException('Unknown function ' . $name);
+    }
+
+    /**
+     * The values as texts, joined by a separator; as in PostgreSQL and SQLite, NULL is left out (|| gives NULL).
+     */
+    private static function concat(string $separator, array $values): string
+    {
+        return implode($separator, array_map([Values::class, 'text'], array_filter($values, static fn(mixed $v): bool => null !== $v)));
+    }
+
+    /**
+     * SUBSTR(text, start, length): from 1; a negative start counts from the end.
+     */
+    private static function substr(?string $text, mixed $start, mixed $length): ?string
+    {
+        $start = (int)Values::number($start);
+        $length = null === $length ? null : (int)Values::number($length);
+        if (null !== $length && $length < 0) {
+            return '';
+        }
+        return match (true) {
+            $start > 0 => mb_substr($text, $start - 1, $length, 'UTF-8'),
+            $start < 0 => mb_substr($text, $start, $length, 'UTF-8'),
+            null === $length => $text,
+            default => mb_substr($text, 0, max(0, $length - 1), 'UTF-8'),
+        };
+    }
+
+    /**
+     * DATE(), YEAR(), MONTH(), DAY(), HOUR(), MINUTE(), SECOND() of a date, in a time zone (UTC by default).
+     */
+    private function datePart(string $name, mixed $value, mixed $timezone): string|int|null
+    {
+        $timezone = self::timezone($timezone);
+        $date = $this->date($value, $timezone)?->in($timezone);
+        return null === $date ? null : match ($name) {
+            'DATE' => $date->format('x-m-d'),
+            'YEAR' => (int)$date->format('Y'),
+            'MONTH' => (int)$date->format('n'),
+            'DAY' => (int)$date->format('j'),
+            'HOUR' => (int)$date->format('G'),
+            'MINUTE' => (int)$date->format('i'),
+            'SECOND' => (int)$date->format('s'),
+        };
     }
 
     /**
@@ -1037,9 +1130,8 @@ final class Executor
         if (null === $date || null === $number || null === $unitName) {
             return null;
         }
-        $units = ['SECOND' => 'second', 'MINUTE' => 'minute', 'HOUR' => 'hour', 'DAY' => 'day', 'WEEK' => 'week', 'MONTH' => 'month', 'YEAR' => 'year'];
         $key = rtrim(strtoupper(trim($unitName)), 'S');
-        if (!isset($units[$key])) {
+        if (!isset(self::DATE_UNITS[$key])) {
             throw new QueryException(sprintf("Unknown unit '%s' for %s: SECOND, MINUTE, HOUR, DAY, WEEK, MONTH or YEAR", $unitName, $function));
         }
         if (floor($number) != $number || abs($number) > 1e9) {
@@ -1048,7 +1140,7 @@ final class Executor
         if ($subtract) {
             $number = -$number;
         }
-        $changed = $date->date->modify(sprintf('%+d %s', (int)$number, $units[$key]));
+        $changed = $date->date->modify(sprintf('%+d %s', (int)$number, self::DATE_UNITS[$key]));
         return new DateValue($changed, $date->class);
     }
 
