@@ -79,30 +79,20 @@ trait DeletingTrait
      */
     public function deleteIfExpired(string $uuid): bool
     {
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
-
         try {
-            if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-                $lockAdapter->acquireExclusiveLock($uuid);
-                $lockedHere = true;
-            }
+            return $this->objectLocks()->exclusively($uuid, function () use ($uuid): bool {
+                $this->reloadMetadata($uuid);
+                if (!$this->expired($uuid)) {
+                    return false;
+                }
 
-            $this->reloadMetadata($uuid);
-            if (!$this->expired($uuid)) {
-                return false;
-            }
-
-            $this->delete($uuid);
-            return true;
+                $this->delete($uuid);
+                return true;
+            });
         } catch (ObjectDeletionFailureException $e) {
             throw $e;
         } catch (Throwable $e) {
             throw self::deletionFailure($uuid, $e);
-        } finally {
-            if ($lockedHere) {
-                $this->releaseLockUnlessRetained($uuid);
-            }
         }
     }
 

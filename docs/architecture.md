@@ -20,6 +20,8 @@ The storage is being split into components, one concern each, step by step and w
 | `Storage\MetadataStore` | metadata through its cache, completed from its files (UUID, times) | `MetadataTrait` | done |
 | `Storage\ObjectFiles` | data and metadata files as a group: checksums, interrupted writes | `DurabilityTrait` | done |
 | `Storage\ObjectCache` | the cache of loaded objects, with its events | cache methods of `ObjectStorage` | done |
+| `Locking\ObjectLocks` | the locks of objects as operations take them: only if not held, released only if taken here and not retained by a transaction (`Locking\RetainedLocks`) | the copies of that pattern, the locks of `RetainedLocksTrait` | done |
+| `Storage\ObjectSession` | what the storage instance knows of the objects it loaded and stored: their UUIDs, the revisions read, the objects being stored | `identityMap`, `revisions`, `processingStack` of `ObjectStorage` | planned |
 | `Storage\ObjectReader`, `ObjectWriter`, `ObjectDeleter` | load, store, delete | `LoadingTrait`, `StoringTrait`, `DeletingTrait` | planned |
 
 `ObjectStorage` stays the facade: its public methods and their behavior don't change, they delegate to the
@@ -37,9 +39,10 @@ components. Code using the storage doesn't notice the split.
   its dependencies: the facade creates it when first needed and creates it again when one of its inputs has changed
   (`ObjectStorage::component()`: objects compared by identity, other values by value). State that is the
   component's own concern stays with it, e.g. the class names the registry keeps in memory; it is lost when the
-  component is created again, which is always safe.
-- **The order of the layers:** paths → JSON files → metadata, registry → object files, stubs → reader, writer,
-  deleter → facade. Recording changes in the active transaction stays with the facade: it changes with every
+  component is created again, which is always safe. State that must survive (the locks retained by a
+  transaction) is kept by the facade in an object of its own and passed in like any other dependency.
+- **The order of the layers:** paths → JSON files → metadata, registry → object files, stubs, locks → reader,
+  writer, deleter → facade. Recording changes in the active transaction stays with the facade: it changes with every
   transaction, the components only read and write files.
 - **Each component has a unit test of its own** (`tests/melia/ObjectStorage/Storage/`), without a storage: what the
   facade tests can't show (e.g. that the registry is read again under its lock) is tested there.

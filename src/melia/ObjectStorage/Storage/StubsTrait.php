@@ -197,15 +197,10 @@ trait StubsTrait
      */
     public function markAsCorruptedIfClassless(string $uuid): bool
     {
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
         // in safe mode nothing can be locked for writing, but no other process writes either
-        if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid) && !$this->getStateHandler()?->safeModeEnabled()) {
-            $lockAdapter->acquireExclusiveLock($uuid);
-            $lockedHere = true;
-        }
+        $lock = !$this->getStateHandler()?->safeModeEnabled();
 
-        try {
+        return $this->objectLocks()->exclusively($uuid, function () use ($uuid): bool {
             $this->recoverInterruptedWrite($uuid);
 
             $adapter = $this->getIOAdapter();
@@ -220,11 +215,7 @@ trait StubsTrait
 
             $this->moveToCorruptedArtifacts($uuid);
             return true;
-        } finally {
-            if ($lockedHere && !$this->isLockRetained($uuid)) {
-                $lockAdapter->releaseLock($uuid);
-            }
-        }
+        }, $lock);
     }
 
     /**

@@ -236,15 +236,9 @@ trait StoringTrait
 
             // store() locks the object it stores, but not the referenced objects it writes along with it:
             // lock an object while writing it, so concurrent writers can't mix up its files. The lock is only
-            // taken now, after its referenced objects are written, so no more than two locks are held at once.
-            $lockAdapter = $this->getLockAdapter();
-            $lockedHere = false;
-            if ($writeMetadata && null !== $lockAdapter && false === $lockAdapter->hasActiveExclusiveLock($uuid)) {
-                $lockAdapter->acquireExclusiveLock($uuid);
-                $lockedHere = true;
-            }
-
-            try {
+            // taken now, after its referenced objects are written, so no more than two locks are held at once. A
+            // transaction may retain it while the object is written (track()).
+            $this->objectLocks()->exclusively($uuid, function () use ($object, $uuid, $metadata, $exists, $writeGraph, $writeMetadata, $writeStub, $serializedGraph, $classNameChanged, $previousClassname, $className, $ttl, $eventDispatcher): void {
                 $currentMetadata = $writeMetadata ? $this->stampRevision($object, $uuid, $metadata, $exists, $writeGraph) : null;
 
                 if ($writeGraph) {
@@ -270,12 +264,7 @@ trait StoringTrait
                 if ($writeStub) {
                     $this->createStub($className, $uuid);
                 }
-            } finally {
-                // a transaction may have retained the lock while the object was written (track())
-                if ($lockedHere && !$this->isLockRetained($uuid)) {
-                    $lockAdapter->releaseLock($uuid);
-                }
-            }
+            }, $writeMetadata);
         } finally {
             unset($this->processingStack[$object]);
         }

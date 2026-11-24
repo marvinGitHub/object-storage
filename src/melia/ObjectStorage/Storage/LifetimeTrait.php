@@ -107,14 +107,7 @@ trait LifetimeTrait
      */
     public function touch(string $uuid, ?DateTimeInterface $at = null): void
     {
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
-        if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-            $lockAdapter->acquireExclusiveLock($uuid);
-            $lockedHere = true;
-        }
-
-        try {
+        $this->objectLocks()->exclusively($uuid, function () use ($uuid, $at): void {
             // read from disk under the lock, as setLifetime() does
             $metadata = $this->reloadMetadata($uuid);
             if (null === $metadata) {
@@ -124,11 +117,7 @@ trait LifetimeTrait
             $metadata->setTimestampModification($timestamp);
             $this->writeMetadata($metadata);
             $this->getEventDispatcher()?->dispatch(Events::TOUCHED, static fn() => new Context($uuid));
-        } finally {
-            if ($lockedHere && !$this->isLockRetained($uuid)) {
-                $lockAdapter->releaseLock($uuid);
-            }
-        }
+        });
     }
 
     /**

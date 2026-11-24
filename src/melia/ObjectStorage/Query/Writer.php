@@ -201,42 +201,37 @@ final class Writer
     private function rewrite(array $uuids, string $done, callable $change): array
     {
         $changed = [];
-        $lockAdapter = $this->storage->getLockAdapter();
         foreach ($uuids as $uuid) {
             $this->executor->checkpoint();
-            $lockedHere = false;
             try {
-                if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-                    $lockAdapter->acquireExclusiveLock($uuid);
-                    $lockedHere = true;
+                // a transaction retains the locks of the objects it changed
+                $isChanged = $this->storage->objectLocks()->exclusively($uuid, function () use ($uuid, $change): bool {
+                    $raw = $this->current($uuid);
+                    $object = null === $raw ? null : Executor::objectOf($raw);
+                    $new = null === $object ? null : $change($object);
+                    if (null === $new) {
+                        return false;
+                    }
+                    [$data, $reservedNames] = $new;
+                    $json = $this->serialize($data);
+                    if ($json === $raw->data) {
+                        return false; // nothing changes
+                    }
+                    $metadata = clone $raw->metadata;
+                    foreach ($reservedNames as $kind => $name) {
+                        $metadata->setReservedName($kind, $name);
+                    }
+                    $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
+                    $metadata->setRevision($metadata->getRevision() + 1);
+                    $metadata->setTimestampModification(microtime(true));
+                    $this->storage->writeRaw(new RawObject($uuid, $json, $metadata), true);
+                    return true;
+                });
+                if ($isChanged) {
+                    $changed[] = $uuid;
                 }
-                $raw = $this->current($uuid);
-                $object = null === $raw ? null : Executor::objectOf($raw);
-                $new = null === $object ? null : $change($object);
-                if (null === $new) {
-                    continue;
-                }
-                [$data, $reservedNames] = $new;
-                $json = $this->serialize($data);
-                if ($json === $raw->data) {
-                    continue; // nothing changes
-                }
-                $metadata = clone $raw->metadata;
-                foreach ($reservedNames as $kind => $name) {
-                    $metadata->setReservedName($kind, $name);
-                }
-                $metadata->setChecksum(hash($metadata->getChecksumAlgorithm(), $json));
-                $metadata->setRevision($metadata->getRevision() + 1);
-                $metadata->setTimestampModification(microtime(true));
-                $this->storage->writeRaw(new RawObject($uuid, $json, $metadata), true);
-                $changed[] = $uuid;
             } catch (Throwable $e) {
                 throw $this->stopped($done, $changed, count($uuids), $e);
-            } finally {
-                // a transaction retains the locks of the objects it changed
-                if ($lockedHere) {
-                    $this->storage->releaseLockUnlessRetained($uuid);
-                }
             }
         }
         return $changed;
@@ -519,30 +514,25 @@ final class Writer
         }
 
         $deleted = [];
-        $lockAdapter = $this->storage->getLockAdapter();
         foreach ($uuids as $uuid) {
             $this->executor->checkpoint();
-            $lockedHere = false;
             try {
-                if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-                    $lockAdapter->acquireExclusiveLock($uuid);
-                    $lockedHere = true;
+                // a transaction retains the locks of the objects it deleted
+                $isDeleted = $this->storage->objectLocks()->exclusively($uuid, function () use ($uuid, $plan, $alias): bool {
+                    $raw = $this->current($uuid);
+                    $object = null === $raw ? null : Executor::objectOf($raw);
+                    if (null === $object || (null !== $plan->where && true !== Values::truth($this->executor->evaluate($plan->where, [$alias => $object])))) {
+                        return false;
+                    }
+                    // with the child deletion policy of the storage, and its events (indexes follow)
+                    $this->storage->delete($uuid);
+                    return true;
+                });
+                if ($isDeleted) {
+                    $deleted[] = $uuid;
                 }
-                $raw = $this->current($uuid);
-                $object = null === $raw ? null : Executor::objectOf($raw);
-                if (null === $object || (null !== $plan->where && true !== Values::truth($this->executor->evaluate($plan->where, [$alias => $object])))) {
-                    continue;
-                }
-                // with the child deletion policy of the storage, and its events (indexes follow)
-                $this->storage->delete($uuid);
-                $deleted[] = $uuid;
             } catch (Throwable $e) {
                 throw $this->stopped('deleted', $deleted, count($uuids), $e);
-            } finally {
-                // a transaction retains the locks of the objects it changed
-                if ($lockedHere) {
-                    $this->storage->releaseLockUnlessRetained($uuid);
-                }
             }
         }
         return $deleted;

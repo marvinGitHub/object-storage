@@ -105,39 +105,34 @@ final class ObjectTransfer
      */
     private function transferOne(string $uuid, bool $move, bool $withReferences, string $onConflict, TransferResult $result): string
     {
-        $lockAdapter = $this->source->getLockAdapter();
-        $lockedHere = false;
-
         try {
-            // moving: nobody changes the object between copying and deleting it
-            if ($move && null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-                $lockAdapter->acquireExclusiveLock($uuid);
-                $lockedHere = true;
-            }
+            // moving: nobody changes the object between copying and deleting it; a transaction on the source
+            // retains the locks of the objects it deleted
+            return $this->source->objectLocks()->exclusively($uuid, function () use ($uuid, $move, $withReferences, $onConflict, $result): string {
+                $object = $this->source->readRaw($uuid);
+                if ($object->isExpired()) {
+                    $result->skipped[$uuid] = 'expired';
+                    return 'skipped';
+                }
 
-            $object = $this->source->readRaw($uuid);
-            if ($object->isExpired()) {
-                $result->skipped[$uuid] = 'expired';
-                return 'skipped';
-            }
+                if ($this->target->exists($uuid) && self::CONFLICT_SKIP === $onConflict) {
+                    $result->skipped[$uuid] = 'exists in the target';
+                    return 'skipped';
+                }
 
-            if ($this->target->exists($uuid) && self::CONFLICT_SKIP === $onConflict) {
-                $result->skipped[$uuid] = 'exists in the target';
-                return 'skipped';
-            }
+                $this->target->writeRaw($object, self::CONFLICT_OVERWRITE === $onConflict);
 
-            $this->target->writeRaw($object, self::CONFLICT_OVERWRITE === $onConflict);
+                if ($withReferences) {
+                    $this->copyReferences($object, $result);
+                }
 
-            if ($withReferences) {
-                $this->copyReferences($object, $result);
-            }
+                if ($move) {
+                    $this->source->delete($uuid, applyChildDeletionPolicy: false);
+                }
 
-            if ($move) {
-                $this->source->delete($uuid, applyChildDeletionPolicy: false);
-            }
-
-            $result->transferred[] = $uuid;
-            return 'transferred';
+                $result->transferred[] = $uuid;
+                return 'transferred';
+            }, $move);
         } catch (ObjectAlreadyExistsException) {
             $result->failed[$uuid] = 'exists in the target';
             return 'failed';
@@ -151,11 +146,6 @@ final class ObjectTransfer
             }
             $result->failed[$uuid] = ($move && $this->target->exists($uuid) && $this->source->exists($uuid) ? 'copied, but not deleted in the source: ' : '') . $message;
             return 'failed';
-        } finally {
-            // a transaction on the source retains the locks of the objects it deleted
-            if ($lockedHere) {
-                $this->source->releaseLockUnlessRetained($uuid);
-            }
         }
     }
 

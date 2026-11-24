@@ -53,53 +53,44 @@ trait RawAccessTrait
      */
     public function readRaw(string $uuid): RawObject
     {
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
-        if (null !== $lockAdapter && !$lockAdapter->isLockedByThisProcess($uuid)) {
-            $lockAdapter->acquireSharedLock($uuid);
-            $lockedHere = true;
-        }
-
-        try {
-            // the same reading as loading: interrupted writes completed, the checksum verified; a damaged object
-            // is reported without enabling safe mode, so copying other objects goes on
-            $stored = $this->readObjectFiles($uuid, safeModeOnCorruption: false);
-            if (null === $stored) {
-                throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
-            }
-            [$data, $metadata] = $stored;
-
-            // the data is verified by its checksum: looked into for references only
-            $references = [];
+        return $this->objectLocks()->shared($uuid, function () use ($uuid): RawObject {
             try {
-                $decoded = $this->getStrategy()?->unserialize($data);
-            } catch (Throwable $e) {
-                $this->getLogger()?->log($e);
-                $decoded = null;
-            }
-            if (null !== $decoded) {
-                foreach (static::findReferences($decoded, $metadata->getReservedReferenceName()) as [$reference]) {
-                    if ($reference !== $uuid) {
-                        $references[$reference] = true;
+                // the same reading as loading: interrupted writes completed, the checksum verified; a damaged object
+                // is reported without enabling safe mode, so copying other objects goes on
+                $stored = $this->readObjectFiles($uuid, safeModeOnCorruption: false);
+                if (null === $stored) {
+                    throw new ObjectNotFoundException(sprintf('Object with uuid %s not found', $uuid));
+                }
+                [$data, $metadata] = $stored;
+
+                // the data is verified by its checksum: looked into for references only
+                $references = [];
+                try {
+                    $decoded = $this->getStrategy()?->unserialize($data);
+                } catch (Throwable $e) {
+                    $this->getLogger()?->log($e);
+                    $decoded = null;
+                }
+                if (null !== $decoded) {
+                    foreach (static::findReferences($decoded, $metadata->getReservedReferenceName()) as [$reference]) {
+                        if ($reference !== $uuid) {
+                            $references[$reference] = true;
+                        }
                     }
                 }
-            }
 
-            // the file names the object (loadMetadata() corrects metadata naming none or another one)
-            $metadata = clone $metadata;
-            $metadata->setUUID($uuid);
+                // the file names the object (loadMetadata() corrects metadata naming none or another one)
+                $metadata = clone $metadata;
+                $metadata->setUUID($uuid);
 
-            return new RawObject($uuid, $data, $metadata, array_keys($references));
-        } catch (ObjectNotFoundException $e) {
-            throw $e;
-        } catch (Throwable $e) {
-            // with the cause: the message is often all that is shown, e.g. in the errors of a search index
-            throw new ObjectLoadingFailureException(message: sprintf('Object with uuid %s could not be read: %s', $uuid, $e->getMessage()), previous: $e);
-        } finally {
-            if ($lockedHere) {
-                $lockAdapter->releaseLock($uuid);
+                return new RawObject($uuid, $data, $metadata, array_keys($references));
+            } catch (ObjectNotFoundException $e) {
+                throw $e;
+            } catch (Throwable $e) {
+                // with the cause: the message is often all that is shown, e.g. in the errors of a search index
+                throw new ObjectLoadingFailureException(message: sprintf('Object with uuid %s could not be read: %s', $uuid, $e->getMessage()), previous: $e);
             }
-        }
+        });
     }
 
     /**
@@ -118,8 +109,6 @@ trait RawAccessTrait
         $uuid = $object->uuid;
         $metadata = clone $object->metadata;
         $eventDispatcher = $this->getEventDispatcher();
-        $lockAdapter = $this->getLockAdapter();
-        $lockedHere = false;
 
         try {
             if ($this->getStateHandler()?->safeModeEnabled()) {
@@ -128,48 +117,41 @@ trait RawAccessTrait
             // the metadata is written under the UUID of the object, so it names that one
             $metadata->setUUID($uuid);
 
-            if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-                $lockAdapter->acquireExclusiveLock($uuid);
-                $lockedHere = true;
-            }
+            // a transaction may retain the lock while the object is written
+            $this->objectLocks()->exclusively($uuid, function () use ($uuid, $object, $metadata, $overwrite, $eventDispatcher): void {
+                $previous = $this->exists($uuid) ? $this->reloadMetadata($uuid) : null;
+                if ($this->exists($uuid) && !$overwrite) {
+                    throw new ObjectAlreadyExistsException(sprintf('Object with uuid %s exists already', $uuid));
+                }
 
-            $previous = $this->exists($uuid) ? $this->reloadMetadata($uuid) : null;
-            if ($this->exists($uuid) && !$overwrite) {
-                throw new ObjectAlreadyExistsException(sprintf('Object with uuid %s exists already', $uuid));
-            }
+                $this->removeFromCache($uuid);
 
-            $this->removeFromCache($uuid);
+                // the constraints of this storage apply to copies as well, e.g. unique values
+                $finalizeConstraints = $this->checkConstraints($uuid, $metadata->getClassName(), $object->data, $metadata->getReservedReferenceName());
+                $written = false;
+                try {
+                    $this->writeObjectFiles($uuid, $object->data, $metadata);
+                    $written = true;
+                } finally {
+                    $finalizeConstraints($written);
+                }
+                $this->cacheMetadata($metadata);
 
-            // the constraints of this storage apply to copies as well, e.g. unique values
-            $finalizeConstraints = $this->checkConstraints($uuid, $metadata->getClassName(), $object->data, $metadata->getReservedReferenceName());
-            $written = false;
-            try {
-                $this->writeObjectFiles($uuid, $object->data, $metadata);
-                $written = true;
-            } finally {
-                $finalizeConstraints($written);
-            }
-            $this->cacheMetadata($metadata);
+                $className = $metadata->getClassName();
+                if (null !== $previous && $previous->getClassName() !== $className) {
+                    $this->deleteStub($previous->getClassName(), $uuid);
+                    $previousClassName = $previous->getClassName();
+                    $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassName, $className));
+                }
+                $this->createStub($className, $uuid);
 
-            $className = $metadata->getClassName();
-            if (null !== $previous && $previous->getClassName() !== $className) {
-                $this->deleteStub($previous->getClassName(), $uuid);
-                $previousClassName = $previous->getClassName();
-                $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassName, $className));
-            }
-            $this->createStub($className, $uuid);
-
-            $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
-            $eventDispatcher?->dispatch(Events::AFTER_STORE, static fn() => new Context($uuid));
+                $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
+                $eventDispatcher?->dispatch(Events::AFTER_STORE, static fn() => new Context($uuid));
+            });
         } catch (ObjectSavingFailureException $e) {
             throw $e;
         } catch (Throwable $e) {
             throw new ObjectSavingFailureException(message: sprintf('Unable to save object with uuid: %s', $uuid), previous: $e);
-        } finally {
-            // a transaction may have retained the lock while the object was written
-            if ($lockedHere && !$this->isLockRetained($uuid)) {
-                $lockAdapter->releaseLock($uuid);
-            }
         }
     }
 }

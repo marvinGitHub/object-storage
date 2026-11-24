@@ -27,6 +27,8 @@ use melia\ObjectStorage\Exception\LockException;
  * Retaining is bookkeeping of this storage instance: the lock itself is an ordinary lock of the lock adapter, which
  * other processes wait for as usual.
  *
+ * The locks themselves are taken and released by the component ObjectLocks.
+ *
  * Part of ObjectStorage, kept apart for readability.
  *
  * @mixin \melia\ObjectStorage\ObjectStorage
@@ -34,11 +36,26 @@ use melia\ObjectStorage\Exception\LockException;
 trait RetainedLocksTrait
 {
     /**
-     * The UUIDs whose exclusive locks are retained.
-     *
-     * @var array<string, true>
+     * The UUIDs whose exclusive locks are retained; kept by the storage, so they survive a new lock adapter.
      */
-    private array $retainedLocks = [];
+    private ?RetainedLocks $retainedLocks = null;
+
+    /**
+     * The locks of objects, with the lock adapter of the storage as it is now and its retained locks.
+     *
+     * @internal Not part of the public API; may change in any release.
+     */
+    public function objectLocks(): ObjectLocks
+    {
+        $adapter = $this->getLockAdapter();
+        $retained = $this->retainedLocks ??= new RetainedLocks();
+
+        return $this->component(
+            ObjectLocks::class,
+            [$adapter, $retained],
+            static fn(): ObjectLocks => new ObjectLocks($adapter, $retained),
+        );
+    }
 
     /**
      * Locks an object exclusively and keeps it locked across store(), delete() and setLifetime(), which otherwise
@@ -51,12 +68,7 @@ trait RetainedLocksTrait
      */
     public function retainLock(string $uuid, int|float $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT): void
     {
-        $lockAdapter = $this->getLockAdapter();
-        if (null !== $lockAdapter && !$lockAdapter->hasActiveExclusiveLock($uuid)) {
-            $lockAdapter->acquireExclusiveLock($uuid, $timeout);
-        }
-
-        $this->retainedLocks[$uuid] = true;
+        $this->objectLocks()->retain($uuid, $timeout);
     }
 
     /**
@@ -66,8 +78,7 @@ trait RetainedLocksTrait
      */
     public function releaseRetainedLock(string $uuid): void
     {
-        unset($this->retainedLocks[$uuid]);
-        $this->getLockAdapter()?->releaseLockIfHeld($uuid);
+        $this->objectLocks()->releaseRetained($uuid);
     }
 
     /**
@@ -78,9 +89,7 @@ trait RetainedLocksTrait
      */
     public function releaseLockUnlessRetained(string $uuid): void
     {
-        if (!$this->isLockRetained($uuid)) {
-            $this->getLockAdapter()?->releaseLockIfHeld($uuid);
-        }
+        $this->objectLocks()->releaseUnlessRetained($uuid);
     }
 
     /**
@@ -91,6 +100,6 @@ trait RetainedLocksTrait
      */
     public function isLockRetained(?string $uuid): bool
     {
-        return null !== $uuid && isset($this->retainedLocks[$uuid]);
+        return $this->objectLocks()->isRetained($uuid);
     }
 }
