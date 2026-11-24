@@ -23,6 +23,7 @@ use melia\ObjectStorage\Query\Ast\OutputColumn;
 use melia\ObjectStorage\Query\Ast\Source;
 use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Search\DocumentBuilder;
 use melia\ObjectStorage\Search\Index\ManagerInterface;
 use melia\ObjectStorage\Transfer\RawObject;
@@ -303,7 +304,7 @@ final class Executor
             return $name;
         }
         $matches = array_values(array_filter($this->classNames, static fn(string $class): bool => 0 === strcasecmp($class, $name)
-            || 0 === strcasecmp(substr(strrchr('\\' . $class, '\\'), 1), $name)));
+            || 0 === strcasecmp(Reflection::shortName($class), $name)));
         if (1 === count($matches)) {
             return $matches[0];
         }

@@ -163,34 +163,38 @@ final class DocumentBuilder
             if (DateTimeValue::isEncodedAny($value, $reservedDateTime)) {
                 return null;
             }
-            switch ($segment->kind) {
-                case PathSegment::WILDCARD:
-                    return static::collect(array_values($value), $segments, $reserved, $follow, $followed, $reservedDateTime);
-                case PathSegment::INDEX:
-                    $index = (int)$segment->value;
-                    if ($index < 0 && array_is_list($value)) {
-                        $index += count($value);
-                    }
-                    return array_key_exists($index, $value)
-                        ? static::extract($value[$index], $segments, $reserved, $follow, $followed, $reservedDateTime)
-                        : null;
-                default:
-                    $key = (string)$segment->value;
-                    return array_key_exists($key, $value)
-                        ? static::extract($value[$key], $segments, $reserved, $follow, $followed, $reservedDateTime)
-                        : null;
+            if (PathSegment::WILDCARD === $segment->kind) {
+                return static::collect(array_values($value), $segments, $reserved, $follow, $followed, $reservedDateTime);
             }
         }
 
-        if (array_key_exists($segment, $value)) {
-            return static::extract($value[$segment], $segments, $reserved, $follow, $followed, $reservedDateTime);
+        $key = self::keyOf($segment, $value);
+        if (array_key_exists($key, $value)) {
+            return static::extract($value[$key], $segments, $reserved, $follow, $followed, $reservedDateTime);
         }
 
-        if (array_is_list($value)) {
+        // a name that isn't a key of a list: applied to every element
+        if (!$segment instanceof PathSegment && array_is_list($value)) {
             return static::collect($value, [$segment, ...$segments], $reserved, $follow, $followed, $reservedDateTime);
         }
 
         return null;
+    }
+
+    /**
+     * The key a segment names in an array: a name as it is, [n] the position (from the end if negative, in a
+     * list), ['key'] exactly that key.
+     */
+    private static function keyOf(int|string|PathSegment $segment, array $value): int|string
+    {
+        if (!$segment instanceof PathSegment) {
+            return $segment;
+        }
+        if (PathSegment::INDEX !== $segment->kind) {
+            return (string)$segment->value;
+        }
+        $index = (int)$segment->value;
+        return $index < 0 && array_is_list($value) ? $index + count($value) : $index;
     }
 
     /**
@@ -278,15 +282,10 @@ final class DocumentBuilder
         $fields = [];
 
         foreach ($paths as $path => [$type, $isReference]) {
-            $name = preg_replace('/[^a-zA-Z0-9_]+/', '_', (string)$path);
-            if (!preg_match('/^[a-zA-Z]/', $name) || in_array($name, Definition::RESERVED_ATTRIBUTES, true)) {
-                $name = 'f_' . $name;
-            }
-
             $isText = !$isReference && in_array($type, [FieldType::STRING, FieldType::STRING_ARRAY], true);
 
             $fields[] = new Field(
-                name: substr($name, 0, 64),
+                name: self::fieldName((string)$path),
                 path: (string)$path,
                 type: $type,
                 searchable: $isText,
@@ -296,6 +295,19 @@ final class DocumentBuilder
         }
 
         return $fields;
+    }
+
+    /**
+     * The name of a field suggested for a path: letters, digits and _, starting with a letter, at most 64
+     * characters, not a reserved attribute.
+     */
+    private static function fieldName(string $path): string
+    {
+        $name = preg_replace('/[^a-zA-Z0-9_]+/', '_', $path);
+        if (!preg_match('/^[a-zA-Z]/', $name) || in_array($name, Definition::RESERVED_ATTRIBUTES, true)) {
+            $name = 'f_' . $name;
+        }
+        return substr($name, 0, 64);
     }
 
     /** how many references suggestions follow, e.g. "order.customer.name" */

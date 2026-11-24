@@ -112,11 +112,7 @@ final class LoupeEngineIndex implements EngineIndexInterface
             ->withAttributesToRetrieve(['uuid'])
             ->withLimit(max(1, $limit));
 
-        try {
-            return array_map(static fn(array $hit): string => (string)$hit['uuid'], $this->loupeSearch($parameters)->getHits());
-        } catch (Throwable $e) {
-            throw new SearchException(message: 'Unable to find expired documents: ' . $e->getMessage(), previous: $e);
-        }
+        return $this->uuidsOf($parameters, 'Unable to find expired documents');
     }
 
     public function referencing(array $uuids, int $limit, string $prefix = ''): array
@@ -125,11 +121,10 @@ final class LoupeEngineIndex implements EngineIndexInterface
             return [];
         }
 
-        $quote = static fn(string $value): string => "'" . str_replace("'", "''", $value) . "'";
-        $filter = sprintf('%s IN (%s)', DocumentBuilder::ATTRIBUTE_REFERENCED, implode(', ', array_map($quote, array_values($uuids))));
+        $filter = sprintf('%s IN (%s)', DocumentBuilder::ATTRIBUTE_REFERENCED, self::quoteAll($uuids));
         if ('' !== $prefix) {
             // "~" sorts after all characters of UUIDs
-            $filter .= sprintf(' AND uuid >= %s AND uuid < %s', $quote($prefix), $quote($prefix . '~'));
+            $filter .= sprintf(' AND uuid >= %s AND uuid < %s', self::quote($prefix), self::quote($prefix . '~'));
         }
 
         // Loupe returns at most maxTotalHits documents per search
@@ -138,11 +133,38 @@ final class LoupeEngineIndex implements EngineIndexInterface
             ->withAttributesToRetrieve(['uuid'])
             ->withLimit(max(1, min($limit, $this->getLoupe()->getConfiguration()->getMaxTotalHits())));
 
+        return $this->uuidsOf($parameters, 'Unable to find the documents referencing objects');
+    }
+
+    /**
+     * The UUIDs of the documents a search finds.
+     *
+     * @return string[]
+     * @throws SearchException With the message and the reason, if the search fails.
+     */
+    private function uuidsOf(SearchParameters $parameters, string $failure): array
+    {
         try {
             return array_map(static fn(array $hit): string => (string)$hit['uuid'], $this->loupeSearch($parameters)->getHits());
         } catch (Throwable $e) {
-            throw new SearchException(message: 'Unable to find the documents referencing objects: ' . $e->getMessage(), previous: $e);
+            throw new SearchException(message: $failure . ': ' . $e->getMessage(), previous: $e);
         }
+    }
+
+    /** a value as a string literal of a filter */
+    private static function quote(string $value): string
+    {
+        return "'" . str_replace("'", "''", $value) . "'";
+    }
+
+    /**
+     * Values as a list of string literals of a filter, e.g. for IN.
+     *
+     * @param string[] $values
+     */
+    private static function quoteAll(array $values): string
+    {
+        return implode(', ', array_map(self::quote(...), array_values($values)));
     }
 
     /**
@@ -315,10 +337,7 @@ final class LoupeEngineIndex implements EngineIndexInterface
             // negated: the documents not matching, those without a value too (NOT IN and != are true for them)
             $parts = [];
             if ([] !== $matching) {
-                $parts[] = sprintf('%s %sIN (%s)', $name, $negated ? 'NOT ' : '', implode(', ', array_map(
-                    static fn(string $value): string => "'" . str_replace("'", "''", $value) . "'",
-                    $matching
-                )));
+                $parts[] = sprintf('%s %sIN (%s)', $name, $negated ? 'NOT ' : '', self::quoteAll($matching));
             }
             if ($empty) {
                 $parts[] = $negated ? "$name != ''" : "$name = ''";
@@ -351,7 +370,6 @@ final class LoupeEngineIndex implements EngineIndexInterface
         if (null === $field || !$field->filterable) {
             return [null, null];
         }
-        $quote = static fn(string $value): string => "'" . str_replace("'", "''", $value) . "'";
         $conditions = [];
         foreach ($field->patternAttributes() as $attribute => $pattern) {
             $candidates = $pattern->candidates($tokens);
@@ -359,11 +377,11 @@ final class LoupeEngineIndex implements EngineIndexInterface
                 continue;
             }
             if ($candidates['exact']) {
-                return [sprintf('%s IN (%s)', $attribute, $quote($candidates['terms'][0])), null];
+                return [sprintf('%s IN (%s)', $attribute, self::quote($candidates['terms'][0])), null];
             }
             // the document has every part (one condition per part: the values of a list are separate)
             foreach (array_slice($candidates['terms'], 0, self::MAX_PATTERN_TERMS) as $term) {
-                $conditions[] = sprintf('%s IN (%s)', $attribute, $quote($term));
+                $conditions[] = sprintf('%s IN (%s)', $attribute, self::quote($term));
             }
         }
         return [null, [] === $conditions ? null : implode(' AND ', array_values(array_unique($conditions)))];
@@ -483,17 +501,17 @@ final class LoupeEngineIndex implements EngineIndexInterface
      */
     private function withDates(array $document): array
     {
+        $toText = static function (mixed $seconds): mixed {
+            if (!is_int($seconds) && !is_float($seconds)) {
+                return $seconds;
+            }
+            $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $seconds), new DateTimeZone('UTC'));
+            return false === $date ? $seconds : DateTimeValue::utc($date);
+        };
         foreach ($this->definition->fields as $field) {
             if (!array_key_exists($field->name, $document) || !in_array($field->type, [FieldType::DATE, FieldType::DATE_ARRAY], true)) {
                 continue;
             }
-            $toText = static function (mixed $seconds): mixed {
-                if (!is_int($seconds) && !is_float($seconds)) {
-                    return $seconds;
-                }
-                $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $seconds), new DateTimeZone('UTC'));
-                return false === $date ? $seconds : DateTimeValue::utc($date);
-            };
             $value = $document[$field->name];
             $document[$field->name] = is_array($value) ? array_map($toText, $value) : $toText($value);
         }

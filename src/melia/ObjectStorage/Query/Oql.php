@@ -101,7 +101,7 @@ final class Oql
             try {
                 $this->transaction?->rollback();
             } catch (Throwable $e) {
-                $this->storage->getLogger()?->log(new Exception(message: 'Rolling back the open transaction of an OQL connection failed', previous: $e));
+                $this->logFailure('Rolling back the open transaction of an OQL connection failed', $e);
             }
         }
     }
@@ -120,7 +120,7 @@ final class Oql
     public function query(string $query, array $parameters = [], bool $dryRun = false, ?int $maxRows = null): Result
     {
         $started = microtime(true);
-        $inTransaction = $this->inTransaction() || null !== $this->storage->getActiveTransaction();
+        $inTransaction = $this->inAnyTransaction();
         $kind = null;
         $executor = null;
         // by reference: set while the statement runs
@@ -161,8 +161,13 @@ final class Oql
         try {
             ($this->observer)($statistics);
         } catch (Throwable $e) {
-            $this->storage->getLogger()?->log(new Exception(message: 'The observer of an OQL statement failed', previous: $e));
+            $this->logFailure('The observer of an OQL statement failed', $e);
         }
+    }
+
+    private function logFailure(string $message, Throwable $e): void
+    {
+        $this->storage->getLogger()?->log(new Exception(message: $message, previous: $e));
     }
 
     /**
@@ -178,11 +183,7 @@ final class Oql
     private function execute(string $query, array $parameters, bool $dryRun, ?int $maxRows, ?string &$kind, ?Executor &$executor): Result
     {
         $explain = self::explains($query);
-        if ($explain) {
-            // replaced by as many spaces, so positions in errors stay right
-            $query = (string)preg_replace('/^(\s*)EXPLAIN\b/i', '$1       ', $query, 1);
-        }
-        $statement = Parser::parse($query);
+        $statement = Parser::parse(self::withoutExplain($query));
         $kind = match (true) {
             $explain => 'EXPLAIN',
             $statement instanceof TransactionControl => $statement->action,
@@ -246,16 +247,15 @@ final class Oql
         foreach ($statements as $index => $range) {
             $query = self::isolate($script, $range['start'], $range['end']);
             try {
-                Parser::parse(self::explains($query) ? (string)preg_replace('/^(\s*)EXPLAIN\b/i', '$1       ', $query, 1) : $query);
+                Parser::parse(self::withoutExplain($query));
             } catch (QueryException $e) {
-                $message = count($statements) > 1 ? sprintf('Statement %d: %s', $index + 1, $e->getMessage()) : $e->getMessage();
-                throw new ScriptException($message, $e->position, $index, [], false, $e);
+                throw self::scriptError($e, $index, count($statements), [], false);
             }
         }
 
         $outer = null;
         if ($preview) {
-            if ($this->inTransaction() || null !== $this->storage->getActiveTransaction()) {
+            if ($this->inAnyTransaction()) {
                 throw new QueryException('A preview can\'t run in a transaction: COMMIT or ROLLBACK it first');
             }
             $outer = $this->begin();
@@ -283,25 +283,36 @@ final class Oql
                     $started = $after;
                 }
             } catch (QueryException $e) {
-                $rolledBack = false;
-                if (null !== $outer) {
-                    $rolledBack = $this->end($outer);
-                } elseif ($started && $this->inTransaction()) {
-                    $rolledBack = $this->end($this->transaction);
-                }
-                $message = count($statements) > 1 ? sprintf('Statement %d: %s', $index + 1, $e->getMessage()) : $e->getMessage();
-                throw new ScriptException($message, $e->position, $index, $results, $rolledBack, $e);
+                throw self::scriptError($e, $index, count($statements), $results, $this->endScript($outer, $started));
             }
         }
 
-        $rolledBack = false;
-        if (null !== $outer) {
-            $this->end($outer);
-        } elseif ($started && $this->inTransaction()) {
-            $rolledBack = $this->end($this->transaction);
-        }
+        // a preview is always rolled back: that is ScriptResult::$preview, not $rolledBack
+        $rolledBack = $this->endScript($outer, $started) && null === $outer;
 
         return new ScriptResult($results, $rolledBack, $preview);
+    }
+
+    /**
+     * Rolls back what a script leaves open: its preview, or the transaction it started.
+     *
+     * @return bool Whether something was rolled back.
+     */
+    private function endScript(?Transaction $outer, bool $started): bool
+    {
+        if (null !== $outer) {
+            return $this->end($outer);
+        }
+        return $started && $this->inTransaction() && $this->end($this->transaction);
+    }
+
+    /**
+     * The error of a script whose statement failed, naming the statement if there are several.
+     */
+    private static function scriptError(QueryException $e, int $index, int $statements, array $results, bool $rolledBack): ScriptException
+    {
+        $message = $statements > 1 ? sprintf('Statement %d: %s', $index + 1, $e->getMessage()) : $e->getMessage();
+        return new ScriptException($message, $e->position, $index, $results, $rolledBack, $e);
     }
 
     /**
@@ -310,6 +321,12 @@ final class Oql
     public function inTransaction(): bool
     {
         return true === $this->transaction?->isActive();
+    }
+
+    /** whether a transaction of this connection, or another one on its storage instance, is open */
+    private function inAnyTransaction(): bool
+    {
+        return $this->inTransaction() || null !== $this->storage->getActiveTransaction();
     }
 
     /**
@@ -520,7 +537,7 @@ final class Oql
             $transaction->rollback();
             return true;
         } catch (Throwable $e) {
-            $this->storage->getLogger()?->log(new Exception(message: 'Rolling back the transaction of a script failed', previous: $e));
+            $this->logFailure('Rolling back the transaction of a script failed', $e);
             return false;
         }
     }
@@ -585,5 +602,11 @@ final class Oql
     private static function explains(string $query): bool
     {
         return 1 === preg_match('/^\s*EXPLAIN\b/i', $query);
+    }
+
+    /** the query without a leading EXPLAIN, replaced by as many spaces, so positions in errors stay right */
+    private static function withoutExplain(string $query): string
+    {
+        return (string)preg_replace('/^(\s*)EXPLAIN\b/i', '$1       ', $query, 1);
     }
 }

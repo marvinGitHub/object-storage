@@ -26,6 +26,7 @@ use melia\ObjectStorage\Query\Ast\TransactionControl;
 use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Ast\Update;
 use melia\ObjectStorage\Query\Exception\QueryException;
+use melia\ObjectStorage\Reflection\Reflection;
 
 /**
  * Parses a query into a syntax tree. The precedence of the operators, from the lowest: OR, AND, NOT,
@@ -210,7 +211,7 @@ final class Parser
             throw $this->error('ALTER CLASS (or ALTER TABLE) expected', $kind);
         }
         $class = $this->expect(Lexer::IDENTIFIER);
-        $source = new Source(ltrim($class->value, '\\'), self::shortName($class->value), $class->position);
+        $source = new Source(ltrim($class->value, '\\'), Reflection::shortName($class->value), $class->position);
 
         $attributes = $this->list(function (): string {
             $drop = $this->next();
@@ -353,7 +354,7 @@ final class Parser
     {
         $class = $this->expect(Lexer::IDENTIFIER);
         // without an alias: the short name of the class
-        $alias = $this->alias($noAlias) ?? self::shortName($class->value);
+        $alias = $this->alias($noAlias) ?? Reflection::shortName($class->value);
         return new Source(ltrim($class->value, '\\'), $alias, $class->position);
     }
 
@@ -371,12 +372,6 @@ final class Parser
             return $this->next()->value;
         }
         return null;
-    }
-
-    /** the name of a class without its namespace */
-    private static function shortName(string $class): string
-    {
-        return substr(strrchr('\\' . $class, '\\'), 1);
     }
 
     // ---- expressions, from the lowest precedence ----

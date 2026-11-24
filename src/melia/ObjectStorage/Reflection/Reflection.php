@@ -304,6 +304,13 @@ class Reflection
         return array_keys($cache[$classname] + get_object_vars($this->target));
     }
 
+    /**
+     * The name of a class without its namespace, e.g. "Customer" for "App\Model\Customer"; the class needn't exist.
+     */
+    public static function shortName(string $className): string
+    {
+        return substr(strrchr('\\' . $className, '\\'), 1);
+    }
 
     /**
      * @throws ReflectionException

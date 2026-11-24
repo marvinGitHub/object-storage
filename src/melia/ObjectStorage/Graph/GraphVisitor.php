@@ -100,10 +100,7 @@ final class GraphVisitor
         $this->danglingReferences = new SplObjectStorage();
         $this->danglingMarker = new \stdClass();
 
-        $pos = strrpos($this->lazyReferenceClass, '\\');
-        $this->lazyReferenceShortName = $pos === false
-            ? $this->lazyReferenceClass
-            : substr($this->lazyReferenceClass, $pos + 1);
+        $this->lazyReferenceShortName = Reflection::shortName($this->lazyReferenceClass);
     }
 
     /**

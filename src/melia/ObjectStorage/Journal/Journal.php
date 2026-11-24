@@ -187,7 +187,7 @@ class Journal implements JournalInterface
             }
         }
 
-        $lockFile = $this->directory . DIRECTORY_SEPARATOR . self::LOCK_FILE;
+        $lockFile = $this->lockFilePath();
         if ($this->io->fileExists($lockFile)) {
             $this->io->unlink($lockFile);
         }
@@ -344,6 +344,31 @@ class Journal implements JournalInterface
         return $this->directory . DIRECTORY_SEPARATOR . sprintf('%020d', $firstSequence) . self::SEGMENT_SUFFIX;
     }
 
+    private function lockFilePath(): string
+    {
+        return $this->directory . DIRECTORY_SEPARATOR . self::LOCK_FILE;
+    }
+
+    /**
+     * Opens a segment, runs a callback with its handle and closes it.
+     *
+     * @param callable(resource): void $callback
+     * @throws JournalException
+     */
+    private function withSegment(string $path, string $mode, callable $callback): void
+    {
+        $handle = $this->io->fopen($path, $mode);
+        if (false === $handle) {
+            throw new JournalException('Unable to open the journal segment ' . $path);
+        }
+
+        try {
+            $callback($handle);
+        } finally {
+            $this->io->fclose($handle);
+        }
+    }
+
     /**
      * Brings the known state of the last segment up to date, if it changed since it was last read or written,
      * e.g. by another process.
@@ -404,21 +429,14 @@ class Journal implements JournalInterface
      */
     private function write(string $path, string $line): void
     {
-        $handle = $this->io->fopen($path, 'ab');
-        if (false === $handle) {
-            throw new JournalException('Unable to open the journal segment ' . $path);
-        }
-
-        try {
+        $this->withSegment($path, 'ab', function ($handle) use ($path, $line): void {
             $written = $this->io->fwrite($handle, $line);
             if ($written !== strlen($line) || !$this->io->fflush($handle)) {
                 // what was written is a torn append, cut off by the next append after reading the segment again
                 $this->forgetTail();
                 throw new JournalException('Unable to write to the journal segment ' . $path);
             }
-        } finally {
-            $this->io->fclose($handle);
-        }
+        });
     }
 
     /**
@@ -426,18 +444,11 @@ class Journal implements JournalInterface
      */
     private function truncate(string $path, int $length): void
     {
-        $handle = $this->io->fopen($path, 'r+b');
-        if (false === $handle) {
-            throw new JournalException('Unable to open the journal segment ' . $path);
-        }
-
-        try {
+        $this->withSegment($path, 'r+b', function ($handle) use ($path, $length): void {
             if (!$this->io->ftruncate($handle, $length)) {
                 throw new JournalException('Unable to cut off the torn end of the journal segment ' . $path);
             }
-        } finally {
-            $this->io->fclose($handle);
-        }
+        });
 
         if ($this->sync) {
             $this->io->fsyncFile($path);
@@ -454,7 +465,7 @@ class Journal implements JournalInterface
      */
     private function withLock(callable $callback): mixed
     {
-        $lockFile = $this->directory . DIRECTORY_SEPARATOR . self::LOCK_FILE;
+        $lockFile = $this->lockFilePath();
         $handle = $this->io->fopen($lockFile, 'c');
         if (false === $handle) {
             throw new JournalException('Unable to open the journal lock ' . $lockFile);

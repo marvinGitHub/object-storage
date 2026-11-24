@@ -227,27 +227,27 @@ final class TransactionRecovery
             return true;
         } catch (Throwable $e) {
             $logger?->log(new Exception(message: sprintf('Rolling back the interrupted transaction %s failed, enabling safe mode', $transactionId), previous: $e));
-            try {
-                $storage->getStateHandler()?->enableSafeMode();
-            } catch (Throwable $safeModeError) {
-                $logger?->log($safeModeError);
-            }
+            self::quietly($storage, static fn() => $storage->getStateHandler()?->enableSafeMode());
             $storage->getEventDispatcher()?->dispatch(Events::TRANSACTION_RECOVERY_FAILED, static fn() => new TransactionContext($transactionId, $uuids, $e));
 
             return false;
         } finally {
             foreach ($uuids as $uuid) {
-                try {
-                    $storage->releaseRetainedLock($uuid);
-                } catch (Throwable $e) {
-                    $logger?->log($e);
-                }
+                self::quietly($storage, static fn() => $storage->releaseRetainedLock($uuid));
             }
-            try {
-                $lockAdapter->releaseLock($transactionLock);
-            } catch (Throwable $e) {
-                $logger?->log($e);
-            }
+            self::quietly($storage, static fn() => $lockAdapter->releaseLock($transactionLock));
+        }
+    }
+
+    /**
+     * Runs a step of cleaning up after a recovery; a failure is logged, so the other steps run as well.
+     */
+    private static function quietly(ObjectStorage $storage, callable $step): void
+    {
+        try {
+            $step();
+        } catch (Throwable $e) {
+            $storage->getLogger()?->log($e);
         }
     }
 
