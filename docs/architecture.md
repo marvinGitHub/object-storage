@@ -46,9 +46,9 @@ State of a storage instance is kept by the facade in objects of its own, created
 - **Fixed dependencies.** The facade has setters (`setStorageDir()`, `setIOAdapter()`, `setStrategy()`, …), and the
   shard depth of a strategy can change at runtime (maintenance, configuration). A component therefore never changes
   its dependencies: the facade creates it when first needed and creates it again when one of its inputs has changed
-  (`ObjectStorage::component()`: objects compared by identity, other values by value). State that is the
-  component's own concern stays with it, e.g. the class names the registry keeps in memory; it is lost when the
-  component is created again, which is always safe. State that must survive (the locks retained by a
+  (`Storage\Components`: the inputs kept and compared with `===`, objects by identity, other values by value).
+  State that is the component's own concern stays with it, e.g. the class names the registry keeps in memory; it is
+  lost when the component is created again, which is always safe. State that must survive (the locks retained by a
   transaction) is kept by the facade in an object of its own and passed in like any other dependency.
 - **The order of the layers:** paths → JSON files → metadata, registry → object files, stubs, locks → reader,
   writer, deleter → facade. The active transaction is passed with each call (e.g. `ObjectDeleter::delete()`): it

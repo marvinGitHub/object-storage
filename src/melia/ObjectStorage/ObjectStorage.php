@@ -35,6 +35,7 @@ use melia\ObjectStorage\Storage\LifetimeTrait;
 use melia\ObjectStorage\Storage\ListingTrait;
 use melia\ObjectStorage\Storage\LoadingTrait;
 use melia\ObjectStorage\Storage\MetadataTrait;
+use melia\ObjectStorage\Storage\Components;
 use melia\ObjectStorage\Storage\ObjectCache;
 use melia\ObjectStorage\Storage\ObjectPaths;
 use melia\ObjectStorage\Storage\ObjectSession;
@@ -166,11 +167,9 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     private ?WeakReference $activeTransaction = null;
 
     /**
-     * The components of the storage, by name, with the key of the inputs they were created from (see component()).
-     *
-     * @var array<string, array{key: string, component: object}>
+     * The components of the storage (see component()).
      */
-    private array $components = [];
+    private ?Components $components = null;
 
     // ---------------------------------------------------------------------------------------------------------
     // Creating and configuring the storage
@@ -193,7 +192,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
      *        apply to the strategy and the files; arguments passed explicitly take precedence. See Registry for
      *        named configurations.
      * @throws IOException If the storage directory cannot be created.
-     * @throws ConfigurationException If the lock adapter or a cache of the configuration can't be created.
+     * @throws ConfigurationException|Exception\LockException If the lock adapter or a cache of the configuration can't be created.
      */
     public function __construct(
         private string                  $storageDir,
@@ -205,7 +204,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
         ?CacheInterface                 $metadataCache = null,
         ?AdapterInterface               $adapter = null,
         ?StrategyInterface              $strategy = null,
-        private ?Configuration          $configuration = null,
+        private readonly ?Configuration $configuration = null,
     )
     {
         $factory = null === $configuration ? null : new ConfigurationFactory();
@@ -264,23 +263,17 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     }
 
     /**
-     * A component of the storage (see docs/architecture.md), created when first needed and created again when one
-     * of its inputs has changed, e.g. by a setter of the storage: components don't follow changes themselves.
+     * A component of the storage, created again when one of its inputs has changed, see Components::get().
      *
      * @template T of object
      * @param list<mixed> $inputs What the component is created from: objects compared by identity, other values by
-     *        value. Only what the component holds: an object it doesn't keep could be freed and its id reused.
+     *        value.
      * @param Closure(): T $create
      * @return T
      */
     private function component(string $name, array $inputs, Closure $create): object
     {
-        $key = serialize(array_map(static fn(mixed $input): mixed => is_object($input) ? '#' . spl_object_id($input) : $input, $inputs));
-        if (($this->components[$name]['key'] ?? null) !== $key) {
-            $this->components[$name] = ['key' => $key, 'component' => $create()];
-        }
-
-        return $this->components[$name]['component'];
+        return ($this->components ??= new Components())->get($name, $inputs, $create);
     }
 
     /**
