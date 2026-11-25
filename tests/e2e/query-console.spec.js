@@ -144,11 +144,18 @@ test('scripts: a transaction, a preview, an open transaction rolled back', async
     await page.goto(consoleUrl("SELECT COUNT(*) FROM stdClass WHERE city = 'Nowhere'"));
     expect(await table(page)).toEqual([['0']]);
 
-    // a failing statement: the error at its place in the script, the statements before it shown
+    // a statement that isn't valid: the error at its place in the script, and nothing ran, as every statement is
+    // read first (a semicolon in the wrong place must not run the statement before it)
     await page.locator('#q').fill("SELECT COUNT(*) FROM stdClass;\nSELECT name FROM");
     await page.getByRole('button', {name: 'Run'}).click();
     await expect(page.locator('#query-error')).toContainText('Statement 2:');
     await expect(page.locator('#query-error')).toContainText('line 2');
+    await expect(page.locator('#query-result')).toHaveCount(0);
+
+    // a statement failing while it runs: its error, the results of the statements before it shown
+    await page.locator('#q').fill("SELECT COUNT(*) FROM stdClass;\nSELECT name FROM NoSuchClass");
+    await page.getByRole('button', {name: 'Run'}).click();
+    await expect(page.locator('#query-error')).toContainText('Statement 2: Unknown class "NoSuchClass"');
     await expect(page.locator('#query-result')).toBeVisible();
 });
 

@@ -331,7 +331,7 @@ final class Oql
     /**
      * Whether a query or script writes (INSERT, UPDATE, DELETE, ALTER) or controls a transaction, e.g. to ask
      * before running it. A statement that can't be parsed writes nothing: its error is reported when the query or
-     * script runs, with its place in the script and the results of the statements before it.
+     * script runs, with its place in the script; a script with such a statement runs none of its statements.
      */
     public static function writes(string $query): bool
     {
