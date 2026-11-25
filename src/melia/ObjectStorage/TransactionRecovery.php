@@ -216,7 +216,7 @@ final class TransactionRecovery
             $befores = self::readBefores($journal) ?? [];
             $uuids = array_map('strval', array_keys($befores));
             foreach ($uuids as $uuid) {
-                $storage->retainLock($uuid);
+                $storage->objectLocks()->retain($uuid);
             }
 
             self::undo($storage, $journal);
@@ -233,7 +233,7 @@ final class TransactionRecovery
             return false;
         } finally {
             foreach ($uuids as $uuid) {
-                self::quietly($storage, static fn() => $storage->releaseRetainedLock($uuid));
+                self::quietly($storage, static fn() => $storage->objectLocks()->releaseRetained($uuid));
             }
             self::quietly($storage, static fn() => $lockAdapter->releaseLock($transactionLock));
         }

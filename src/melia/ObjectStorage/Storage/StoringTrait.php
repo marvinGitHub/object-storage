@@ -106,12 +106,12 @@ trait StoringTrait
             $removePreviousStub = null !== $previousClassname && $previousClassname !== $object::class;
 
             if ($removePreviousStub) {
-                $this->deleteStub($previousClassname, $uuid);
+                $this->stubIndex()->remove($previousClassname, $uuid);
             }
 
             $this->objectWriter()->write($object, $uuid, $ttl, $this->getActiveTransaction());
 
-            $this->releaseLockUnlessRetained($uuid);
+            $this->objectLocks()->releaseUnlessRetained($uuid);
 
             if ($exists) {
                 $eventDispatcher?->dispatch(Events::AFTER_UPDATE, static fn() => new ObjectPersistenceContext($uuid, $object));
@@ -121,7 +121,7 @@ trait StoringTrait
 
             return $uuid;
         } catch (Throwable $e) {
-            $this->releaseLockUnlessRetained($uuid);
+            $this->objectLocks()->releaseUnlessRetained($uuid);
             $eventDispatcher?->dispatch(Events::OBJECT_SAVING_FAILURE, static fn() => new Context($uuid));
 
             // passed on as they are (ObjectSavingFailureExceptions too), so callers can catch the conflict or the

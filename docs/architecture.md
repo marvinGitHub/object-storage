@@ -36,6 +36,34 @@ State of a storage instance is kept by the facade in objects of its own, created
 (the objects loaded and stored), `Locking\RetainedLocks` (the locks retained by transactions),
 `Constraint\ConstraintRegistry` (the registered constraints). Components get them like any other dependency.
 
+## The facade
+
+The public methods of `ObjectStorage`, by role:
+
+| Role | Methods |
+|---|---|
+| Objects | `store()`, `load()`, `delete()`, `deleteIfExpired()`, `exists()`, `list()`, `count()`, `match()`, `assume()`, `getUuidOf()`, `getNextAvailableUuid()` |
+| Lifetime | `setLifetime()`, `getLifetime()`, `setExpiration()`, `getExpiration()`, `expired()`, `touch()` |
+| Metadata | `loadMetadata()`, `getClassName()`, `getClassNames()`, `getRevision()`, `getCreatedAt()`, `getModifiedAt()` |
+| Raw records (export, import, OQL) | `findRaw()`, `readRaw()`, `writeRaw()` |
+| Constraints | `addConstraint()`, `removeConstraint()`, `getConstraints()`, `checkConstraints()` |
+| Cache | `clearCache()`, `removeFromCache()`, `getMemoryConsumption()` |
+| Maintenance | `rebuildStubs()` |
+| Files | `getStorageDir()`, `getShardDir()`, `getFilePathData()`, `getFilePathMetadata()` |
+| Configuration | `getConfiguration()` and the getters and setters of the storage directory, IO adapter, files, cache, metadata cache, lock adapter, strategy, UUID generator, event dispatcher, logger, state handler and class rename map |
+| Transactions | `getActiveTransaction()` |
+
+Other public methods are marked `@internal`: they are for the library itself (transactions, OQL, maintenance, the
+viewer) and may change in any release. They hand out components instead of repeating their methods on the facade:
+
+- `objectLocks()`: the locks of objects, retained by transactions (`retain()`, `releaseRetained()`, …);
+- `objectPaths()`: the paths of all files (`stubFile()`, `stubDirectory()`, `shardedDirectory()`, …);
+- `stubIndex()`: the stubs (`add()`, `remove()`, …);
+- `setActiveTransaction()`, `markAsCorruptedIfClassless()`, `rebuildClassnameRegistry()`.
+
+A method that only passes a call on to a component doesn't belong on the facade: callers inside the library use the
+component, so the facade keeps what users of the storage need.
+
 ## Rules
 
 - **One concern per component**, named after it. A component knows only the components below it, never the facade

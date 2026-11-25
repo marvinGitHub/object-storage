@@ -64,7 +64,7 @@ class ObjectStorageShardingTest extends TestCase
     public function testLookingUpUnknownObjectCreatesNoDirectories(): void
     {
         $uuid = '877d51df-aebd-4807-8701-95e007e9b701';
-        $shardDirectory = $this->storage->buildShardedDirectory($uuid);
+        $shardDirectory = $this->storage->objectPaths()->shardedDirectory($uuid);
 
         $this->assertFalse($this->storage->exists($uuid));
         $this->assertNull($this->storage->loadMetadata($uuid));
@@ -80,7 +80,7 @@ class ObjectStorageShardingTest extends TestCase
 
         $this->storage->store(new ChildObject('child', 1), $uuid);
 
-        $this->assertDirectoryExists($this->storage->buildShardedDirectory($uuid));
+        $this->assertDirectoryExists($this->storage->objectPaths()->shardedDirectory($uuid));
         $this->assertFileExists($this->storage->getFilePathData($uuid));
         $this->assertFileExists($this->storage->getFilePathMetadata($uuid));
     }

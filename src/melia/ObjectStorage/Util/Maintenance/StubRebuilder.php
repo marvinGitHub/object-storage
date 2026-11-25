@@ -84,7 +84,7 @@ class StubRebuilder extends SteppedMaintenance
             // the UUIDs that have a stub, in any class directory
             $stubs = new UuidTrie();
             $chunk = [];
-            foreach (glob($storage->getStubDirectory() . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . '*' . self::STUB_SUFFIX) ?: [] as $file) {
+            foreach (glob($storage->objectPaths()->stubDirectory() . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . '*' . self::STUB_SUFFIX) ?: [] as $file) {
                 $uuid = basename($file, self::STUB_SUFFIX);
                 if (Validator::validate($uuid)) {
                     $chunk[] = $uuid;
@@ -141,8 +141,8 @@ class StubRebuilder extends SteppedMaintenance
                     if (empty($className) && $storage->markAsCorruptedIfClassless($uuid)) {
                         $state['corrupted']++;
                     } elseif (!empty($className = $storage->getClassName($uuid))) {
-                        $existed = is_file($storage->getFilePathStub($className, $uuid));
-                        $storage->createStub($className, $uuid);
+                        $existed = is_file($storage->objectPaths()->stubFile($className, $uuid));
+                        $storage->stubIndex()->add($className, $uuid);
                         $state['created'] += $existed ? 0 : 1;
                     }
                     $state['processed']++;
@@ -158,7 +158,7 @@ class StubRebuilder extends SteppedMaintenance
                 return $this->progressOf($state);
             }
 
-            $stubDirectory = $storage->getStubDirectory();
+            $stubDirectory = $storage->objectPaths()->stubDirectory();
             foreach ($uuids as $uuid) {
                 // the stubs of the UUID in all class directories; right is only the one of the class of its object
                 $className = $storage->getClassName($uuid);

@@ -2,8 +2,6 @@
 
 namespace melia\ObjectStorage\Locking;
 
-use melia\ObjectStorage\Exception\LockException;
-
 /**
  * Retained locks: exclusive locks of objects kept until the end of a transaction, across the operations that
  * otherwise release the lock of the object when they are done. Transactions use them to hold every object they
@@ -17,7 +15,7 @@ use melia\ObjectStorage\Exception\LockException;
  *   moving objects).
  * - A transaction records an object while it is written (Transaction::track(), called under the lock the writing
  *   code took), so a lock taken "here" can become retained meanwhile: the releases of that code also ask
- *   isLockRetained(). store(), deleting and setLifetime() release a lock they didn't take (for store()
+ *   ObjectLocks::isRetained(). store(), deleting and setLifetime() release a lock they didn't take (for store()
  *   intended: an exclusive load holds the lock until the object is stored, docs/concurrency.md) and ask it as well.
  * - Reentrant (counting) locks in the adapter would make retaining unnecessary, but they change the behavior of the
  *   public LockAdapterInterface and need a special rule for exclusive loads, which hand their lock over to store().
@@ -28,7 +26,9 @@ use melia\ObjectStorage\Exception\LockException;
  * Retaining is bookkeeping of this storage instance: the lock itself is an ordinary lock of the lock adapter, which
  * other processes wait for as usual.
  *
- * The locks themselves are taken and released by the component ObjectLocks.
+ * The locks themselves are taken, retained and released by the component ObjectLocks (retain(), releaseRetained(),
+ * releaseUnlessRetained(), isRetained()); the storage only keeps the retained locks, so they survive a new lock
+ * adapter, and hands out objectLocks().
  *
  * Part of ObjectStorage, kept apart for readability.
  *
@@ -56,51 +56,5 @@ trait RetainedLocksTrait
             [$adapter, $retained],
             static fn(): ObjectLocks => new ObjectLocks($adapter, $retained),
         );
-    }
-
-    /**
-     * Locks an object exclusively and keeps it locked across store(), delete() and setLifetime(), which otherwise
-     * release the lock when they are done, until releaseRetainedLock().
-     *
-     * @param string $uuid The object to lock; it doesn't need to exist.
-     * @param int|float $timeout How long to wait for a lock held by another process, in seconds.
-     * @throws LockException If the lock can't be acquired in time.
-     * @internal Not part of the public API; may change in any release.
-     */
-    public function retainLock(string $uuid, int|float $timeout = LockAdapterInterface::LOCK_TIMEOUT_DEFAULT): void
-    {
-        $this->objectLocks()->retain($uuid, $timeout);
-    }
-
-    /**
-     * Stops retaining the lock of an object (retainLock()) and releases it.
-     *
-     * @internal Not part of the public API; may change in any release.
-     */
-    public function releaseRetainedLock(string $uuid): void
-    {
-        $this->objectLocks()->releaseRetained($uuid);
-    }
-
-    /**
-     * Releases the lock of an object if this process holds it, unless it is retained (retainLock()): what operations
-     * do when they are done with an object.
-     *
-     * @internal Not part of the public API; may change in any release.
-     */
-    public function releaseLockUnlessRetained(string $uuid): void
-    {
-        $this->objectLocks()->releaseUnlessRetained($uuid);
-    }
-
-    /**
-     * Whether the lock of an object is retained (retainLock()): then it must not be released by the operation
-     * asking.
-     *
-     * @internal Not part of the public API; may change in any release.
-     */
-    public function isLockRetained(?string $uuid): bool
-    {
-        return $this->objectLocks()->isRetained($uuid);
     }
 }

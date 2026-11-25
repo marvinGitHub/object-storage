@@ -25,7 +25,7 @@ class ObjectStorageFilesSpyTest extends TestCase
         $this->assertEquals(0, $callsAfterSecondStore, 'Second store should not write any files (object unchanged)');
 
         // Verify files actually exist (proving real writer was called)
-        $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
+        $this->assertFileExists($this->storage->objectPaths()->stubFile(TestUser::class, $uuid));
         $this->assertTrue(file_exists($this->storage->getFilePathData($uuid)));
         $this->assertTrue(file_exists($this->storage->getFilePathMetadata($uuid)));
     }
@@ -66,7 +66,7 @@ class ObjectStorageFilesSpyTest extends TestCase
 
         // Assert - Verify call details
         $this->assertCount(3, $calls, 'Should have 3 calls (data + metadata as group, classname)');
-        $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
+        $this->assertFileExists($this->storage->objectPaths()->stubFile(TestUser::class, $uuid));
 
         // Check first call (data file, written as a group with its metadata)
         $dataCall = $calls[0];
@@ -133,7 +133,7 @@ class ObjectStorageFilesSpyTest extends TestCase
 
         // Assert
         $this->assertEquals(3, $initialCallCount, 'Initial store should write 3 files (data, metadata and classname)');
-        $this->assertFileExists($this->storage->getFilePathStub(TestUser::class, $uuid));
+        $this->assertFileExists($this->storage->objectPaths()->stubFile(TestUser::class, $uuid));
         $this->assertEquals(0, $subsequentCallCount, 'Subsequent stores should not write any files');
         $this->assertEquals($initialDataTime, $finalDataTime, 'Data file timestamp should not change');
         $this->assertEquals($initialMetadataTime, $finalMetadataTime, 'Metadata file timestamp should not change');

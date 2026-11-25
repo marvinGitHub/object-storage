@@ -149,7 +149,7 @@ class OqlDataLossTest extends TestCase
     public function testStaleStubDoesNotLetADeleteReachAnotherClass(): void
     {
         $fruit = $this->oql->query("SELECT UUID FROM Category WHERE title = 'Fruit'")->rows[0][0];
-        $this->storage->createStub(Product::class, $fruit);
+        $this->storage->stubIndex()->add(Product::class, $fruit);
 
         $this->oql->query('DELETE FROM Product');
 

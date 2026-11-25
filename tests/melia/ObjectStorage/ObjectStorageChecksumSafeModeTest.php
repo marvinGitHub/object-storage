@@ -130,7 +130,7 @@ final class ObjectStorageChecksumSafeModeTest extends TestCase
 
         try {
             // This call uses readJsonFile() without passing checksum and will enable safe mode on JSON decode failure
-            $this->storage->getRegisteredClassnames();
+            $this->storage->getClassNames();
         } finally {
             $this->assertTrue($this->getStateHandler($this->storage)->safeModeEnabled(), 'Safe mode should be enabled after JSON decoding failure.');
         }

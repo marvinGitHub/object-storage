@@ -495,7 +495,7 @@ class ObjectStorageTest extends TestCase
         $this->assertFalse($this->storage->exists($uuid));
         $this->assertFalse(file_exists($this->storage->getFilePathData($uuid)));
         $this->assertFalse(file_exists($this->storage->getFilePathMetadata($uuid)));
-        $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class, $uuid)));
+        $this->assertFalse(file_exists($this->storage->objectPaths()->stubFile(stdClass::class, $uuid)));
     }
 
     public function testStoreWithReservedReferenceName()
@@ -519,12 +519,12 @@ class ObjectStorageTest extends TestCase
     public function testStubRegenerationAfterClassChange()
     {
         $uuid = $this->storage->store(new stdClass());
-        $this->assertFileExists($this->storage->getFilePathStub(stdClass::class, $uuid));
+        $this->assertFileExists($this->storage->objectPaths()->stubFile(stdClass::class, $uuid));
 
         $this->storage->store(new TestObjectWithReference(), $uuid);
-        $this->assertFalse(file_exists($this->storage->getFilePathStub(stdClass::class, $uuid)));
+        $this->assertFalse(file_exists($this->storage->objectPaths()->stubFile(stdClass::class, $uuid)));
         $this->assertEquals(TestObjectWithReference::class, $this->storage->getClassName($uuid));
-        $this->assertFileExists($this->storage->getFilePathStub(TestObjectWithReference::class, $uuid));
+        $this->assertFileExists($this->storage->objectPaths()->stubFile(TestObjectWithReference::class, $uuid));
     }
 
     public function testRedundantDeletion()

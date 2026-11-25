@@ -200,7 +200,7 @@ class ShardRebuilder extends SteppedMaintenance
 
         $basename = basename($path);
         // the file name starts with the UUID: "<uuid>.obj", "<uuid>.metadata", "<uuid>.obj.pending", …
-        $targetDir = $this->getObjectStorage()->buildShardedDirectory(substr($basename, 0, 36));
+        $targetDir = $this->getObjectStorage()->objectPaths()->shardedDirectory(substr($basename, 0, 36));
 
         if (!is_dir($targetDir) && !@mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
             throw new RuntimeException('Failed to create shard directory: ' . $targetDir);

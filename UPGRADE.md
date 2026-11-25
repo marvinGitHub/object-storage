@@ -18,6 +18,19 @@ Copies stored before remain: objects no other object refers to anymore, findable
 
 `ObjectStorage::loadReferenced()` (internal) is removed; references are loaded with `load()`.
 
+**A slimmer facade.** Methods of `ObjectStorage` that only passed a call on to a component are removed; use the component (the accessors are `@internal`, see [Architecture](docs/architecture.md#the-facade)):
+
+| Removed | Instead |
+|---|---|
+| `retainLock()`, `releaseRetainedLock()`, `releaseLockUnlessRetained()`, `isLockRetained()` (internal) | `objectLocks()->retain()`, `->releaseRetained()`, `->releaseUnlessRetained()`, `->isRetained()` |
+| `getLockDir()`, `buildShardedDirectory()`, `getStubDirectory()`, `getClassStubDirectory()`, `getFilePathStub()` | `objectPaths()->lockDirectory()`, `->shardedDirectory()`, `->stubDirectory()`, `->classStubDirectory()`, `->stubFile()` |
+| `createStub()` | `stubIndex()->add()`; `rebuildStubs()` repairs the stubs of all objects |
+| `getRegisteredClassnames()` | `getClassNames()` |
+| `markAsCorrupted()` | — (objects without class are moved aside by `rebuildStubs()`) |
+| protected: `addToCache()`, `writeJson()`, `createStubIterator()`, `getObjectFiles()`, `getFilePathClassnames()`, `deleteStub()`, `registerClassname()` | the components: `objectCache()`, `jsonStore()`, `stubIndex()`, `objectPaths()`, `classNameRegistry()` |
+
+`getFilePathData()`, `getFilePathMetadata()` and `getShardDir()` stay.
+
 ## From 1.0.0-rc.13 to 1.0.0-rc.14
 
 Nothing has to be migrated: files are unchanged. Queries now use search indexes with pending changes too, with the same results (the objects with pending changes are read as well).

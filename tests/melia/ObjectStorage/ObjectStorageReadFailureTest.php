@@ -60,7 +60,7 @@ final class ObjectStorageReadFailureTest extends TestCase
     public function testUnreadableClassRegistryIsNotOverwritten(): void
     {
         $this->storage->store(new ChildObject('child', 1));
-        $registry = $this->storage->getStubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
+        $registry = $this->storage->objectPaths()->stubDirectory() . DIRECTORY_SEPARATOR . 'classnames.json';
         $this->assertFileExists($registry);
         $before = file_get_contents($registry);
 

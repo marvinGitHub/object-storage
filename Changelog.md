@@ -17,6 +17,11 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ### Removed
 - `ObjectStorage::loadReferenced()` *(internal)*: references are loaded with `load()`.
+- **Breaking:** methods of `ObjectStorage` that only passed a call on to a component (with `loadReferenced()`: 82 → 71 public methods, counting the accessors `objectPaths()` and `stubIndex()`, now public; 32 → 23 protected): `retainLock()`, `releaseRetainedLock()`, `releaseLockUnlessRetained()`, `isLockRetained()`, `getLockDir()`, `buildShardedDirectory()`, `getStubDirectory()`, `getClassStubDirectory()`, `getFilePathStub()`, `createStub()`, `getRegisteredClassnames()`, `markAsCorrupted()`; protected `addToCache()`, `writeJson()`, `createStubIterator()`, `getObjectFiles()`, `getFilePathClassnames()`, `deleteStub()`, `registerClassname()`. The components are reached through `objectLocks()`, `objectPaths()` and `stubIndex()` *(internal)*, see [UPGRADE.md](UPGRADE.md#unreleased).
+
+### Changed (facade)
+- [Architecture](docs/architecture.md#the-facade): the public methods of `ObjectStorage` by role, and which are internal.
+- `getClassNames()` returns the registered classes directly (the fallback for a missing registry was dead code).
 
 ### Fixed
 - Storing an object after accessing one of its lazily loaded references stored a copy of the referenced object (without `AwareInterface`) under a new UUID and referred to the copy, leaving the original behind: every time, also without any change. The referenced object keeps its UUID now, and nothing is written if nothing changed.

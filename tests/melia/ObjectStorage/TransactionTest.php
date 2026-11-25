@@ -168,7 +168,7 @@ class TransactionTest extends TestCase
         $txn->commit();
 
         $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess($uuid));
-        $this->assertFalse($this->storage->isLockRetained($uuid));
+        $this->assertFalse($this->storage->objectLocks()->isRetained($uuid));
         $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess(TransactionRecovery::lockUuid($txn->getTransactionId())));
     }
 

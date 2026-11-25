@@ -140,11 +140,11 @@ trait RawAccessTrait
 
                 $className = $metadata->getClassName();
                 if (null !== $previous && $previous->getClassName() !== $className) {
-                    $this->deleteStub($previous->getClassName(), $uuid);
+                    $this->stubIndex()->remove($previous->getClassName(), $uuid);
                     $previousClassName = $previous->getClassName();
                     $eventDispatcher?->dispatch(Events::CLASSNAME_CHANGED, static fn() => new ClassnameChangeContext($uuid, $previousClassName, $className));
                 }
-                $this->createStub($className, $uuid);
+                $this->stubIndex()->add($className, $uuid);
 
                 $eventDispatcher?->dispatch(Events::METADATA_SAVED, static fn() => new Context($uuid));
                 $eventDispatcher?->dispatch(Events::AFTER_STORE, static fn() => new Context($uuid));

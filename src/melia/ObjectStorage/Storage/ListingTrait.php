@@ -47,16 +47,6 @@ trait ListingTrait
     }
 
     /**
-     * The UUIDs of the stubs in a directory of stubs, see StubIndex::uuidsIn().
-     *
-     * @return Traversable<string, string> UUID => UUID
-     */
-    protected function createStubIterator(string $pathClassStubs): Traversable
-    {
-        return StubIndex::uuidsIn($pathClassStubs);
-    }
-
-    /**
      * Creates an iterator that filters objects based on the provided classname and retrieves them from storage.
      *
      * @param string|null $className The classname to filter objects by. If null, no filtering is applied.
@@ -158,7 +148,7 @@ trait ListingTrait
                 throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
             }
 
-            if (false === $fileSizeStub = $adapter->fileSize($path = $this->getFilePathStub($this->getClassName($uuid), $uuid))) {
+            if (false === $fileSizeStub = $adapter->fileSize($path = $this->objectPaths()->stubFile($this->getClassName($uuid), $uuid))) {
                 throw new MemoryConsumptionDetectionFailureException('Unable to determine file size for file ' . $path);
             }
 

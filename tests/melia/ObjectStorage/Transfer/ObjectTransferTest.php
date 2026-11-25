@@ -225,7 +225,7 @@ class ObjectTransferTest extends TestCase
         $duplicate = '11d9d23c-b70a-4ddf-be43-25eac1d29fca';
         $this->putFile($this->storage->getFilePathData($duplicate), file_get_contents($this->storage->getFilePathData($original)));
         $this->putFile($this->storage->getFilePathMetadata($duplicate), file_get_contents($this->storage->getFilePathMetadata($original)));
-        $this->storage->createStub(Product::class, $duplicate);
+        $this->storage->stubIndex()->add(Product::class, $duplicate);
         $originalMetadata = file_get_contents($this->storage->getFilePathMetadata($original));
         $storage = new ObjectStorage($this->storage->getStorageDir());
 

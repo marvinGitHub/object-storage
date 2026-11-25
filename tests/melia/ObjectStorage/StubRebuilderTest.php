@@ -22,7 +22,7 @@ class StubRebuilderTest extends TestCase
      */
     private function stubFiles(ObjectStorage $storage): array
     {
-        $files = glob($storage->getStubDirectory() . '/*/*.stub') ?: [];
+        $files = glob($storage->objectPaths()->stubDirectory() . '/*/*.stub') ?: [];
         sort($files);
         return $files;
     }
@@ -36,7 +36,7 @@ class StubRebuilderTest extends TestCase
         foreach ($this->stubFiles($this->storage) as $file) {
             unlink($file);
         }
-        unlink($this->storage->getStubDirectory() . '/classnames.json');
+        unlink($this->storage->objectPaths()->stubDirectory() . '/classnames.json');
 
         $progress = $this->storage->rebuildStubs();
 
@@ -75,15 +75,15 @@ class StubRebuilderTest extends TestCase
         unlink($this->storage->getFilePathMetadata($deleted));
 
         // a stub in the directory of another class
-        $wrong = $this->storage->getFilePathStub(SplStack::class, $kept);
+        $wrong = $this->storage->objectPaths()->stubFile(SplStack::class, $kept);
         touch($wrong);
 
         $progress = $this->createRebuilder(new ObjectStorage($this->storage->getStorageDir()))->rebuildStubs();
 
         $this->assertSame(0, $progress['created']);
         $this->assertSame(2, $progress['removed']);
-        $this->assertSame([$this->storage->getFilePathStub(ArrayObject::class, $kept)], $this->stubFiles($this->storage));
-        $this->assertDirectoryDoesNotExist($this->storage->getClassStubDirectory(SplStack::class), 'empty stub directories are removed');
+        $this->assertSame([$this->storage->objectPaths()->stubFile(ArrayObject::class, $kept)], $this->stubFiles($this->storage));
+        $this->assertDirectoryDoesNotExist($this->storage->objectPaths()->classStubDirectory(SplStack::class), 'empty stub directories are removed');
 
         $other = new ObjectStorage($this->storage->getStorageDir());
         $this->assertSame([ArrayObject::class], array_values($other->getClassNames()), 'classes without objects are unregistered');

@@ -76,7 +76,7 @@ trait LifetimeTrait
             $this->writeMetadata($metadata);
             $this->getEventDispatcher()?->dispatch(Events::LIFETIME_CHANGED, static fn() => new LifetimeContext($uuid, $timestampExpiresAt));
         } finally {
-            if (!$this->isLockRetained($uuid)) {
+            if (!$this->objectLocks()->isRetained($uuid)) {
                 $lockAdapter?->releaseLock($uuid);
             }
         }

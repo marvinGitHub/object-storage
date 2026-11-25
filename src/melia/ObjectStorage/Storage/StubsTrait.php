@@ -8,8 +8,6 @@ use melia\ObjectStorage\Exception\ClassnameRegistrationFailureException;
 use melia\ObjectStorage\Exception\IOException;
 use melia\ObjectStorage\Exception\SafeModeActivationFailedException;
 use melia\ObjectStorage\Exception\SerializationFailureException;
-use melia\ObjectStorage\Exception\StubDeletionFailureException;
-use melia\ObjectStorage\Exception\StubSavingFailureException;
 use melia\ObjectStorage\Util\Maintenance\StubRebuilder;
 
 /**
@@ -43,8 +41,10 @@ trait StubsTrait
     /**
      * The stubs of the storage, with its paths, IO adapter, registry of class names, event dispatcher and logger as
      * they are now.
+     *
+     * @internal Not part of the public API; may change in any release.
      */
-    protected function stubIndex(): StubIndex
+    public function stubIndex(): StubIndex
     {
         $paths = $this->objectPaths();
         $io = $this->getIOAdapter();
@@ -60,50 +60,10 @@ trait StubsTrait
     }
 
     /**
-     * Adds the stub of an object, see StubIndex::add().
+     * The classes of the stored objects: all registered ones (see ClassNameRegistry::all()), or those of a subset
+     * of objects, read from their metadata.
      *
-     * @throws StubSavingFailureException
-     */
-    public function createStub(string $className, string $uuid): void
-    {
-        $this->stubIndex()->add($className, $uuid);
-    }
-
-    /**
-     * Removes the stub of an object if it exists, see StubIndex::remove().
-     *
-     * @throws StubDeletionFailureException If the stub file could not be deleted.
-     */
-    protected function deleteStub(string $className, string $uuid): void
-    {
-        $this->stubIndex()->remove($className, $uuid);
-    }
-
-    /**
-     * Registers a class name, see ClassNameRegistry::register().
-     *
-     * @throws ClassnameRegistrationFailureException
-     */
-    protected function registerClassname(string $className): void
-    {
-        $this->classNameRegistry()->register($className);
-    }
-
-    /**
-     * The registered class names, see ClassNameRegistry::all().
-     *
-     * @throws SafeModeActivationFailedException
-     * @throws SerializationFailureException
-     */
-    public function getRegisteredClassnames(): ?array
-    {
-        return $this->classNameRegistry()->all();
-    }
-
-    /**
-     * Get a list of classnames for a subset of objects
-     *
-     * @param array|null $subSet
+     * @param array|null $subSet The UUIDs of the objects, null for all.
      * @return array
      * @throws SafeModeActivationFailedException
      * @throws SerializationFailureException
@@ -111,10 +71,7 @@ trait StubsTrait
     public function getClassNames(?array $subSet = null): array
     {
         if (null === $subSet) {
-            $registeredClassnames = $this->getRegisteredClassnames();
-            if ($registeredClassnames !== null) {
-                return $registeredClassnames;
-            }
+            return $this->classNameRegistry()->all();
         }
 
         $classNames = [];
@@ -149,6 +106,7 @@ trait StubsTrait
      *
      * @return array<string, string> The registered class names.
      * @throws ClassnameRegistrationFailureException
+     * @internal Part of rebuildStubs() (StubRebuilder); may change in any release.
      */
     public function rebuildClassnameRegistry(): array
     {
@@ -171,29 +129,16 @@ trait StubsTrait
     }
 
     /**
-     * Marks the file associated with the given UUID as corrupted by moving it
-     * to the directory for corrupted artifacts.
-     *
-     * @param string $uuid The unique identifier of the file to be marked as corrupted.
-     *
-     * @return void
-     * @throws IOException
-     */
-    public function markAsCorrupted(string $uuid): void
-    {
-        $this->moveToCorruptedArtifacts($uuid);
-    }
-
-    /**
-     * Moves the files of an object aside (see markAsCorrupted()) if it really has no class: under its lock, after
-     * completing an interrupted write. An object being written by another process at the moment, or whose write
-     * was interrupted by a crash, has its metadata (and class) only once that write is complete; and metadata that
-     * exists but can't be read at the moment is no reason to move the object aside either.
+     * Moves the files of an object to the directory of corrupted artifacts if it really has no class: under its
+     * lock, after completing an interrupted write. An object being written by another process at the moment, or
+     * whose write was interrupted by a crash, has its metadata (and class) only once that write is complete; and
+     * metadata that exists but can't be read at the moment is no reason to move the object aside either.
      *
      * @param string $uuid The unique identifier of the object.
      * @return bool True if the files were moved aside, false if the object has a class (or doesn't exist).
      * @throws IOException If the metadata exists but can't be read.
      * @throws \melia\ObjectStorage\Exception\LockException If the object can't be locked.
+     * @internal Part of rebuildStubs() (StubRebuilder); may change in any release.
      */
     public function markAsCorruptedIfClassless(string $uuid): bool
     {

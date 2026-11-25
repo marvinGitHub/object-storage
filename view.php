@@ -1190,7 +1190,7 @@ try {
                 } finally {
                     $finalizeConstraints($written);
                 }
-                $storage->createStub($storage->getClassName($uuid), $uuidNew);
+                $storage->stubIndex()->add($storage->getClassName($uuid), $uuidNew);
                 $storage->getLockAdapter()->releaseLock($uuid);
                 $success = true;
 
@@ -1332,7 +1332,7 @@ try {
                 'createdAt' => null === $metadata ? '' : $storage->getCreatedAt($uuid)?->format('Y-m-d\\TH:i:s.v\\Z'),
                 'modifiedAt' => null === $metadata ? '' : $storage->getModifiedAt($uuid)?->format('Y-m-d\\TH:i:s.v\\Z'),
                 'revision' => $metadata?->getRevision() ?? 0,
-                'shard' => $storage->buildShardedDirectory($uuid),
+                'shard' => $storage->objectPaths()->shardedDirectory($uuid),
                 'message' => $_GET['message'] ?? null,
                 'error' => $_GET['error'] ?? null,
             ]);

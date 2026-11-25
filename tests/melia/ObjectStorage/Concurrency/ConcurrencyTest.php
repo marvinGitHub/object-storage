@@ -72,7 +72,7 @@ class ConcurrencyTest extends TestCase
 
         $this->assertSame([], $errors);
 
-        $registered = $this->createStorageFor($this->storage)->getRegisteredClassnames();
+        $registered = $this->createStorageFor($this->storage)->getClassNames();
         $missing = [];
         for ($worker = 1; $worker <= self::WORKERS; $worker++) {
             for ($i = 0; $i < 25; $i++) {

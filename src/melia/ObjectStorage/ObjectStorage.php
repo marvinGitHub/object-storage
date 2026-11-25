@@ -100,7 +100,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use StoringTrait; // store(): objects and the objects they reference
     use LoadingTrait; // load(): objects, references loaded lazily
     use DurabilityTrait; // objectFiles(): data and metadata as a group, checksums, recovery
-    use JsonTrait; // readJson(), writeJson(): the JSON files of the storage (metadata, registry of class names)
+    use JsonTrait; // readJson(): the JSON files of the storage (metadata, registry of class names)
     use MetadataTrait; // loadMetadata(), writeMetadata(), getRevision(), getClassName()
     use LifetimeTrait; // setLifetime(), setExpiration(), expired(), touch()
     use DeletingTrait; // delete(), deleteIfExpired(): following the child deletion policy
@@ -109,7 +109,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
     use IdentityTrait; // getUuidOf(): the UUID store() uses for an instance
     use RawAccessTrait; // readRaw(), writeRaw(): objects as stored, e.g. to copy them into another storage
-    use RetainedLocksTrait; // retainLock(): exclusive locks kept across store()/delete(), for transactions
+    use RetainedLocksTrait; // objectLocks(): locks of objects, retained by transactions across store()/delete()
     use ConstraintsTrait; // addConstraint(), checkConstraints(): rules written objects have to satisfy, e.g. unique values
 
     /**
@@ -247,7 +247,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
         if (null === $lockAdapter) {
             $lockAdapter = null === $configuration
-                ? SymfonyLockAdapter::createFileLockAdapter($this->getLockDir())
+                ? SymfonyLockAdapter::createFileLockAdapter($this->objectPaths()->lockDirectory())
                 : $factory->createLockAdapter($configuration->lock, $this->getStorageDir());
             $lockAdapter->setStateHandler($stateHandler);
             $lockAdapter->setLogger($this->logger);
@@ -383,17 +383,6 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
             [$cache, $dispatcher, $logger],
             static fn(): ObjectCache => new ObjectCache($cache, $dispatcher, $logger),
         );
-    }
-
-    /**
-     * Caches an object for its lifetime, see ObjectCache::add(): without expiration if null, removed if it has
-     * expired (0 or less). A failing cache is logged, not thrown.
-     *
-     * @param int|float|null $ttl The lifetime in seconds.
-     */
-    protected function addToCache(string $uuid, object $object, null|int|float $ttl = null): void
-    {
-        $this->objectCache()->add($uuid, $object, $ttl);
     }
 
     /**

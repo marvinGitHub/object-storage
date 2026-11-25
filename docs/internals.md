@@ -4,7 +4,7 @@ How `ObjectStorage` loads and stores objects, for developers working on the libr
 
 ## Files of an object
 
-Every object is two files in the shard directory of its UUID (`shards/<a>/<b>/…`, see `buildShardedDirectory()`):
+Every object is two files in the shard directory of its UUID (`shards/<a>/<b>/…`, see `ObjectPaths::shardedDirectory()`):
 
 | File | Contents |
 |---|---|
@@ -82,7 +82,7 @@ The storage reads and writes its files in layers, each with `read()` and `write(
 
 ## Retained locks
 
-A [transaction](transactions.md) keeps every object it changed locked from the first change to the commit or rollback. It records an object while it is written: `ObjectWriter`, `ObjectDeleter`, `writeObjectFiles()` and `writeMetadata()` call `Transaction::track()` of the active transaction of the instance (passed to the components with each call), under the exclusive lock the writing code took, before anything changes. So a transaction *retains* its locks (`Locking\RetainedLocksTrait`, part of `ObjectStorage`): `retainLock($uuid)` takes the exclusive lock (or marks the one held), `releaseRetainedLock($uuid)` removes the mark and releases the lock, and every release of an object lock asks whether it is retained first (`Locking\ObjectLocks`) — `store()`, `ObjectDeleter` and `setLifetime()`, which release a lock they didn't take (for `store()` on purpose: an exclusive load holds the lock until the object is stored, see [Concurrency](concurrency.md)), and the code releasing only what it locked (`ObjectLocks::exclusively()`: `ObjectWriter`, `touch()`, `writeRaw()`, OQL writes, moving objects), whose lock may have become retained meanwhile.
+A [transaction](transactions.md) keeps every object it changed locked from the first change to the commit or rollback. It records an object while it is written: `ObjectWriter`, `ObjectDeleter`, `writeObjectFiles()` and `writeMetadata()` call `Transaction::track()` of the active transaction of the instance (passed to the components with each call), under the exclusive lock the writing code took, before anything changes. So a transaction *retains* its locks (`Locking\RetainedLocksTrait`, part of `ObjectStorage`): `objectLocks()->retain($uuid)` takes the exclusive lock (or marks the one held), `objectLocks()->releaseRetained($uuid)` removes the mark and releases the lock, and every release of an object lock asks whether it is retained first (`Locking\ObjectLocks`) — `store()`, `ObjectDeleter` and `setLifetime()`, which release a lock they didn't take (for `store()` on purpose: an exclusive load holds the lock until the object is stored, see [Concurrency](concurrency.md)), and the code releasing only what it locked (`ObjectLocks::exclusively()`: `ObjectWriter`, `touch()`, `writeRaw()`, OQL writes, moving objects), whose lock may have become retained meanwhile.
 
 Why only this, and no general helpers:
 

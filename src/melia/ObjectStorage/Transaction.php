@@ -306,7 +306,7 @@ class Transaction
         }
 
         try {
-            $this->getStorage()->retainLock($uuid, $this->timeout);
+            $this->getStorage()->objectLocks()->retain($uuid, $this->timeout);
             $this->lockedObjects[$uuid] = $uuid;
         } catch (Throwable $e) {
             throw new TransactionLockException("Could not lock object {$uuid}: " . $e->getMessage(), 0, $e);
@@ -505,7 +505,7 @@ class Transaction
     {
         foreach ($this->lockedObjects as $uuid) {
             try {
-                $this->getStorage()->releaseRetainedLock($uuid);
+                $this->getStorage()->objectLocks()->releaseRetained($uuid);
             } catch (Throwable $e) {
                 $this->logFailure("Failed to unlock object {$uuid}: " . $e->getMessage(), $e);
             }
