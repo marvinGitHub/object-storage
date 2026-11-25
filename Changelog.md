@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.16] - 2026-11-25
+
+The sixteenth release candidate of 1.0: search indexes and the OQL executor are split into components, each tested alone (see [Architecture](docs/architecture.md)); their API, files and results are unchanged. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc15-to-100-rc16).
+
 ### Changed
 - `Search\Index\Index` is split into components with dependencies of their own, each tested alone (see [Architecture](docs/architecture.md#search-indexes)): `IndexRecords` (definition, state, lock), `UuidSets` (the sets of UUIDs), `Generations` (the data of the engine), `DocumentIndexer`, `Synchronizer`, `Builder`, `PathResolver`, all *internal*. `Index` stays the facade: its API, files and behavior are unchanged.
 - `State::addErrors()`, `State::MAX_ERRORS` (`Index::MAX_ERRORS` stays, the same value).

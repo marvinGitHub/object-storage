@@ -1,5 +1,11 @@
 # Upgrading
 
+## From 1.0.0-rc.15 to 1.0.0-rc.16
+
+Nothing has to be migrated: files, the API of search indexes and the results of OQL are unchanged.
+
+Only code using internal classes is affected: `Query\Executor::objectOf()` is now `Query\ObjectSource::objectOf()`, and the private methods of `Search\Index\Index` and `Query\Executor` moved to their components (see [Architecture](docs/architecture.md)).
+
 ## From 1.0.0-rc.14 to 1.0.0-rc.15
 
 Nothing has to be migrated: files are unchanged.
