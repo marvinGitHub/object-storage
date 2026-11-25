@@ -1,5 +1,9 @@
 # Upgrading
 
+## From 1.0.0-rc.16 to 1.0.0-rc.17
+
+Nothing has to be migrated: the library is unchanged. The viewer keeps its pages and URLs; `view.php` now loads its classes from `viewer/src`, so copy `viewer/` along with `view.php` and `views/` if you deploy the viewer somewhere.
+
 ## From 1.0.0-rc.15 to 1.0.0-rc.16
 
 Nothing has to be migrated: files, the API of search indexes and the results of OQL are unchanged.

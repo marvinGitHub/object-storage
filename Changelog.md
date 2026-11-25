@@ -4,8 +4,15 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.17] - 2026-11-25
+
+The seventeenth release candidate of 1.0: the viewer is split into controllers; the library is unchanged. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc16-to-100-rc17).
+
 ### Changed
 - Viewer: `view.php` only routes; its 50 actions are handled by controllers in `viewer/src` (namespace `melia\ObjectStorage\Viewer`, not part of the library), what the pages share is `App` (see [Architecture](docs/architecture.md#the-viewer)). The pages, their URLs and what they do are unchanged. The viewer is analysed by PHPStan at level 1 (`phpstan-viewer.neon`).
+
+### Fixed
+- The end-to-end test of scripts in the query console expected the results of the statements before an invalid one; since every statement of a script is read before the first one runs, such a script runs nothing. The test checks both cases now (an invalid statement, a statement failing while it runs), and the doc comment of `Oql::writes()` says so.
 
 ## [1.0.0-rc.16] - 2026-11-25
 
