@@ -31,8 +31,9 @@ use Throwable;
  * Conditions joined by AND at the top of WHERE, comparing a path of the source with values (literals, parameters):
  * - UUID = 'uuid' or UUID IN (…): those objects, no index needed;
  * - path = 'text' or path IN ('text', …) on the path of a unique index (one path, also case-insensitive);
- * - on a filterable field with the path of a search index of Loupe that is built and has no pending changes (several
- *   conditions are searched together):
+ * - on a filterable field with the path of a search index of Loupe that is built (several conditions are searched
+ *   together); the objects with pending changes are candidates as well, pending changes of referenced objects (joins)
+ *   or more than MAX_CANDIDATES of them keep the index from being used:
  *   - string fields: = and IN with texts; for a path with * (friends.*.name = 'Alex', true if any element is) a
  *     field of a list of strings;
  *   - number fields: =, IN, <, <=, >, >=, BETWEEN with numbers;
@@ -100,11 +101,16 @@ final class Access
         }
         $lookups = array_values(array_filter($lookups, static fn(array $lookup): bool => !$lookup['uuid']));
 
+        // why the search indexes of the class didn't fit, for EXPLAIN
+        $skipped = [];
         try {
-            $choice = $this->byUniqueIndex($class, $lookups) ?? $this->bySearchIndex($class, $lookups);
+            $choice = $this->byUniqueIndex($class, $lookups) ?? $this->bySearchIndex($class, $lookups, $skipped);
         } catch (Throwable $e) {
             $this->storage->getLogger()?->log($e);
-            $choice = null;
+            return new AccessChoice('all objects of the class', sprintf('an index failed: %s', $e->getMessage()));
+        }
+        if (null === $choice && [] !== $skipped) {
+            return new AccessChoice('all objects of the class', sprintf('no index fits the condition (%s)', implode('; ', $skipped)));
         }
         return $choice ?? $all;
     }
@@ -204,26 +210,39 @@ final class Access
         return null;
     }
 
-    private function bySearchIndex(string $class, array $lookups): ?AccessChoice
+    /**
+     * @param list<string> $skipped Why the indexes of the class weren't used, for EXPLAIN.
+     */
+    private function bySearchIndex(string $class, array $lookups, array &$skipped = []): ?AccessChoice
     {
         if (null === $this->search) {
             return null;
         }
         foreach ($this->search->list() as $name => $index) {
-            // only an index of the class that knows of every change: built, nothing pending
-            if ($index->getDefinition()->className !== $class || 'loupe' !== $index->getEngineName() || IndexInterface::STATUS_READY !== $index->getStatus() || 0 !== $index->countPendingChanges()) {
+            if ($index->getDefinition()->className !== $class) {
                 continue;
             }
-            $definition = $index->getActiveDefinition();
-            if (null === $definition) {
+            // only a built index; the objects it hasn't seen the changes of yet are candidates too (the condition is
+            // checked against every candidate), those of documents built from changed referenced objects aren't known
+            $pending = [];
+            $reason = match (true) {
+                'loupe' !== ($engine = $index->getEngineName()) => sprintf('engine %s, not loupe', $engine),
+                IndexInterface::STATUS_READY !== ($status = $index->getStatus()) => sprintf('status %s, not %s', $status, IndexInterface::STATUS_READY),
+                0 !== ($referenced = $index->countPendingReferenceChanges()) => sprintf('%d pending change(s) of referenced objects, sync it', $referenced),
+                count($pending = $index->listPendingChanges(self::MAX_CANDIDATES + 1)) > self::MAX_CANDIDATES => sprintf('more than %d pending changes, sync it', self::MAX_CANDIDATES),
+                default => null,
+            };
+            $definition = null === $reason ? $index->getActiveDefinition() : null;
+            if (null === $reason && null === $definition) {
+                $reason = 'not built';
+            }
+            if (null !== $reason) {
+                $skipped[] = sprintf('search index %s: %s', $name, $reason);
                 continue;
             }
-            // the filterable fields by their paths, written the same way (friends[0].name, friends.*.name)
+            // the fields by their paths, written the same way (friends[0].name, friends.*.name)
             $fields = [];
             foreach ($definition->fields as $field) {
-                if (!$field->filterable) {
-                    continue;
-                }
                 try {
                     $fields[Path::toString($field->getPathSegments())][] = $field;
                 } catch (Throwable) {
@@ -231,27 +250,61 @@ final class Access
                 }
             }
             $filters = [];
+            $unfit = [];
             foreach ($lookups as $lookup) {
-                foreach ($fields[Path::toString($lookup['path'])] ?? [] as $field) {
+                $path = Path::toString($lookup['path']);
+                $filterable = array_values(array_filter($fields[$path] ?? [], static fn(Field $field): bool => $field->filterable));
+                $filter = null;
+                foreach ($filterable as $field) {
                     $filter = self::filter($field, $lookup);
                     if (null !== $filter) {
                         $filters[] = $filter;
                         break;
                     }
                 }
+                if (null === $filter) {
+                    $unfit[] = self::unfit($path, $fields[$path] ?? [], $filterable, $lookup);
+                }
             }
             if ([] === $filters) {
+                $skipped[] = sprintf('search index %s: %s', $name, implode(', ', $unfit));
                 continue;
             }
             $filter = implode(' AND ', array_values(array_unique($filters)));
             $result = $index->search(new Request(filter: $filter, hitsPerPage: self::MAX_CANDIDATES + 1));
-            $uuids = $result->getUuids();
-            if (count($uuids) > self::MAX_CANDIDATES || $result->totalHits > count($uuids)) {
-                return new AccessChoice('all objects of the class', sprintf('search index %s names more than %d objects for %s', $name, self::MAX_CANDIDATES, $filter));
+            $hits = $result->getUuids();
+            $uuids = array_values(array_unique([...$hits, ...$pending]));
+            if (count($hits) > self::MAX_CANDIDATES || $result->totalHits > count($hits) || count($uuids) > self::MAX_CANDIDATES) {
+                return new AccessChoice('all objects of the class', sprintf('search index %s names more than %d objects for %s', $name, self::MAX_CANDIDATES, $filter) . ([] === $pending ? '' : sprintf(' with %d pending change(s)', count($pending))));
             }
-            return new AccessChoice('search index', sprintf('%s: %s, %d object(s)', $name, $filter, count($uuids)), $uuids);
+            $details = sprintf('%s: %s, %d object(s)', $name, $filter, count($hits)) . ([] === $pending ? '' : sprintf(' + %d pending change(s)', count($pending)));
+            return new AccessChoice('search index', $details, $uuids);
         }
         return null;
+    }
+
+    /**
+     * Why no field of a path can tell the objects of a condition, for EXPLAIN.
+     *
+     * @param list<Field> $fields The fields of the path.
+     * @param list<Field> $filterable Those filterable.
+     */
+    private static function unfit(string $path, array $fields, array $filterable, array $lookup): string
+    {
+        if ([] === $fields) {
+            return sprintf('no field %s', $path);
+        }
+        if ([] === $filterable) {
+            return sprintf('%s not filterable', $path);
+        }
+        if ('LIKE' !== $lookup['operator']) {
+            return sprintf('%s %s not narrowed down', $path, $lookup['operator']);
+        }
+        $patterns = array_values(array_unique(array_merge(...array_map(
+            static fn(Field $field): array => array_map(static fn(PatternIndex $pattern): string => $pattern->value, $field->patterns),
+            $filterable,
+        ))));
+        return sprintf('%s LIKE %s not narrowed down by its pattern indexes (%s)', $path, is_string($lookup['values'][0]) ? self::quote($lookup['values'][0]) : '?', [] === $patterns ? 'none' : implode(', ', $patterns));
     }
 
     /**

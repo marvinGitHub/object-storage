@@ -307,7 +307,7 @@ The caches of the storage are bounded: `ObjectStorage` and configurations of typ
 | `path = TRUE`, `= FALSE` (`= 1`, `= 0`) | a filterable `BOOLEAN` field |
 | `path LIKE 'pattern'` | a filterable `STRING` field with a [pattern index](search.md#pattern-indexes-trie-reverse-trie-n-grams) that narrows the pattern down: `TRIE` for `'Ho%'`, `REVERSE_TRIE` for `'%son'`, `NGRAM` for `'%test%'`; the pattern needs a character no number has (not only digits, `.`, `e`, `+`, `-`: OQL writes 2.0 as `2.0`, the field has `2`) |
 
-A search index is used if it is of the class, built, has no pending changes, and is passed as `new Oql($storage, $searchManager)`; several conditions are searched together (`price > 10 AND active = TRUE AND category = 'x'`). The values are literals or parameters, the path that of a field (written the same way: `friends[0].name`).
+A search index is used if it is of the class, built, and is passed as `new Oql($storage, $searchManager)`; several conditions are searched together (`price > 10 AND active = TRUE AND category = 'x'`). The values are literals or parameters, the path that of a field (written the same way: `friends[0].name`).
 
 ```php
 $oql = new Oql($storage, $searchManager);          // the unique indexes of the storage are found by themselves
@@ -328,7 +328,9 @@ An index is only used when it names *every* object the condition can be true for
 - `OR`, `NOT`, `!=`, `NOT IN`, `NOT LIKE`, `REGEXP`, `IS NULL`; `LIKE` without a fitting pattern index, or on a path with `*`; comparisons of texts (`name < 'M'`);
 - a number given as text (`price > '10'`) and texts that look like numbers for text fields (`'12'` equals the number 12 in OQL, the index keeps them apart); dates compared with text fields;
 - comparisons on paths with `*` other than `=` and `IN` on texts;
-- search indexes with pending changes, or naming more than 999 objects.
+- search indexes naming more than 999 objects (the objects with pending changes count too), or with pending changes of referenced objects (joins): sync the index.
+
+Objects changed since the index last saw them (pending changes) are read in addition to those it names, so an index is used before it is synced; `EXPLAIN` shows them as `+ n pending change(s)`. If no index fits, `EXPLAIN` tells why for each search index of the class, e.g. `no index fits the condition (search index users: name not filterable)`. A finished build applies the changes still pending, so a rebuilt index needs no sync.
 
 A search index only knows the writes made while its manager was attached (the viewer attaches it). `EXPLAIN SELECT …` returns, per source, how its objects are found. In the viewer, the console uses the search and unique indexes of the storage.
 

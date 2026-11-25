@@ -187,6 +187,22 @@ interface IndexInterface
     public function hasPendingChange(string $uuid): bool;
 
     /**
+     * The objects changed since the index saw them (not the referenced objects of joins), at most $limit.
+     *
+     * @return list<string>
+     * @throws SearchException
+     */
+    public function listPendingChanges(int $limit): array;
+
+    /**
+     * The changed referenced objects (of joins, e.g. a category for "category.title") whose documents the next
+     * sync updates.
+     *
+     * @throws SearchException
+     */
+    public function countPendingReferenceChanges(): int;
+
+    /**
      * Releases open resources of the engine.
      */
     public function close(): void;

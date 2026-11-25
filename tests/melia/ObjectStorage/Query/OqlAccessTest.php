@@ -195,7 +195,7 @@ class OqlAccessTest extends TestCase
         }
     }
 
-    public function testSearchIndexWithPendingChangesIsNotUsed(): void
+    public function testSearchIndexWithPendingChangesReadsThemToo(): void
     {
         $search = $this->loupe();
         $search->attach(autoSync: false);
@@ -206,7 +206,8 @@ class OqlAccessTest extends TestCase
         $user->name = 'user200';
         $this->storage->store($user);
 
-        $this->assertSame('all objects of the class', $this->access($oql, "SELECT name FROM stdClass WHERE name = 'user200'"));
+        // the index doesn't know the object yet: it is read as a pending change
+        $this->assertSame('search index', $this->assertSameRows($oql, "SELECT name FROM stdClass WHERE name = 'user200'"));
         $this->assertSame([['user200']], $oql->query("SELECT name FROM stdClass WHERE name = 'user200'")->rows);
 
         $search->sync();

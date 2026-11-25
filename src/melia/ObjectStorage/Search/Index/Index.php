@@ -184,6 +184,16 @@ final class Index implements IndexInterface
         return $this->readTrie(self::TRIE_PENDING)->contains($uuid);
     }
 
+    public function listPendingChanges(int $limit): array
+    {
+        return array_values(array_map('strval', $this->readTrie(self::TRIE_PENDING)->first(max(0, $limit))));
+    }
+
+    public function countPendingReferenceChanges(): int
+    {
+        return $this->readTrie(self::TRIE_REFERENCED)->count();
+    }
+
     public function recordChange(string ...$uuids): void
     {
         $this->addToTrie(self::TRIE_PENDING, $uuids);
@@ -219,28 +229,7 @@ final class Index implements IndexInterface
     public function sync(bool $wait = true, int $batchSize = 500, bool $purgeExpired = true, ?int $maxChanges = null): int
     {
         return $this->withState(function (State $state) use ($batchSize, $purgeExpired, $maxChanges): int {
-            $applied = 0;
-
-            $this->expandReferenceChanges($state);
-
-            while (null === $maxChanges || $applied < $maxChanges) {
-                // taken out before they are applied: a change recorded meanwhile is recorded again and not lost
-                $uuids = $this->takeFromTrie(self::TRIE_PENDING, null === $maxChanges ? $batchSize : max(1, min($batchSize, $maxChanges - $applied)));
-                if ([] === $uuids) {
-                    break;
-                }
-                try {
-                    if (null !== $state->generation) {
-                        $state->errors = $this->applyChanges($state->generation, $uuids, $state->errors)['errors'];
-                    }
-                    $this->replayIfBuilding($state, $uuids);
-                } catch (Throwable $e) {
-                    $this->recordChange(...$uuids);
-                    throw $e;
-                }
-
-                $applied += count($uuids);
-            }
+            $applied = $this->applyPending($state, $batchSize, $maxChanges);
 
             $expired = $purgeExpired ? $this->removeExpired($state, $batchSize) : 0;
 
@@ -252,6 +241,42 @@ final class Index implements IndexInterface
 
             return $applied + $expired;
         }, $wait) ?? 0;
+    }
+
+    /**
+     * Applies the pending changes (those of referenced objects too) to the active generation, and to a running build
+     * at its end; under the lock of the index.
+     *
+     * @param int|null $maxChanges The number of changes to apply at most; the others stay pending. Null for all.
+     * @return int The number of applied changes.
+     * @throws SearchException
+     */
+    private function applyPending(State $state, int $batchSize, ?int $maxChanges = null): int
+    {
+        $applied = 0;
+
+        $this->expandReferenceChanges($state);
+
+        while (null === $maxChanges || $applied < $maxChanges) {
+            // taken out before they are applied: a change recorded meanwhile is recorded again and not lost
+            $uuids = $this->takeFromTrie(self::TRIE_PENDING, null === $maxChanges ? $batchSize : max(1, min($batchSize, $maxChanges - $applied)));
+            if ([] === $uuids) {
+                break;
+            }
+            try {
+                if (null !== $state->generation) {
+                    $state->errors = $this->applyChanges($state->generation, $uuids, $state->errors)['errors'];
+                }
+                $this->replayIfBuilding($state, $uuids);
+            } catch (Throwable $e) {
+                $this->recordChange(...$uuids);
+                throw $e;
+            }
+
+            $applied += count($uuids);
+        }
+
+        return $applied;
     }
 
     /**
@@ -955,8 +980,9 @@ final class Index implements IndexInterface
     }
 
     /**
-     * Completes a build: applies the changes taken meanwhile and activates the new generation.
-     * Changes still pending are applied to the new generation by the next sync.
+     * Completes a build: applies the changes taken meanwhile, activates the new generation and applies the changes
+     * still pending to it, so the index is up to date (and used by queries) without a sync. Pending changes are kept
+     * until then: a cancelled build leaves them for the generation that stays active.
      *
      * @throws SearchException
      */
@@ -986,6 +1012,17 @@ final class Index implements IndexInterface
             if ($other !== $generation) {
                 $this->removeGeneration($other);
             }
+        }
+
+        // changes recorded before or during the build: the new generation reads the objects as they are now; one
+        // that fails stays pending for the next sync
+        try {
+            // (reading them first: taking from a set stores it, also when there is none)
+            if (0 !== $this->countPendingChanges()) {
+                $this->applyPending($state, self::DEFAULT_BATCH_SIZE);
+            }
+        } catch (Throwable $e) {
+            $this->addError($state, 'Pending changes', $e);
         }
     }
 
