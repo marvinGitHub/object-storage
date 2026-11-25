@@ -9,6 +9,7 @@ use melia\ObjectStorage\Exception\ChecksumMismatchException;
 use melia\ObjectStorage\Exception\Exception;
 use melia\ObjectStorage\Exception\InvalidFileFormatException;
 use melia\ObjectStorage\Exception\IOException;
+use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectExistenceEvaluationFailureException;
 use melia\ObjectStorage\File\FilesInterface;
 use melia\ObjectStorage\File\IO\AdapterInterface;
@@ -152,6 +153,34 @@ final readonly class ObjectFiles
             $filePathData => $data,
             $filePathMetadata => (new Json())->encode($metadata),
         ]);
+    }
+
+    /**
+     * Removes the data and the metadata of an object, the data first: metadata without data is no object. The removal
+     * is flushed to disk like a write (unless sync is disabled), so a deleted object doesn't come back after a
+     * crash. The caller holds the exclusive lock of the object.
+     *
+     * @throws IOException If the data file can't be removed (nothing is removed then).
+     * @throws MetataDeletionFailureException If the metadata file can't be removed (the data is gone).
+     */
+    public function delete(string $uuid): void
+    {
+        [$filePathData, $filePathMetadata] = $this->paths->objectFiles($uuid);
+
+        if (!$this->io->unlink($filePathData)) {
+            throw new IOException('Unable to delete file: ' . $filePathData);
+        }
+        try {
+            if ($this->io->isFile($filePathMetadata) && !$this->io->unlink($filePathMetadata)) {
+                throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
+            }
+        } finally {
+            if ($this->files->syncEnabled()) {
+                foreach (array_unique([dirname($filePathData), dirname($filePathMetadata)]) as $directory) {
+                    $this->io->fsyncDirectory($directory);
+                }
+            }
+        }
     }
 
     /**

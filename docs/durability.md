@@ -23,7 +23,9 @@ Several objects written together in a [transaction](transactions.md) are rolled 
 
 ### fsync
 
-To survive a power loss, not only a process crash, every written file and every rename is flushed to disk with `fsync`. This makes a store considerably slower, how much depends on the disk: it takes 5 flushes to store a changed object.
+To survive a power loss, not only a process crash, every written file and every rename is flushed to disk: the content of a file with `fdatasync` (its content and size, not its times), directories with `fsync`. This makes a store considerably slower, how much depends on the disk: it takes 5 flushes to store a changed object — one per file, one for the directory before the renames and one after each rename, which recovery relies on (a pending data file means nothing was committed yet). A delete is flushed as well (1 flush), so a deleted object doesn't come back after a power loss.
+
+`php profiling/benchmark.php [objects] [--no-sync] [--dir=<directory>]` measures the main operations on a disk, with and without flushing.
 
 Where durability doesn't matter — caches, test suites, data that can be recreated — turn it off:
 

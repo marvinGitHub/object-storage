@@ -32,8 +32,10 @@ class RealAdapter implements AdapterInterface
 
     public function fsyncFile(string $filename): bool
     {
-        // opened for writing: on Windows, flushing requires write access
-        return $this->fsyncPath($filename, 'r+');
+        // opened for writing: on Windows, flushing requires write access; the content and its size are flushed
+        // (fdatasync), not times like the modification time, which a crash may leave older: none of them matters
+        // for reading the file again, and skipping them saves a write to the disk
+        return $this->fsyncPath($filename, 'r+', dataOnly: true);
     }
 
     public function renameSync(string $from, string $to): bool
@@ -62,9 +64,10 @@ class RealAdapter implements AdapterInterface
      *
      * @param string $path The file or directory to flush.
      * @param string $mode The mode to open it with.
+     * @param bool $dataOnly Whether only the content and what reading it needs (the size) are flushed (fdatasync).
      * @return bool Whether it could be opened and flushed.
      */
-    private function fsyncPath(string $path, string $mode): bool
+    private function fsyncPath(string $path, string $mode, bool $dataOnly = false): bool
     {
         $handle = @fopen($path, $mode);
         if (false === $handle) {
@@ -72,7 +75,7 @@ class RealAdapter implements AdapterInterface
         }
 
         try {
-            return @fsync($handle);
+            return $dataOnly ? @fdatasync($handle) : @fsync($handle);
         } finally {
             fclose($handle);
         }

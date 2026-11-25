@@ -21,7 +21,6 @@ trait DeletingTrait
     protected function objectDeleter(): ObjectDeleter
     {
         $paths = $this->objectPaths();
-        $io = $this->getIOAdapter();
         $files = $this->getFiles();
         $objectFiles = $this->objectFiles();
         $metadata = $this->metadataStore();
@@ -35,8 +34,8 @@ trait DeletingTrait
 
         return $this->component(
             ObjectDeleter::class,
-            [$paths, $io, $files, $objectFiles, $metadata, $stubs, $cache, $locks, $strategy, $stateHandler, $dispatcher, $logger],
-            static fn(): ObjectDeleter => new ObjectDeleter($paths, $io, $files, $objectFiles, $metadata, $stubs, $cache, $locks, $strategy, $stateHandler, $dispatcher, $logger),
+            [$paths, $files, $objectFiles, $metadata, $stubs, $cache, $locks, $strategy, $stateHandler, $dispatcher, $logger],
+            static fn(): ObjectDeleter => new ObjectDeleter($paths, $files, $objectFiles, $metadata, $stubs, $cache, $locks, $strategy, $stateHandler, $dispatcher, $logger),
         );
     }
 

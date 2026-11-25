@@ -76,7 +76,7 @@ class ObjectDeleterTest extends TestCase
         $stubs = new StubIndex($this->paths, $io, new ClassNameRegistry($this->paths, $io, new JsonStore(new JsonFiles($files))));
         $locks = new ObjectLocks($this->lockAdapter, new RetainedLocks());
 
-        $deleter = new ObjectDeleter($this->paths, $io, $files, $objectFiles, $metadata, $stubs, new ObjectCache($this->objects), $locks, $this->strategy, $this->stateHandler, $this->dispatcher);
+        $deleter = new ObjectDeleter($this->paths, $files, $objectFiles, $metadata, $stubs, new ObjectCache($this->objects), $locks, $this->strategy, $this->stateHandler, $this->dispatcher);
 
         return [$deleter, $objectFiles, $stubs];
     }

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+### Added
+- `profiling/benchmark.php`: the time of the main operations (store, load, OQL, delete) without services, with and without flushing to disk, on a directory of choice.
+- `ObjectFiles::delete()` *(internal)*: removes the data and metadata of an object, flushed to disk.
+
+### Changed
+- The content of written files is flushed with `fdatasync` instead of `fsync`: the content and size, not the times of the file, which reading it doesn't need. Directories are still flushed with `fsync`.
+- `delete()` is flushed to disk like a write (unless sync is disabled): a deleted object no longer comes back after a power loss. It takes one more flush per deleted object.
+- `ObjectDeleter` *(internal)* no longer takes the IO adapter: removing the files is `ObjectFiles::delete()`.
+
 ## [1.0.0-rc.14] - 2026-11-25
 
 The fourteenth release candidate of 1.0: queries use search indexes before they are synced, and `EXPLAIN` tells why an index isn't used. **Read [UPGRADE.md](UPGRADE.md#from-100-rc13-to-100-rc14) before upgrading** if you implement `IndexInterface` yourself.

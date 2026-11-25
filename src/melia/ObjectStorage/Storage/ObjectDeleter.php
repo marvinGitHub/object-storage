@@ -5,11 +5,9 @@ namespace melia\ObjectStorage\Storage;
 use melia\ObjectStorage\Event\Context\Context;
 use melia\ObjectStorage\Event\DispatcherInterface;
 use melia\ObjectStorage\Event\Events;
-use melia\ObjectStorage\Exception\MetataDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectDeletionFailureException;
 use melia\ObjectStorage\Exception\ObjectNotFoundException;
 use melia\ObjectStorage\File\FilesInterface;
-use melia\ObjectStorage\File\IO\AdapterInterface;
 use melia\ObjectStorage\Locking\ObjectLocks;
 use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\State\StateHandler;
@@ -26,7 +24,6 @@ final readonly class ObjectDeleter
 {
     public function __construct(
         private ObjectPaths          $paths,
-        private AdapterInterface     $io,
         private FilesInterface       $files,
         private ObjectFiles          $objectFiles,
         private MetadataStore        $metadata,
@@ -129,14 +126,7 @@ final readonly class ObjectDeleter
             // read before the data file is gone; under the lock, so the references are the ones being deleted
             $children = $this->findChildrenToDelete($uuid, (string)$className, $filePath);
 
-            if (!$this->io->unlink($filePath)) {
-                throw self::failure($uuid);
-            }
-
-            $filePathMetadata = $this->paths->metadataFile($uuid);
-            if ($this->io->isFile($filePathMetadata) && !$this->io->unlink($filePathMetadata)) {
-                throw new MetataDeletionFailureException('Metadata for uuid ' . $uuid . ' could not be deleted');
-            }
+            $this->objectFiles->delete($uuid);
 
             $this->metadata->forget($uuid);
 
