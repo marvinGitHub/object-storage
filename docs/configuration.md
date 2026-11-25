@@ -153,7 +153,7 @@ $storage->getStrategy()->setPolicyChildPersistence(ChildPersistence::ALWAYS);
 
 | Policy | Referenced objects are written … | Use when |
 |---|---|---|
-| `IF_NOT_EXIST` (default) | only if they don't exist yet | referenced objects are created along with their parent, but updated on their own |
+| `IF_NOT_EXIST` (default) | if they don't exist yet, or were loaded by this storage instance (e.g. reached through a lazy reference) and changed | referenced objects are created along with their parent; those you created yourself are updated on their own |
 | `ALWAYS` | every time the referencing object is stored | the referencing object owns its graph, e.g. an order and its lines |
 | `NEVER` | never; references point to UUIDs only | referenced objects are always stored explicitly |
 | `CALLBACK` | if `shouldPersistChild()` of the strategy returns `true` | the decision depends on the object, see below |

@@ -109,28 +109,15 @@ trait LoadingTrait
     }
 
     /**
-     * Loads a referenced object, for a LazyLoadReference or the references passed to __unserialize(). Unlike
-     * load() by the caller, the instance isn't remembered under its UUID (see rememberLoaded()).
-     *
-     * @internal
-     * @throws Throwable
-     */
-    public function loadReferenced(string $uuid): ?object
-    {
-        return $this->session->loadingReferences(fn(): ?object => $this->load($uuid));
-    }
-
-    /**
      * Remembers the UUID of an instance returned by load(), so storing it again updates the object instead of
-     * storing a copy under a new UUID (objects without AwareInterface don't carry their UUID themselves).
-     *
-     * Not for objects loaded as references of another one: storing the referencing object writes referenced objects
-     * by the child persistence policy, which (by default) doesn't write existing ones; they are written as new
-     * objects, with their changes, as long as they aren't known (as before).
+     * storing a copy under a new UUID (objects without AwareInterface don't carry their UUID themselves). Also for
+     * objects loaded as references of another one (LazyLoadReference, __unserialize()): storing the referencing
+     * object refers to them by their UUID and writes them by the child persistence policy, like objects with
+     * AwareInterface.
      */
     private function rememberLoaded(object $object, string $uuid): void
     {
-        $this->session->rememberLoaded($object, $uuid);
+        $this->session->rememberIfUnknown($object, $uuid);
     }
 
     /**

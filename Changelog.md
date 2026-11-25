@@ -12,6 +12,14 @@ All notable changes to this project will be documented in this file. From 1.0 on
 - The content of written files is flushed with `fdatasync` instead of `fsync`: the content and size, not the times of the file, which reading it doesn't need. Directories are still flushed with `fsync`.
 - `delete()` is flushed to disk like a write (unless sync is disabled): a deleted object no longer comes back after a power loss. It takes one more flush per deleted object.
 - `ObjectDeleter` *(internal)* no longer takes the IO adapter: removing the files is `ObjectFiles::delete()`.
+- **Behavior:** objects loaded as references of another one (a `LazyLoadReference` that was accessed, references passed to `__unserialize()`) are known by their UUID, also without `AwareInterface`, like objects loaded with `load()`. The child persistence policy `IF_NOT_EXIST` (the default) writes referenced objects the storage instance loaded along if they changed, with or without `AwareInterface`; objects created and stored by the caller are still updated on their own, see [UPGRADE.md](UPGRADE.md#unreleased).
+- `ObjectSession` *(internal)*: `recordLoaded()`, `wasLoaded()`; `rememberLoaded()` and `loadingReferences()` removed.
+
+### Removed
+- `ObjectStorage::loadReferenced()` *(internal)*: references are loaded with `load()`.
+
+### Fixed
+- Storing an object after accessing one of its lazily loaded references stored a copy of the referenced object (without `AwareInterface`) under a new UUID and referred to the copy, leaving the original behind: every time, also without any change. The referenced object keeps its UUID now, and nothing is written if nothing changed.
 
 ## [1.0.0-rc.14] - 2026-11-25
 

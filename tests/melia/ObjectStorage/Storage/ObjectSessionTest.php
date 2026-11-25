@@ -24,19 +24,19 @@ class ObjectSessionTest extends TestCase
         $this->assertSame(self::OTHER, $session->uuidOf($object));
     }
 
-    public function testObjectsLoadedAsReferencesAreNotRemembered(): void
+    public function testLoadedObjectsAreRecordedUntilCleared(): void
     {
         $session = new ObjectSession();
-        $referenced = new \stdClass();
         $loaded = new \stdClass();
+        $stored = new \stdClass();
+        $session->recordLoaded($loaded);
+        $session->remember($stored, self::UUID);
 
-        $session->loadingReferences(function () use ($session, $referenced): void {
-            $session->rememberLoaded($referenced, self::UUID);
-        });
-        $session->rememberLoaded($loaded, self::OTHER);
+        $this->assertTrue($session->wasLoaded($loaded));
+        $this->assertFalse($session->wasLoaded($stored), 'known, but not loaded');
 
-        $this->assertNull($session->uuidOf($referenced));
-        $this->assertSame(self::OTHER, $session->uuidOf($loaded));
+        $session->clear();
+        $this->assertFalse($session->wasLoaded($loaded));
     }
 
     public function testObjectsAreHeldWeakly(): void

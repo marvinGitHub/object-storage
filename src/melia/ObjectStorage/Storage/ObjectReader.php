@@ -107,6 +107,7 @@ final readonly class ObjectReader
 
         Helper::assign($object, $uuid);
         $this->session->recordRevision($object, $metadata->getRevision());
+        $this->session->recordLoaded($object);
 
         if ($addToCache) {
             $this->cache->add($uuid, $object, $metadata->getLifetime());
@@ -253,7 +254,7 @@ final readonly class ObjectReader
             if (DateTimeValue::isEncoded($value, $metadata->getReservedDateTimeName())) {
                 $data[$key] = $this->restoreDateTime($value, $metadata);
             } else if (isset($value[$reserved]) && is_string($value[$reserved]) && Validator::validate($value[$reserved])) {
-                $data[$key] = $this->session->restored($value[$reserved]) ?? $this->storage->loadReferenced($value[$reserved]);
+                $data[$key] = $this->session->restored($value[$reserved]) ?? $this->storage->load($value[$reserved]);
             } else {
                 $data[$key] = $this->resolveReferences($value, $metadata);
             }

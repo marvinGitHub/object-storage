@@ -11,6 +11,7 @@ use WeakMap;
  * - their UUIDs, so storing an object again updates it instead of storing a copy under a new UUID (objects without
  *   AwareInterface don't carry their UUID themselves),
  * - the revision each was loaded or stored with, for optimistic locking,
+ * - which were loaded (read from their files), so a change of one reached through a reference is stored along,
  * - the objects being stored right now, so cycles in a graph are stored once.
  */
 final class ObjectSession
@@ -21,10 +22,10 @@ final class ObjectSession
     private WeakMap $revisions;
     /** @var WeakMap<object, true> */
     private WeakMap $storing;
+    /** @var WeakMap<object, true> */
+    private WeakMap $loaded;
     /** @var array<string, object> objects whose __unserialize() is running, by UUID */
     private array $restoring = [];
-    /** referenced objects being loaded (nested), whose instances aren't remembered (see rememberLoaded()) */
-    private int $loadingReferences = 0;
 
     public function __construct()
     {
@@ -32,13 +33,31 @@ final class ObjectSession
     }
 
     /**
-     * Forgets all objects (not the references being loaded right now).
+     * Forgets all objects.
      */
     public function clear(): void
     {
         $this->uuids = new WeakMap();
         $this->revisions = new WeakMap();
         $this->storing = new WeakMap();
+        $this->loaded = new WeakMap();
+    }
+
+    /**
+     * Records that an object was read from its files by this instance (load(), also as a reference of another one).
+     */
+    public function recordLoaded(object $object): void
+    {
+        $this->loaded[$object] = true;
+    }
+
+    /**
+     * Whether an object was read from its files by this instance: storing a referencing object writes it along if it
+     * changed (see ObjectWriter::shouldWriteChild()).
+     */
+    public function wasLoaded(object $object): bool
+    {
+        return isset($this->loaded[$object]);
     }
 
     /**
@@ -64,37 +83,6 @@ final class ObjectSession
     {
         if (!isset($this->uuids[$object])) {
             $this->uuids[$object] = $uuid;
-        }
-    }
-
-    /**
-     * Remembers the UUID of an instance returned by load(), unless one is known already.
-     *
-     * Not for objects loaded as references of another one: storing the referencing object writes referenced objects
-     * by the child persistence policy, which (by default) doesn't write existing ones; they are written as new
-     * objects, with their changes, as long as they aren't known.
-     */
-    public function rememberLoaded(object $object, string $uuid): void
-    {
-        if (0 === $this->loadingReferences) {
-            $this->rememberIfUnknown($object, $uuid);
-        }
-    }
-
-    /**
-     * Loads referenced objects: the instances loaded meanwhile aren't remembered (see rememberLoaded()).
-     *
-     * @template T
-     * @param Closure(): T $load
-     * @return T
-     */
-    public function loadingReferences(Closure $load): mixed
-    {
-        $this->loadingReferences++;
-        try {
-            return $load();
-        } finally {
-            $this->loadingReferences--;
         }
     }
 

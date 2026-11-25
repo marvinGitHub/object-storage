@@ -1,5 +1,23 @@
 # Upgrading
 
+## Unreleased
+
+Nothing has to be migrated: files are unchanged.
+
+**Referenced objects keep their UUID.** Up to now, storing an object after accessing a lazily loaded reference (`$user->address->city`) stored the referenced object again as a copy under a new UUID, if its class doesn't implement `AwareInterface`, also without any change; the object referred to the copy, the original stayed behind. Now it keeps its UUID, and is written along only if it changed:
+
+```php
+$user = $storage->load($uuid);
+$user->address->city = 'Hamburg';
+$storage->store($user);  // writes the address under its UUID; the user is unchanged and not written
+```
+
+The default child persistence policy, `IF_NOT_EXIST`, now also writes referenced objects this storage instance loaded, if they changed — with or without `AwareInterface` (an object with `AwareInterface` reached through a lazy reference and changed wasn't written along before). Objects you created and stored yourself are still updated on their own, see [child persistence](docs/configuration.md#child-persistence-when-referenced-objects-are-written).
+
+Copies stored before remain: objects no other object refers to anymore, findable like any object of their class.
+
+`ObjectStorage::loadReferenced()` (internal) is removed; references are loaded with `load()`.
+
 ## From 1.0.0-rc.13 to 1.0.0-rc.14
 
 Nothing has to be migrated: files are unchanged. Queries now use search indexes with pending changes too, with the same results (the objects with pending changes are read as well).

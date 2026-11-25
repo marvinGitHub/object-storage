@@ -167,6 +167,10 @@ final readonly class ObjectWriter
     /**
      * Whether an object referenced by the object being stored is stored along, by the child persistence policy of
      * the strategy. A callback that fails stores nothing (fail-closed).
+     *
+     * IF_NOT_EXIST stores new objects and those this instance loaded, e.g. an object reached through a
+     * LazyLoadReference: a change of it isn't lost, and write() writes nothing if there is none. Other existing
+     * objects (created and stored by the caller, then changed) are updated on their own.
      */
     private function shouldWriteChild(GraphBuilderContext $context, object $child, string $uuid, array $path): bool
     {
@@ -174,7 +178,7 @@ final readonly class ObjectWriter
 
         switch ($this->strategy?->getPolicyChildPersistence() ?? StrategyInterface::DEFAULT_POLICY_CHILD_PERSISTENCE) {
             case ChildPersistence::IF_NOT_EXIST:
-                return !$exists;
+                return !$exists || $this->session->wasLoaded($child);
             case ChildPersistence::NEVER:
                 return false;
             case ChildPersistence::CALLBACK:
