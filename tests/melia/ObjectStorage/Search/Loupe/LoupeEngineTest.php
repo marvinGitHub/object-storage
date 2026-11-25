@@ -495,7 +495,7 @@ class LoupeEngineTest extends TestCase
         $this->assertSame([$chair], $this->find($index, '', "categoryTitle = 'Furniture'"));
 
         $fruitUuid = json_decode(file_get_contents($this->storage->getFilePathData($apple)), true)['category']['__reference'];
-        $handle = (fn() => $this->openGeneration($this->getState()->generation))->call($index);
+        $handle = (fn() => $this->generations->open($this->getState()->generation))->call($index);
         $this->assertEqualsCanonicalizing([$apple, $banana], $handle->referencing([$fruitUuid, 'unknown'], 10));
         $this->assertSame([], $handle->referencing([$fruitUuid], 10, 'x'), 'by the prefix of the UUID');
         $this->assertSame([$apple], $handle->referencing([$fruitUuid], 10, $apple));

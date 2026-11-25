@@ -64,6 +64,27 @@ viewer) and may change in any release. They hand out components instead of repea
 A method that only passes a call on to a component doesn't belong on the facade: callers inside the library use the
 component, so the facade keeps what users of the storage need.
 
+## Search indexes
+
+`Search\Index\Index`, a search index of one class, is built the same way: the facade of its components
+(namespace `Search\Index`, all `@internal`), created once by the index with its storage, the internal storage of the
+indexes, its directory and its engine. Its public API (`IndexInterface`) is unchanged.
+
+| Component | Concern |
+|---|---|
+| `IndexRecords` | the definition and the state of the index in the internal storage, under UUIDs derived from its name; the lock of the index, under which the state is changed (`withState()`) |
+| `UuidSets` | the sets of UUIDs (`pending`, `referenced`, `build`, `replay`), each one `UuidTrie`, changed under its own lock |
+| `Generations` | the data of the engine, one directory per generation with the definition it was built with: created, opened once, removed |
+| `DocumentIndexer` | indexing objects in a generation: documents built from their stored data, written or removed; the documents built from referenced objects |
+| `Synchronizer` | applying the pending changes (those of referenced objects too), removing the documents of expired objects |
+| `Builder` | building a new generation step by step, activating it at the end with the changes taken meanwhile and those still pending |
+| `PathResolver` | fields named by their paths in a search (`resolvePaths()`) |
+
+The order of the layers: records, sets, generations → indexer → synchronizer → builder → index. `Synchronizer` and
+`Builder` work on the state they are given, under the lock taken by the index; the index keeps the classes of the
+referenced objects read meanwhile (`DocumentIndexer::takeJoinedClasses()`) in the state. Each component has a unit
+test of its own (`tests/melia/ObjectStorage/Search/Index/`).
+
 ## Rules
 
 - **One concern per component**, named after it. A component knows only the components below it, never the facade

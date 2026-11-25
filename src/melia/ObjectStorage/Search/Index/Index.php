@@ -4,15 +4,8 @@ namespace melia\ObjectStorage\Search\Index;
 
 use DateTimeImmutable;
 use Generator;
-use JsonException;
-use melia\ObjectStorage\Exception\LockException;
-use melia\ObjectStorage\Exception\ObjectLoadingFailureException;
 use melia\ObjectStorage\File\Directory;
-use melia\ObjectStorage\Locking\LockAdapterInterface;
-use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
-use melia\ObjectStorage\Search\DocumentBuilder;
-use melia\ObjectStorage\Search\Engine\EngineIndexInterface;
 use melia\ObjectStorage\Search\Engine\EngineInterface;
 use melia\ObjectStorage\Search\Exception\IndexBuildInProgressException;
 use melia\ObjectStorage\Search\Exception\IndexNotReadyException;
@@ -20,53 +13,45 @@ use melia\ObjectStorage\Search\Exception\SearchException;
 use melia\ObjectStorage\Search\Exception\UnknownPathException;
 use melia\ObjectStorage\Search\Request;
 use melia\ObjectStorage\Search\Result;
-use melia\ObjectStorage\UUID\Helper;
-use melia\ObjectStorage\Util\UuidTrie;
 use Throwable;
 
 /**
  * A search index of one class; the engine only stores and searches its documents.
  *
- * Its definition, its state and three sets of UUIDs are objects in the internal storage of the indexes
- * (see Manager), each one record; the sets are UuidTries:
+ * The index is the facade of its components (see "Search indexes" in docs/architecture.md):
  *
- *   pending       the objects changed since the last sync
- *   referenced    the referenced objects changed since the last sync: the documents built from them (see
- *                 DocumentBuilder::ATTRIBUTE_REFERENCED) become pending changes
- *   build        the objects to index while a build is running
- *   replay        the changes applied during a build, applied to the new generation at its end
+ *   IndexRecords      its definition and state in the internal storage of the indexes, and its lock
+ *   UuidSets          its sets of UUIDs: pending changes, changed referenced objects, the objects of a build
+ *   Generations       the data of the engine, one directory per generation, with the definition it was built with
+ *   DocumentIndexer   indexes objects in a generation
+ *   Synchronizer      applies the pending changes, removes the documents of expired objects
+ *   Builder           builds a new generation step by step
+ *   PathResolver      fields named by their paths in a search
  *
- * The directory of the index holds the data of the engine, one directory per generation (data-<n>/, with the
- * definition it was built with). Building writes a new generation, so searches keep using the previous one until
- * the build is complete.
+ * Syncs and build steps change the state under the lock of the index, so they run one after the other in all
+ * processes; searches read the state without waiting for them.
  */
 final class Index implements IndexInterface
 {
-    public const int DEFAULT_BATCH_SIZE = 200;
+    public const int DEFAULT_BATCH_SIZE = Builder::DEFAULT_BATCH_SIZE;
 
-    /** the sets of UUIDs of an index */
-    public const string TRIE_PENDING = 'pending';
-    public const string TRIE_REFERENCED = 'referenced';
-    public const string TRIE_BUILD = 'build';
-    public const string TRIE_REPLAY = 'replay';
+    /** the sets of UUIDs of an index, see UuidSets */
+    public const string TRIE_PENDING = UuidSets::PENDING;
+    public const string TRIE_REFERENCED = UuidSets::REFERENCED;
+    public const string TRIE_BUILD = UuidSets::BUILD;
+    public const string TRIE_REPLAY = UuidSets::REPLAY;
 
-    private const string DIR_GENERATION_PREFIX = 'data-';
-    private const string FILE_DEFINITION = 'definition.json';
     /** The number of errors kept in the state (State::$errors), the last ones. */
-    public const int MAX_ERRORS = 20;
-    private const int SNAPSHOT_CHUNK = 10000;
+    public const int MAX_ERRORS = State::MAX_ERRORS;
 
-    /** the documents asked for at once when looking for those built from changed referenced objects */
-    private const int REFERENCING_LIMIT = 500;
-
-    /** the changed referenced objects looked up at once */
-    private const int REFERENCED_BATCH = 50;
-
-    /** @var array<int, EngineIndexInterface> open generations */
-    private array $handles = [];
-
-    /** @var array<string, true> classes of referenced objects read since the state was loaded, see withState() */
-    private array $joinedClasses = [];
+    private readonly string $name;
+    private readonly IndexRecords $records;
+    private readonly UuidSets $sets;
+    private readonly Generations $generations;
+    private readonly DocumentIndexer $indexer;
+    private readonly Synchronizer $synchronizer;
+    private readonly Builder $builder;
+    private readonly PathResolver $paths;
 
     /**
      * @param ObjectStorage $storage The storage of the indexed objects.
@@ -76,16 +61,24 @@ final class Index implements IndexInterface
      */
     public function __construct(
         private readonly ObjectStorage   $storage,
-        private readonly ObjectStorage   $meta,
+        ObjectStorage                    $meta,
         private readonly string          $directory,
         private readonly EngineInterface $engine,
     )
     {
+        $this->name = basename($directory);
+        $this->records = new IndexRecords($meta, $this->name);
+        $this->sets = new UuidSets($meta, $this->name);
+        $this->generations = new Generations($directory, $this->name, $engine, $storage);
+        $this->indexer = new DocumentIndexer($storage, $this->generations);
+        $this->synchronizer = new Synchronizer($this->sets, $this->generations, $this->indexer, $storage);
+        $this->builder = new Builder($storage, $engine, $this->sets, $this->generations, $this->indexer, $this->synchronizer, $this->name);
+        $this->paths = new PathResolver($engine, $this->name);
     }
 
     public function getName(): string
     {
-        return basename($this->directory);
+        return $this->name;
     }
 
     public function getEngineName(): string
@@ -103,7 +96,7 @@ final class Index implements IndexInterface
      */
     public static function definitionUuid(string $name): string
     {
-        return static::uuidFor('definition', $name);
+        return IndexRecords::definitionUuid($name);
     }
 
     /**
@@ -111,7 +104,7 @@ final class Index implements IndexInterface
      */
     public static function stateUuid(string $name): string
     {
-        return static::uuidFor('state', $name);
+        return IndexRecords::stateUuid($name);
     }
 
     /**
@@ -119,39 +112,33 @@ final class Index implements IndexInterface
      */
     public static function lockUuid(string $name): string
     {
-        return static::uuidFor('lock', $name);
+        return IndexRecords::lockUuid($name);
+    }
+
+    /**
+     * The UUID of a set of UUIDs of an index in the internal storage, derived from its name.
+     *
+     * @param string $kind One of the TRIE_ constants.
+     */
+    public static function trieUuid(string $name, string $kind): string
+    {
+        return UuidSets::uuid($name, $kind);
     }
 
     public function getDefinition(): Definition
     {
-        try {
-            $definition = $this->meta->load(static::definitionUuid($this->getName()));
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Unable to load the definition of search index "%s".', $this->getName()), previous: $e);
-        }
-
-        if (!$definition instanceof Definition) {
-            throw new SearchException(sprintf('The definition of search index "%s" is missing.', $this->getName()));
-        }
-
-        return $definition;
+        return $this->records->definition();
     }
 
     public function getActiveDefinition(): ?Definition
     {
         $generation = $this->getState()->generation;
-        return null === $generation ? null : $this->getGenerationDefinition($generation);
+        return null === $generation ? null : $this->generations->definition($generation);
     }
 
     public function getState(): State
     {
-        try {
-            $state = $this->meta->load(static::stateUuid($this->getName()));
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Unable to load the state of search index "%s".', $this->getName()), previous: $e);
-        }
-
-        return $state instanceof State ? $state : new State($this->getName());
+        return $this->records->state();
     }
 
     public function getStatus(): string
@@ -176,27 +163,27 @@ final class Index implements IndexInterface
 
     public function countPendingChanges(): int
     {
-        return $this->readTrie(self::TRIE_PENDING)->count() + $this->readTrie(self::TRIE_REFERENCED)->count();
+        return $this->synchronizer->countPending();
     }
 
     public function hasPendingChange(string $uuid): bool
     {
-        return $this->readTrie(self::TRIE_PENDING)->contains($uuid);
+        return $this->sets->read(UuidSets::PENDING)->contains($uuid);
     }
 
     public function listPendingChanges(int $limit): array
     {
-        return array_values(array_map('strval', $this->readTrie(self::TRIE_PENDING)->first(max(0, $limit))));
+        return array_values(array_map('strval', $this->sets->read(UuidSets::PENDING)->first(max(0, $limit))));
     }
 
     public function countPendingReferenceChanges(): int
     {
-        return $this->readTrie(self::TRIE_REFERENCED)->count();
+        return $this->sets->count(UuidSets::REFERENCED);
     }
 
     public function recordChange(string ...$uuids): void
     {
-        $this->addToTrie(self::TRIE_PENDING, $uuids);
+        $this->sets->add(UuidSets::PENDING, $uuids);
     }
 
     /**
@@ -205,7 +192,7 @@ final class Index implements IndexInterface
      */
     public function recordReferenceChange(string ...$uuids): void
     {
-        $this->addToTrie(self::TRIE_REFERENCED, $uuids);
+        $this->sets->add(UuidSets::REFERENCED, $uuids);
     }
 
     /**
@@ -229,9 +216,9 @@ final class Index implements IndexInterface
     public function sync(bool $wait = true, int $batchSize = 500, bool $purgeExpired = true, ?int $maxChanges = null): int
     {
         return $this->withState(function (State $state) use ($batchSize, $purgeExpired, $maxChanges): int {
-            $applied = $this->applyPending($state, $batchSize, $maxChanges);
+            $applied = $this->synchronizer->applyPending($state, $batchSize, $maxChanges);
 
-            $expired = $purgeExpired ? $this->removeExpired($state, $batchSize) : 0;
+            $expired = $purgeExpired ? $this->synchronizer->removeExpired($state, $batchSize) : 0;
 
             $state->lastSyncAt = (new DateTimeImmutable())->format(DATE_ATOM);
             // before the first build there are no documents to update
@@ -243,101 +230,10 @@ final class Index implements IndexInterface
         }, $wait) ?? 0;
     }
 
-    /**
-     * Applies the pending changes (those of referenced objects too) to the active generation, and to a running build
-     * at its end; under the lock of the index.
-     *
-     * @param int|null $maxChanges The number of changes to apply at most; the others stay pending. Null for all.
-     * @return int The number of applied changes.
-     * @throws SearchException
-     */
-    private function applyPending(State $state, int $batchSize, ?int $maxChanges = null): int
-    {
-        $applied = 0;
-
-        $this->expandReferenceChanges($state);
-
-        while (null === $maxChanges || $applied < $maxChanges) {
-            // taken out before they are applied: a change recorded meanwhile is recorded again and not lost
-            $uuids = $this->takeFromTrie(self::TRIE_PENDING, null === $maxChanges ? $batchSize : max(1, min($batchSize, $maxChanges - $applied)));
-            if ([] === $uuids) {
-                break;
-            }
-            try {
-                if (null !== $state->generation) {
-                    $state->errors = $this->applyChanges($state->generation, $uuids, $state->errors)['errors'];
-                }
-                $this->replayIfBuilding($state, $uuids);
-            } catch (Throwable $e) {
-                $this->recordChange(...$uuids);
-                throw $e;
-            }
-
-            $applied += count($uuids);
-        }
-
-        return $applied;
-    }
-
-    /**
-     * Turns the changes of referenced objects into pending changes of the documents built from them, in the active
-     * generation and in the one being built.
-     *
-     * @throws SearchException
-     */
-    private function expandReferenceChanges(State $state): void
-    {
-        $generations = array_values(array_filter([$state->generation, $state->build['generation'] ?? null], static fn(?int $generation): bool => null !== $generation));
-
-        while ([] !== ($uuids = $this->takeFromTrie(self::TRIE_REFERENCED, self::REFERENCED_BATCH))) {
-            $dependents = [];
-            try {
-                foreach ($generations as $generation) {
-                    foreach ($this->findReferencing($this->openGeneration($generation), $uuids) as $uuid) {
-                        $dependents[$uuid] = true;
-                    }
-                }
-            } catch (Throwable $e) {
-                // e.g. a generation built before documents recorded their referenced objects: rebuilding it helps
-                $this->addError($state, 'Referenced objects', $e);
-                continue;
-            }
-
-            if ([] !== $dependents) {
-                $this->recordChange(...array_map('strval', array_keys($dependents)));
-            }
-        }
-    }
-
-    /**
-     * The documents built from referenced objects. The engine returns a limited number at once: if the limit is
-     * reached, the UUIDs are asked for by longer prefixes, so any number of documents is found.
-     *
-     * @param string[] $uuids UUIDs of referenced objects.
-     * @return string[]
-     * @throws SearchException
-     */
-    private function findReferencing(EngineIndexInterface $handle, array $uuids, string $prefix = ''): array
-    {
-        $found = $handle->referencing($uuids, self::REFERENCING_LIMIT, $prefix);
-        if (count($found) < self::REFERENCING_LIMIT || strlen($prefix) >= 36) {
-            return $found;
-        }
-
-        // the next character of a UUID: the hyphens are at fixed positions
-        $next = in_array(strlen($prefix), [8, 13, 18, 23], true) ? ['-'] : str_split('0123456789abcdefABCDEF');
-        $result = [];
-        foreach ($next as $character) {
-            array_push($result, ...$this->findReferencing($handle, $uuids, $prefix . $character));
-        }
-
-        return $result;
-    }
-
     public function purgeExpired(bool $wait = true, int $batchSize = 500): int
     {
         return $this->withState(function (State $state) use ($batchSize): int {
-            $removed = $this->removeExpired($state, $batchSize);
+            $removed = $this->synchronizer->removeExpired($state, $batchSize);
             if ($removed > 0) {
                 $state->addUpdate(State::UPDATE_EXPIRED, 0, $removed, $this->countDocumentsOf($state));
             }
@@ -345,121 +241,10 @@ final class Index implements IndexInterface
         }, $wait) ?? 0;
     }
 
-    /**
-     * Removes the documents of expired objects: the engine finds the documents whose expiration has passed, and
-     * their current state is applied. Expired (or deleted) objects are removed; objects whose lifetime was
-     * extended meanwhile are updated instead.
-     *
-     * @return int The number of removed documents.
-     */
-    private function removeExpired(State $state, int $batchSize): int
-    {
-        if (null === $state->generation) {
-            return 0;
-        }
-
-        $handle = $this->openGeneration($state->generation);
-        $removed = 0;
-        $seen = [];
-
-        // each round applies the current state, so a document isn't found again; $seen guards against engines
-        // reporting a document twice
-        for ($round = 0; $round < 10000; $round++) {
-            try {
-                $uuids = array_values(array_diff($handle->expired(microtime(true), max(1, $batchSize)), array_keys($seen)));
-            } catch (Throwable $e) {
-                // e.g. a generation built before the expiration was indexed: rebuilding it helps
-                $this->addError($state, 'Expired objects', $e);
-                break;
-            }
-
-            if ([] === $uuids) {
-                break;
-            }
-
-            foreach ($uuids as $uuid) {
-                $seen[$uuid] = true;
-            }
-
-            $before = $handle->count();
-            $state->errors = $this->applyChanges($state->generation, $uuids, $state->errors)['errors'];
-            $removed += max(0, $before - $handle->count());
-
-            $this->replayIfBuilding($state, $uuids);
-        }
-
-        $state->lastExpiredRemoved = $removed;
-
-        return $removed;
-    }
-
-    /**
-     * A running build may have read the objects before they changed: they are applied to it at its end.
-     *
-     * @param string[] $uuids
-     * @throws SearchException
-     */
-    private function replayIfBuilding(State $state, array $uuids): void
-    {
-        if (null !== $state->build) {
-            $this->addToTrie(self::TRIE_REPLAY, $uuids);
-        }
-    }
-
-    /**
-     * Logs an error and keeps it in the state (the last MAX_ERRORS).
-     */
-    private function addError(State $state, string $context, Throwable $e): void
-    {
-        $this->storage->getLogger()?->log($e);
-        $state->errors = array_slice([...$state->errors, $context . ': ' . $e->getMessage()], -self::MAX_ERRORS);
-    }
-
     public function startBuild(): array
     {
         return $this->withState(function (State $state): array {
-            if (null !== $state->build) {
-                throw new IndexBuildInProgressException(sprintf('Search index "%s" is being built already.', $this->getName()));
-            }
-
-            $definition = $this->getDefinition();
-            $this->engine->validate($definition);
-
-            $generation = max([$state->generation ?? 0, ...$this->listGenerations()]) + 1;
-            $generationDir = $this->generationPath($generation);
-
-            Directory::remove($generationDir);
-            if (!@mkdir($generationDir, 0777, true) && !is_dir($generationDir)) {
-                throw new SearchException(sprintf('Unable to create directory %s.', $generationDir));
-            }
-            $this->writeGenerationDefinition($generation, $definition);
-
-            // the UUIDs to index, stored as one record, so the build can be continued step by step (and by other requests)
-            $queue = new UuidTrie();
-            $chunk = [];
-            foreach ($this->storage->list($definition->className) as $uuid) {
-                $chunk[] = $uuid;
-                if (count($chunk) >= self::SNAPSHOT_CHUNK) {
-                    $queue->add(...$chunk);
-                    $chunk = [];
-                }
-            }
-            $queue->add(...$chunk);
-            $total = $queue->count();
-
-            $this->replaceTrie(self::TRIE_BUILD, $queue);
-            $this->deleteTrie(self::TRIE_REPLAY);
-
-            $state->build = [
-                'generation' => $generation,
-                'total' => $total,
-                'processed' => 0,
-                'failed' => 0,
-                'cursor' => null,
-                'startedAt' => (new DateTimeImmutable())->format(DATE_ATOM),
-            ];
-            $state->errors = [];
-
+            $this->builder->start($state, $this->getDefinition());
             return $this->getProgress($state);
         });
     }
@@ -467,31 +252,7 @@ final class Index implements IndexInterface
     public function buildStep(int $batchSize = self::DEFAULT_BATCH_SIZE): array
     {
         return $this->withState(function (State $state) use ($batchSize): array {
-            $build = $state->build;
-            if (null === $build) {
-                return $this->getProgress($state);
-            }
-
-            // one more than needed tells whether this is the last step
-            $batchSize = max(1, $batchSize);
-            $uuids = $this->readTrie(self::TRIE_BUILD)->first($batchSize + 1, $build['cursor']);
-            $finished = count($uuids) <= $batchSize;
-            $uuids = array_slice($uuids, 0, $batchSize);
-
-            if ([] !== $uuids) {
-                $result = $this->applyChanges($build['generation'], $uuids, $state->errors);
-                $state->errors = $result['errors'];
-                $build['failed'] += $result['failed'];
-                $build['processed'] += count($uuids);
-                $build['cursor'] = end($uuids);
-            }
-
-            $state->build = $build;
-
-            if ($finished) {
-                $this->finishBuild($state);
-            }
-
+            $this->builder->step($state, $batchSize);
             return $this->getProgress($state);
         });
     }
@@ -512,15 +273,7 @@ final class Index implements IndexInterface
     public function cancelBuild(): void
     {
         $this->withState(function (State $state): void {
-            if (null === $state->build) {
-                return;
-            }
-
-            $this->removeGeneration($state->build['generation']);
-            $this->deleteTrie(self::TRIE_BUILD);
-            $this->deleteTrie(self::TRIE_REPLAY);
-
-            $state->build = null;
+            $this->builder->cancel($state);
         });
     }
 
@@ -566,17 +319,14 @@ final class Index implements IndexInterface
         }
 
         if ($request instanceof Request) {
-            $request = $this->resolvePaths($request, $this->getGenerationDefinition($generation));
+            $request = $this->paths->resolve($request, $this->generations->definition($generation));
         }
 
-        return $this->openGeneration($generation)->search($request);
+        return $this->generations->open($generation)->search($request);
     }
 
     /**
-     * Fields named by their paths: a search may name a field by its path instead of its name, in the filter, the
-     * sort, the facets and the fields searched, e.g. "friend.name = 'Homa'" for a field "friendName" with the path
-     * "friend.name". A path also leads into referenced objects (see "Joins" in docs/search.md), but only to values
-     * indexed: a path that isn't the path of a field fails.
+     * Fields named by their paths, see PathResolver.
      *
      * @param Definition|null $definition The definition searched; the one of the last build by default.
      * @return Request The request with field names.
@@ -585,63 +335,7 @@ final class Index implements IndexInterface
      */
     public function resolvePaths(Request $request, ?Definition $definition = null): Request
     {
-        $definition ??= $this->getActiveDefinition() ?? $this->getDefinition();
-
-        // names come first: a path that is also the name of a field names that field
-        $fieldNames = array_fill_keys(array_map(static fn($field): string => $field->name, $definition->fields), true);
-        $names = [];
-        foreach ($definition->fields as $field) {
-            if ($field->path !== $field->name && !isset($fieldNames[$field->path])) {
-                $names[$field->path] ??= $field->name;
-            }
-        }
-
-        $unknown = [];
-        $rename = static function (string $attribute) use ($names, &$unknown): string {
-            if (str_contains($attribute, '.') && !isset($names[$attribute])) {
-                $unknown[$attribute] = true;
-            }
-            return $names[$attribute] ?? $attribute;
-        };
-
-        $filter = $request->filter;
-        if (null !== $filter && '' !== trim($filter)) {
-            array_map($rename, $this->engine->filterAttributes($filter));
-            if ([] !== $names) {
-                $filter = $this->engine->renameFilterAttributes($filter, $names);
-            }
-        }
-        $sort = array_map(static function (string $criterion) use ($rename): string {
-            $at = strrpos($criterion, ':');
-            return false === $at ? $rename($criterion) : $rename(substr($criterion, 0, $at)) . substr($criterion, $at);
-        }, $request->sort);
-        $facets = array_map($rename, $request->facets);
-        $searchOn = array_map($rename, $request->searchOn);
-
-        if ([] !== $unknown) {
-            throw new UnknownPathException(sprintf(
-                'Search index "%s" has no field with the path %s: add a field with the path and rebuild the index.',
-                $this->getName(),
-                implode(', ', array_map(static fn(string $path): string => '"' . $path . '"', array_keys($unknown)))
-            ));
-        }
-
-        if ($filter === $request->filter && $sort === $request->sort && $facets === $request->facets && $searchOn === $request->searchOn) {
-            return $request;
-        }
-
-        return new Request(
-            query: $request->query,
-            filter: $filter,
-            sort: $sort,
-            facets: $facets,
-            page: $request->page,
-            hitsPerPage: $request->hitsPerPage,
-            highlight: $request->highlight,
-            highlightStartTag: $request->highlightStartTag,
-            highlightEndTag: $request->highlightEndTag,
-            searchOn: $searchOn,
-        );
+        return $this->paths->resolve($request, $definition ?? $this->getActiveDefinition() ?? $this->getDefinition());
     }
 
     public function searchObjects(object $request): Generator
@@ -667,7 +361,7 @@ final class Index implements IndexInterface
             if (null !== $state->build) {
                 throw new IndexBuildInProgressException(sprintf('Search index "%s" is being built; cancel the build first.', $this->getName()));
             }
-            $this->meta->store($definition, static::definitionUuid($this->getName()));
+            $this->records->storeDefinition($definition);
         });
     }
 
@@ -679,23 +373,11 @@ final class Index implements IndexInterface
      */
     public function remove(): void
     {
-        $this->close();
-
-        foreach ($this->listGenerations() as $generation) {
-            $this->removeEngineData($generation);
-        }
+        $this->generations->removeAllEngineData();
 
         try {
-            $name = $this->getName();
-            $uuids = [static::definitionUuid($name), static::stateUuid($name)];
-            foreach ([self::TRIE_PENDING, self::TRIE_REFERENCED, self::TRIE_BUILD, self::TRIE_REPLAY] as $kind) {
-                $uuids[] = static::trieUuid($name, $kind);
-            }
-            foreach ($uuids as $uuid) {
-                if ($this->meta->exists($uuid)) {
-                    $this->meta->delete($uuid); // waits for a running change
-                }
-            }
+            $this->records->remove();
+            $this->sets->deleteAll();
         } catch (Throwable $e) {
             throw new SearchException(message: sprintf('Unable to remove search index "%s".', $this->getName()), previous: $e);
         }
@@ -703,184 +385,35 @@ final class Index implements IndexInterface
         Directory::remove($this->directory);
     }
 
-    /**
-     * The UUID of a set of UUIDs of an index in the internal storage, derived from its name.
-     *
-     * @param string $kind One of the TRIE_ constants.
-     */
-    public static function trieUuid(string $name, string $kind): string
-    {
-        return static::uuidFor('trie:' . $kind, $name);
-    }
-
-    /**
-     * Reads a set of UUIDs as stored; an empty one if there is none.
-     *
-     * @throws SearchException
-     */
-    private function readTrie(string $kind): UuidTrie
-    {
-        $uuid = static::trieUuid($this->getName(), $kind);
-
-        try {
-            $trie = $this->meta->exists($uuid) ? $this->meta->load($uuid) : null;
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Unable to read the %s UUIDs of search index "%s".', $kind, $this->getName()), previous: $e);
-        }
-
-        return $trie instanceof UuidTrie ? $trie : new UuidTrie();
-    }
-
-    /**
-     * Changes a set of UUIDs: loads it exclusively, which locks it also for other processes, runs the callback
-     * and stores it, which releases the lock.
-     *
-     * @param callable(UuidTrie): mixed $change
-     * @return mixed The result of the callback.
-     * @throws SearchException
-     */
-    private function changeTrie(string $kind, callable $change): mixed
-    {
-        $uuid = static::trieUuid($this->getName(), $kind);
-        $lockAdapter = $this->meta->getLockAdapter();
-
-        try {
-            // an exclusive load keeps the lock also if nothing is stored yet
-            $trie = $this->meta->load($uuid, exclusive: true) ?? new UuidTrie();
-            if (!$trie instanceof UuidTrie) {
-                throw new SearchException(sprintf('The %s UUIDs of search index "%s" are invalid.', $kind, $this->getName()));
-            }
-
-            $result = $change($trie);
-            $this->meta->store($trie, $uuid);
-
-            return $result;
-        } catch (SearchException $e) {
-            throw $e;
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Unable to change the %s UUIDs of search index "%s".', $kind, $this->getName()), previous: $e);
-        } finally {
-            $lockAdapter->releaseLockIfHeld($uuid);
-        }
-    }
-
-    /**
-     * Adds UUIDs to a set of UUIDs.
-     *
-     * @param string[] $uuids
-     * @throws SearchException
-     */
-    private function addToTrie(string $kind, array $uuids): void
-    {
-        $this->changeTrie($kind, static fn(UuidTrie $trie): int => $trie->add(...$uuids));
-    }
-
-    /**
-     * Takes the first UUIDs out of a set of UUIDs.
-     *
-     * @return string[]
-     * @throws SearchException
-     */
-    private function takeFromTrie(string $kind, int $count): array
-    {
-        return $this->changeTrie($kind, static function (UuidTrie $trie) use ($count): array {
-            $uuids = $trie->first($count);
-            $trie->remove(...$uuids);
-            return $uuids;
-        });
-    }
-
-    /**
-     * Replaces a set of UUIDs.
-     *
-     * @throws SearchException
-     */
-    private function replaceTrie(string $kind, UuidTrie $trie): void
-    {
-        try {
-            $this->meta->store($trie, static::trieUuid($this->getName(), $kind));
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Unable to store the %s UUIDs of search index "%s".', $kind, $this->getName()), previous: $e);
-        }
-    }
-
-    /**
-     * Removes a set of UUIDs.
-     *
-     * @throws SearchException
-     */
-    private function deleteTrie(string $kind): void
-    {
-        $uuid = static::trieUuid($this->getName(), $kind);
-
-        try {
-            if ($this->meta->exists($uuid)) {
-                $this->meta->delete($uuid);
-            }
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Unable to remove the %s UUIDs of search index "%s".', $kind, $this->getName()), previous: $e);
-        }
-    }
-
     public function close(): void
     {
-        foreach (array_keys($this->handles) as $generation) {
-            $this->closeGeneration($generation);
-        }
+        $this->generations->closeAll();
     }
 
     /**
-     * Runs a change of the state under the lock of the index, which serializes the syncs and build steps of all
-     * processes. The lock is a lock of the internal storage under a UUID of its own, not the lock of the state
-     * object: that one is only held while the state is written, so searches, which read the state, don't wait for
-     * a sync or build step.
+     * Runs a change of the state under the lock of the index (see IndexRecords::withState()) and keeps the classes
+     * of the referenced objects read meanwhile in the state.
      *
-     * @param callable(State): mixed $callback
-     * @return mixed The result of the callback, null if $wait is false and another process holds the lock.
+     * @template T
+     * @param callable(State): T $callback
+     * @return T|null The result of the callback, null if $wait is false and another process holds the lock.
      * @throws SearchException
      */
     private function withState(callable $callback, bool $wait = true): mixed
     {
-        $lockUuid = static::lockUuid($this->getName());
-        $stateUuid = static::stateUuid($this->getName());
-        $lockAdapter = $this->meta->getLockAdapter();
-
-        try {
-            $lockAdapter->acquireExclusiveLock($lockUuid, $wait ? LockAdapterInterface::LOCK_TIMEOUT_DEFAULT : 0);
-        } catch (LockException $e) {
-            if ($wait) {
-                throw new SearchException(message: sprintf('Search index "%s" is locked by another process.', $this->getName()), previous: $e);
-            }
-            return null;
-        }
-
-        try {
-            // all changes of the state happen under the lock, so it is read as it is
-            $state = $this->meta->load($stateUuid);
-            if (!$state instanceof State) {
-                throw new SearchException(sprintf('Search index "%s" doesn\'t exist.', $this->getName()));
-            }
-
-            $this->joinedClasses = [];
+        return $this->records->withState(function (State $state) use ($callback): mixed {
+            $this->indexer->takeJoinedClasses();
             $result = $callback($state);
 
             // the classes of referenced objects only grow: documents of the active generation may still have been
             // built from objects of a class the current definition doesn't lead to anymore
-            if ([] !== ($joined = array_diff(array_keys($this->joinedClasses), $state->joinedClasses))) {
+            if ([] !== ($joined = array_diff($this->indexer->takeJoinedClasses(), $state->joinedClasses))) {
                 $state->joinedClasses = [...$state->joinedClasses, ...$joined];
                 sort($state->joinedClasses);
             }
 
-            $this->meta->store($state, $stateUuid);
-
             return $result;
-        } catch (SearchException $e) {
-            throw $e;
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Search index "%s": %s', $this->getName(), $e->getMessage()), previous: $e);
-        } finally {
-            $lockAdapter->releaseLockIfHeld($lockUuid);
-        }
+        }, $wait);
     }
 
     private function statusOf(State $state): string
@@ -888,257 +421,14 @@ final class Index implements IndexInterface
         return match (true) {
             null !== $state->build => self::STATUS_BUILDING,
             null === $state->generation => self::STATUS_NEW,
-            !$this->getDefinition()->equals($this->getGenerationDefinition($state->generation)) => self::STATUS_OUTDATED,
+            !$this->getDefinition()->equals($this->generations->definition($state->generation)) => self::STATUS_OUTDATED,
             default => self::STATUS_READY,
         };
     }
 
     private function countDocumentsOf(State $state): ?int
     {
-        return null === $state->generation ? null : $this->openGeneration($state->generation)->count();
-    }
-
-    /**
-     * Indexes the current state of the given objects in a generation: stored objects of the indexed class are
-     * added or updated, all others (deleted, expired, of another class) are removed.
-     *
-     * @param string[] $uuids
-     * @param string[] $errors The errors so far.
-     * @return array{failed: int, errors: string[]}
-     * @throws SearchException
-     */
-    private function applyChanges(int $generation, array $uuids, array $errors): array
-    {
-        $definition = $this->getGenerationDefinition($generation);
-        // paths lead into referenced objects, read like the objects themselves
-        $builder = new DocumentBuilder($definition, function (string $uuid): ?array {
-            $stored = $this->readObject($uuid);
-            return null === $stored ? null : [$stored[1], $stored[0]->getReservedReferenceName(), $stored[0]->getClassName()];
-        });
-        $handle = $this->openGeneration($generation);
-
-        $documents = [];
-        $remove = [];
-        $failed = 0;
-
-        foreach (array_unique($uuids) as $uuid) {
-            try {
-                $stored = $this->readObject($uuid);
-                if (null === $stored || $stored[0]->getClassName() !== $definition->className) {
-                    $remove[] = $uuid;
-                    continue;
-                }
-                $documents[$uuid] = $builder->build($uuid, $stored[1], $stored[0]);
-            } catch (Throwable $e) {
-                $failed++;
-                $remove[] = $uuid;
-                $errors[] = sprintf('%s: %s', $uuid, $e->getMessage());
-            }
-        }
-
-        if ([] !== $documents) {
-            // documents the engine rejects (e.g. a type that doesn't match the other documents) are removed,
-            // so no outdated version of them stays searchable
-            foreach ($handle->upsert($documents) as $uuid => $message) {
-                $failed++;
-                $remove[] = (string)$uuid;
-                $errors[] = sprintf('%s: %s', $uuid, $message);
-            }
-        }
-
-        if ([] !== $remove) {
-            $handle->delete(array_values(array_unique($remove)));
-        }
-
-        foreach ($builder->getJoinedClasses() as $className) {
-            $this->joinedClasses[$className] = true;
-        }
-
-        return ['failed' => $failed, 'errors' => array_slice($errors, -self::MAX_ERRORS)];
-    }
-
-    /**
-     * Reads the metadata and data of an object as stored (ObjectStorage::readRaw()): from the files, not the caches
-     * of the storage, which may be outdated in long-running processes, under its lock, with the checksum verified
-     * and interrupted writes completed, as when loading. The object isn't loaded, so its class needn't be available.
-     *
-     * @return array{0: Metadata, 1: array}|null Null if nothing (or an expired object) is stored.
-     * @throws ObjectLoadingFailureException If the object can't be read, e.g. its data doesn't match its checksum.
-     * @throws JsonException
-     */
-    private function readObject(string $uuid): ?array
-    {
-        $object = $this->storage->findRaw($uuid);
-        if (null === $object) {
-            return null;
-        }
-
-        // unlike RawObject::decodedData(), invalid JSON is an error of the document
-        $data = json_decode($object->data, true, 512, JSON_THROW_ON_ERROR);
-
-        return [$object->metadata, is_array($data) ? $data : []];
-    }
-
-    /**
-     * Completes a build: applies the changes taken meanwhile, activates the new generation and applies the changes
-     * still pending to it, so the index is up to date (and used by queries) without a sync. Pending changes are kept
-     * until then: a cancelled build leaves them for the generation that stays active.
-     *
-     * @throws SearchException
-     */
-    private function finishBuild(State $state): void
-    {
-        $generation = $state->build['generation'];
-
-        // syncs only add to the replay set under the lock of the index, which this build step holds
-        $replay = $this->readTrie(self::TRIE_REPLAY);
-        $cursor = null;
-        while ([] !== ($uuids = $replay->first(500, $cursor))) {
-            $state->errors = $this->applyChanges($generation, $uuids, $state->errors)['errors'];
-            $cursor = end($uuids);
-        }
-
-        $processed = $state->build['processed'];
-        $state->generation = $generation;
-        $state->build = null;
-        $state->lastBuildAt = (new DateTimeImmutable())->format(DATE_ATOM);
-        $state->addUpdate(State::UPDATE_BUILD, $processed, 0, $this->countDocumentsOf($state));
-
-        $this->deleteTrie(self::TRIE_BUILD);
-        $this->deleteTrie(self::TRIE_REPLAY);
-
-        // other generations aren't used anymore; data still open by another process is removed next time
-        foreach ($this->listGenerations() as $other) {
-            if ($other !== $generation) {
-                $this->removeGeneration($other);
-            }
-        }
-
-        // changes recorded before or during the build: the new generation reads the objects as they are now; one
-        // that fails stays pending for the next sync
-        try {
-            // (reading them first: taking from a set stores it, also when there is none)
-            if (0 !== $this->countPendingChanges()) {
-                $this->applyPending($state, self::DEFAULT_BATCH_SIZE);
-            }
-        } catch (Throwable $e) {
-            $this->addError($state, 'Pending changes', $e);
-        }
-    }
-
-    private function removeGeneration(int $generation): void
-    {
-        $this->closeGeneration($generation);
-        $this->removeEngineData($generation);
-        Directory::remove($this->generationPath($generation));
-    }
-
-    /**
-     * Lets the engine remove the data of a generation; a failure is only logged.
-     */
-    private function removeEngineData(int $generation): void
-    {
-        try {
-            $this->engine->remove($this->generationPath($generation), $this->getGenerationDefinition($generation));
-        } catch (Throwable $e) {
-            $this->storage->getLogger()?->log($e);
-        }
-    }
-
-    /**
-     * The definition a generation was built with; kept with its data, as the current one may differ.
-     *
-     * @throws SearchException
-     */
-    private function getGenerationDefinition(int $generation): Definition
-    {
-        $path = $this->generationDefinitionPath($generation);
-        $content = is_file($path) ? @file_get_contents($path) : false;
-
-        try {
-            $data = false === $content ? null : json_decode($content, true, 512, JSON_THROW_ON_ERROR);
-            if (!is_array($data)) {
-                throw new SearchException(sprintf('The data of search index "%s" is missing (generation %u).', $this->getName(), $generation));
-            }
-            return Definition::fromArray($data);
-        } catch (SearchException $e) {
-            throw $e;
-        } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Invalid definition of search index "%s" (generation %u).', $this->getName(), $generation), previous: $e);
-        }
-    }
-
-    /**
-     * @throws SearchException
-     */
-    private function writeGenerationDefinition(int $generation, Definition $definition): void
-    {
-        $path = $this->generationDefinitionPath($generation);
-        $json =json_encode($definition->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-        if (false === $json || false === @file_put_contents($path, $json)) {
-            throw new SearchException(sprintf('Unable to write %s.', $path));
-        }
-    }
-
-    /**
-     * @throws SearchException
-     */
-    private function openGeneration(int $generation): EngineIndexInterface
-    {
-        if (!isset($this->handles[$generation])) {
-            try {
-                $this->handles[$generation] = $this->engine->open($this->generationPath($generation), $this->getGenerationDefinition($generation));
-            } catch (SearchException $e) {
-                throw $e;
-            } catch (Throwable $e) {
-                throw new SearchException(message: sprintf('Unable to open search index "%s": %s', $this->getName(), $e->getMessage()), previous: $e);
-            }
-        }
-
-        return $this->handles[$generation];
-    }
-
-    private function closeGeneration(int $generation): void
-    {
-        if (isset($this->handles[$generation])) {
-            $this->handles[$generation]->close();
-            unset($this->handles[$generation]);
-        }
-    }
-
-    /**
-     * @return int[] The generations present on disk.
-     */
-    private function listGenerations(): array
-    {
-        $generations = [];
-        foreach (glob($this->directory . DIRECTORY_SEPARATOR . self::DIR_GENERATION_PREFIX . '*', GLOB_ONLYDIR) ?: [] as $dir) {
-            $suffix = substr(basename($dir), strlen(self::DIR_GENERATION_PREFIX));
-            if (ctype_digit($suffix)) {
-                $generations[] = (int)$suffix;
-            }
-        }
-        sort($generations);
-        return $generations;
-    }
-
-    private function generationPath(int $generation): string
-    {
-        return $this->directory . DIRECTORY_SEPARATOR . self::DIR_GENERATION_PREFIX . $generation;
-    }
-
-    private function generationDefinitionPath(int $generation): string
-    {
-        return $this->generationPath($generation) . DIRECTORY_SEPARATOR . self::FILE_DEFINITION;
-    }
-
-    /**
-     * A UUID derived from a name, so the objects of an index can be found by its name.
-     */
-    private static function uuidFor(string $kind, string $name): string
-    {
-        return Helper::createFixedUuidV4('melia/object-storage:search-index:' . $kind . ':' . $name);
+        return null === $state->generation ? null : $this->generations->open($state->generation)->count();
     }
 
     public function __destruct()

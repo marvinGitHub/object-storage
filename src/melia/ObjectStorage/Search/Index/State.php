@@ -4,7 +4,7 @@ namespace melia\ObjectStorage\Search\Index;
 
 /**
  * The state of a search index, stored as an object in the internal storage of the indexes. It is only changed
- * under the lock of the index (see Index::lockUuid()), so syncs and build steps of all processes run one
+ * under the lock of the index (see IndexRecords::withState()), so syncs and build steps of all processes run one
  * after the other, while searches read it without waiting for them.
  */
 final class State
@@ -15,6 +15,9 @@ final class State
 
     /** The number of updates kept in $updates. */
     public const int MAX_UPDATES = 20;
+
+    /** The number of errors kept in $errors, the last ones. */
+    public const int MAX_ERRORS = 20;
 
     /**
      * The last updates of the documents, newest first: completed builds, syncs that changed documents and removals
@@ -75,6 +78,16 @@ final class State
             'documents' => $documents,
         ]);
         $this->updates = array_slice($this->updates, 0, self::MAX_UPDATES);
+    }
+
+    /**
+     * Adds errors; only the last MAX_ERRORS are kept.
+     */
+    public function addErrors(string ...$errors): void
+    {
+        if ([] !== $errors) {
+            $this->errors = array_slice([...$this->errors, ...$errors], -self::MAX_ERRORS);
+        }
     }
 
     /**
