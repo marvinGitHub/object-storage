@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.14] - 2026-11-25
+
+The fourteenth release candidate of 1.0: queries use search indexes before they are synced, and `EXPLAIN` tells why an index isn't used. **Read [UPGRADE.md](UPGRADE.md#from-100-rc13-to-100-rc14) before upgrading** if you implement `IndexInterface` yourself.
+
+### Added
+- `IndexInterface::listPendingChanges($limit)`: the objects changed since the index saw them; `IndexInterface::countPendingReferenceChanges()`: the changed referenced objects (joins) the next sync applies.
+- `Storage\Components`: the components of a storage with the inputs they were created from, compared with `===`.
+- Viewer: a log page (button **Log**) with the errors of the viewer and of the storages it opened, filtered by storage, and clearing the log. The storages opened by the viewer log to `appData/logs/error.log`, now as JSON lines with the storage directory.
+
+### Changed
+- A search index with pending changes is used by queries: the objects with pending changes are read in addition to the hits of the index (`EXPLAIN`: `+ n pending change(s)`). Only pending changes of referenced objects (joins), or more than 999 candidates, keep the index from being used.
+- A finished build applies the changes still pending to the new generation: a rebuilt index needs no sync.
+- `EXPLAIN` tells why each search index of the class was skipped, e.g. `no index fits the condition (search index users: name not filterable)`; an index failing while a query chooses one shows as `an index failed: …` (and is logged) instead of `no index fits the condition`.
+
 ## [1.0.0-rc.13] - 2026-11-25
 
 The thirteenth release candidate of 1.0: `ObjectStorage` is split into components with dependencies of their own, each tested alone (see [Architecture](docs/architecture.md)). `ObjectStorage` stays the facade: its public API, files, behavior, events and safe mode are unchanged. **Read [UPGRADE.md](UPGRADE.md#from-100-rc12-to-100-rc13) before upgrading** if you extend `ObjectStorage` and override or call its protected methods.

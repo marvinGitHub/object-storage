@@ -1,5 +1,19 @@
 # Upgrading
 
+## From 1.0.0-rc.13 to 1.0.0-rc.14
+
+Nothing has to be migrated: files are unchanged. Queries now use search indexes with pending changes too, with the same results (the objects with pending changes are read as well).
+
+An own implementation of `Search\Index\IndexInterface` (the manager creates `Index`, so this is rare) adds two methods:
+
+```php
+/** @return list<string> the objects changed since the index saw them, at most $limit */
+public function listPendingChanges(int $limit): array;
+
+/** the changed referenced objects (joins) the next sync applies */
+public function countPendingReferenceChanges(): int;
+```
+
 ## From 1.0.0-rc.12 to 1.0.0-rc.13
 
 Nothing has to be migrated: files and behavior are unchanged, and so is the public API of `ObjectStorage`. Code using the storage doesn't notice the split into components.
