@@ -141,10 +141,14 @@ final class IndexRecords
             $this->meta->store($state, $stateUuid);
 
             return $result;
-        } catch (SearchException $e) {
-            throw $e;
         } catch (Throwable $e) {
-            throw new SearchException(message: sprintf('Search index "%s": %s', $this->name, $e->getMessage()), previous: $e);
+            // the cache of the storage holds the state as the failed change left it: read as stored next time, so
+            // the next change doesn't store it along
+            $this->meta->removeFromCache($stateUuid);
+
+            throw $e instanceof SearchException
+                ? $e
+                : new SearchException(message: sprintf('Search index "%s": %s', $this->name, $e->getMessage()), previous: $e);
         } finally {
             $lockAdapter->releaseLockIfHeld($lockUuid);
         }

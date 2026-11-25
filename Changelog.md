@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file. From 1.0 on
 - `Search\Index\Index` is split into components with dependencies of their own, each tested alone (see [Architecture](docs/architecture.md#search-indexes)): `IndexRecords` (definition, state, lock), `UuidSets` (the sets of UUIDs), `Generations` (the data of the engine), `DocumentIndexer`, `Synchronizer`, `Builder`, `PathResolver`, all *internal*. `Index` stays the facade: its API, files and behavior are unchanged.
 - `State::addErrors()`, `State::MAX_ERRORS` (`Index::MAX_ERRORS` stays, the same value).
 
+### Fixed
+- A sync or build step of a search index that failed left its partial changes of the state (e.g. errors, counters) in the cache of the internal storage of the indexes; the next successful sync or build step in the same process stored them along. The state is now read again as stored after a failure.
+
 ## [1.0.0-rc.15] - 2026-11-25
 
 The fifteenth release candidate of 1.0: referenced objects keep their UUID instead of being stored again as a copy, deletes are flushed to disk, and the facade of `ObjectStorage` keeps what users of the storage need. **Read [UPGRADE.md](UPGRADE.md#from-100-rc14-to-100-rc15) before upgrading:** the child persistence policy `IF_NOT_EXIST` now writes loaded references along if they changed, and methods of `ObjectStorage` that only passed a call on to a component are removed.

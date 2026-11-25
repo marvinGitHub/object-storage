@@ -44,8 +44,14 @@ class IndexRecordsTest extends TestCase
             $this->assertSame('Search index "products": failed', $e->getMessage());
         }
 
+        $this->assertNull($records->state()->generation, 'the state is read as stored, not as the failed change left it');
+
+        $records->withState(static function (State $state): void {
+            $state->lastSyncAt = 'now';
+        });
         $this->storage->clearCache();
-        $this->assertNull($records->state()->generation, 'the stored state is unchanged');
+        $this->assertNull($records->state()->generation, 'the next change doesn\'t store the failed one along');
+        $this->assertSame('now', $records->state()->lastSyncAt);
         $this->assertFalse($this->storage->getLockAdapter()->isLockedByThisProcess(IndexRecords::lockUuid('products')));
     }
 
