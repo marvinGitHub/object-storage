@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.13] - 2026-11-25
+
+The thirteenth release candidate of 1.0: `ObjectStorage` is split into components with dependencies of their own, each tested alone (see [Architecture](docs/architecture.md)). `ObjectStorage` stays the facade: its public API, files, behavior, events and safe mode are unchanged. **Read [UPGRADE.md](UPGRADE.md#from-100-rc12-to-100-rc13) before upgrading** if you extend `ObjectStorage` and override or call its protected methods.
+
+### Added
+- Components of the storage in `Storage\`: `ObjectPaths` (the paths, sharded by UUID), `JsonStore` (JSON files, damaged JSON enables safe mode), `ClassNameRegistry` (`classnames.json`), `StubIndex` (objects by class), `MetadataStore` (metadata through its cache), `ObjectFiles` (data and metadata as a group, checksums, interrupted writes), `ObjectCache` (loaded objects), `ObjectSession` (what an instance knows of the objects it loaded and stored), `ObjectReader`, `ObjectWriter`, `ObjectDeleter`, `References`; `Locking\ObjectLocks` with `Locking\RetainedLocks` (locking objects in operations, retained by transactions); `Constraint\ConstraintChecker` with `Constraint\ConstraintRegistry`. Each has a unit test of its own.
+- `ObjectStorage::objectLocks()` *(internal)*: the locks of objects, used by OQL writes and moving objects.
+- `Dispatcher::mayHaveListeners($dispatcher, ...$events)`: whether a listener might be registered for one of the events.
+- [Architecture](docs/architecture.md): the components, the rules for them and the quality gates.
+
+### Changed
+- **Breaking** for subclasses of `ObjectStorage`: the protected methods of loading, storing, deleting and reading files are now private methods of the components, the protected properties of the identity map and revisions are in `ObjectSession`, see [UPGRADE.md](UPGRADE.md#from-100-rc12-to-100-rc13).
+- A lock an operation took itself is released with `releaseLockIfHeld()` everywhere: a lock released meanwhile no longer makes `touch()`, `readRaw()`, `writeRaw()` or storing a referenced object fail with a `LockException`.
+- PHPStan runs at level 5 (was 3), for `src` and `tests`; dead code removed, match expressions made exhaustive, missing `@throws` added.
+- `store()` documents the exceptions it passes on: `RevisionConflictException`, `ConstraintViolationException`, `ObjectSavingFailureException`, and `Exception` in safe mode.
+
 ## [1.0.0-rc.12] - 2026-11-24
 
 The twelfth release candidate of 1.0: the code is simpler, with the same behavior. Long methods are split into named steps (storing, loading, deleting, transactions, OQL, search), repeated code is in one place (releasing locks, reading objects as stored). Files, behavior, events and safe mode are unchanged. **Read [UPGRADE.md](UPGRADE.md#from-100-rc11-to-100-rc12) before upgrading** if you implement `LockAdapterInterface` yourself.

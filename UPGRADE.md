@@ -1,5 +1,24 @@
 # Upgrading
 
+## From 1.0.0-rc.12 to 1.0.0-rc.13
+
+Nothing has to be migrated: files and behavior are unchanged, and so is the public API of `ObjectStorage`. Code using the storage doesn't notice the split into components.
+
+A subclass of `ObjectStorage` that overrides or calls protected members changes them to the components (see [Architecture](docs/architecture.md)):
+
+| Before (protected) | Now |
+|---|---|
+| `storeObject()`, `serializeGraph()`, `transformValueForGraph()` | `Storage\ObjectWriter` (`objectWriter()`) |
+| `hydrateObject()`, `createInstance()`, `hydrateProperties()`, `hydrateArray()`, `resolveReferences()`, `restoreDateTime()`, `supportsLazyReference()` | `Storage\ObjectReader` (`objectReader()`); `loadFromFiles()` stays |
+| `deleteObject()`, `findChildrenToDelete()` | `Storage\ObjectDeleter` (`objectDeleter()`); `delete()` stays |
+| `findReferences()` | `Storage\References::in()` |
+| `readDataFile()`, `findMatchingMetadata()`, `checksumMatches()` | `Storage\ObjectFiles` (`objectFiles()`); `readObjectFiles()`, `writeObjectFiles()`, `recoverInterruptedWrite()`, `generateChecksum()` stay |
+| `completeTimestamps()` | `Storage\MetadataStore` (`metadataStore()`); `loadMetadata()`, `reloadMetadata()`, `writeMetadata()` stay |
+| `$identityMap`, `$revisions`, `$processingStack` | `Storage\ObjectSession`; `getUuidOf()` stays |
+| `$registeredClassNamesCache` | `Storage\ClassNameRegistry` (`classNameRegistry()`) |
+
+The components are `final`: behavior is changed through the strategy (policies, callbacks), events and constraints, as before.
+
 ## From 1.0.0-rc.11 to 1.0.0-rc.12
 
 Nothing has to be migrated: files and behavior are unchanged. An own lock adapter that implements `LockAdapterInterface` directly (not by extending `LockAdapterAbstract`, as `SymfonyLockAdapter` does) adds `releaseLockIfHeld()`:
