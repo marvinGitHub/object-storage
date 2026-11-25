@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file. From 1.0 on
 ### Changed
 - `Search\Index\Index` is split into components with dependencies of their own, each tested alone (see [Architecture](docs/architecture.md#search-indexes)): `IndexRecords` (definition, state, lock), `UuidSets` (the sets of UUIDs), `Generations` (the data of the engine), `DocumentIndexer`, `Synchronizer`, `Builder`, `PathResolver`, all *internal*. `Index` stays the facade: its API, files and behavior are unchanged.
 - `State::addErrors()`, `State::MAX_ERRORS` (`Index::MAX_ERRORS` stays, the same value).
+- `Query\Executor` *(internal)* is split into components, each tested alone (see [Architecture](docs/architecture.md#oql)): `ObjectSource` (finding and reading objects, referenced objects), `Evaluator` (expressions), `Functions` (scalar functions), `Aggregates`, `PlanAnalysis`. `Executor::objectOf()` is now `ObjectSource::objectOf()`. Results, statistics and EXPLAIN are unchanged.
 
 ### Fixed
 - A sync or build step of a search index that failed left its partial changes of the state (e.g. errors, counters) in the cache of the internal storage of the indexes; the next successful sync or build step in the same process stored them along. The state is now read again as stored after a failure.

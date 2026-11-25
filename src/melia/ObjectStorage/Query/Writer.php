@@ -195,7 +195,7 @@ final class Writer
      *
      * @param list<string> $uuids
      * @param callable(array): (array{0: array, 1: array<string, string>}|null) $change The new data and reserved
-     *        names of an object (see Executor::objectOf()); null to leave it.
+     *        names of an object (see ObjectSource::objectOf()); null to leave it.
      * @return list<string> the UUIDs of the objects changed
      */
     private function rewrite(array $uuids, string $done, callable $change): array
@@ -207,7 +207,7 @@ final class Writer
                 // a transaction retains the locks of the objects it changed
                 $isChanged = $this->storage->objectLocks()->exclusively($uuid, function () use ($uuid, $change): bool {
                     $raw = $this->current($uuid);
-                    $object = null === $raw ? null : Executor::objectOf($raw);
+                    $object = null === $raw ? null : ObjectSource::objectOf($raw);
                     $new = null === $object ? null : $change($object);
                     if (null === $new) {
                         return false;
@@ -520,7 +520,7 @@ final class Writer
                 // a transaction retains the locks of the objects it deleted
                 $isDeleted = $this->storage->objectLocks()->exclusively($uuid, function () use ($uuid, $plan, $alias): bool {
                     $raw = $this->current($uuid);
-                    $object = null === $raw ? null : Executor::objectOf($raw);
+                    $object = null === $raw ? null : ObjectSource::objectOf($raw);
                     if (null === $object || (null !== $plan->where && true !== Values::truth($this->executor->evaluate($plan->where, [$alias => $object])))) {
                         return false;
                     }

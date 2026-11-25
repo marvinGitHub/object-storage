@@ -85,6 +85,23 @@ The order of the layers: records, sets, generations → indexer → synchronizer
 referenced objects read meanwhile (`DocumentIndexer::takeJoinedClasses()`) in the state. Each component has a unit
 test of its own (`tests/melia/ObjectStorage/Search/Index/`).
 
+## OQL
+
+`Query\Executor` runs one statement (a plan of the `Planner`) on the objects as stored. It does the work of the
+rows itself (joins, grouping, sorting, `LIMIT`, the columns of the result) and has components for the rest, all
+`@internal` in `Query`:
+
+| Component | Concern |
+|---|---|
+| `ObjectSource` | the objects of a source, found by an index where one fits (`Access`) or all of the class; the referenced objects paths lead to, a bounded number kept; the objects read and how (statistics); the interrupt |
+| `Evaluator` | the value of an expression for a row: columns and paths, operators with three-valued logic, conditions on paths with `*` for any element |
+| `Functions` | the scalar functions (texts, numbers, dates); `NOW()` is the same for the statement |
+| `Aggregates` | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` by their running values, which a group keeps instead of its rows |
+| `PlanAnalysis` | what a plan reads: the properties of each alias (joined objects and groups keep only those), its aggregates |
+
+The `Writer` (`INSERT`, `UPDATE`, `DELETE`) uses the executor for the objects a condition is true for and for the
+values of expressions. Each component has a unit test of its own (`tests/melia/ObjectStorage/Query/`).
+
 ## Rules
 
 - **One concern per component**, named after it. A component knows only the components below it, never the facade

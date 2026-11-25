@@ -2,35 +2,18 @@
 
 namespace melia\ObjectStorage\Query;
 
-use DateTimeImmutable;
-use DateTimeZone;
+use Closure;
 use Generator;
-use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\ObjectStorage;
-use melia\ObjectStorage\Path\Path;
-use melia\ObjectStorage\Path\PathSegment;
-use melia\ObjectStorage\Query\Ast\Between;
-use melia\ObjectStorage\Query\Ast\Binary;
-use melia\ObjectStorage\Query\Ast\BoundColumn;
 use melia\ObjectStorage\Query\Ast\Expr;
-use melia\ObjectStorage\Query\Ast\FunctionCall;
-use melia\ObjectStorage\Query\Ast\InList;
-use melia\ObjectStorage\Query\Ast\IsNull;
 use melia\ObjectStorage\Query\Ast\Join;
-use melia\ObjectStorage\Query\Ast\Like;
-use melia\ObjectStorage\Query\Ast\Literal;
 use melia\ObjectStorage\Query\Ast\OutputColumn;
 use melia\ObjectStorage\Query\Ast\Source;
-use melia\ObjectStorage\Query\Ast\Unary;
 use melia\ObjectStorage\Query\Exception\QueryException;
-use melia\ObjectStorage\Reflection\Reflection;
 use melia\ObjectStorage\Search\DocumentBuilder;
 use melia\ObjectStorage\Search\Index\ManagerInterface;
-use melia\ObjectStorage\Transfer\RawObject;
 use melia\ObjectStorage\Unique\Manager as UniqueManager;
-use melia\ObjectStorage\UUID\Validator as UuidValidator;
 use SplHeap;
-use Throwable;
 
 /**
  * Runs a plan on the objects of a storage, as stored (their data, not loaded objects: the classes aren't needed).
@@ -41,71 +24,50 @@ use Throwable;
  * values of the aggregates, not its rows. What is kept: the joined sources (of their properties only those the query
  * reads), the groups, the rows of the result, and a bounded number of referenced objects.
  *
- * The objects of the source are found by an index where one fits the condition (see Access), otherwise all objects
- * of the class are read. A path follows references (at most DocumentBuilder::MAX_REFERENCES_PER_PATH), a referenced
- * object that doesn't exist or has expired gives NULL; expired objects aren't read.
+ * The executor runs one statement, with its components:
+ *
+ *   ObjectSource   the objects of the sources (by an index or all) and the referenced objects, read as stored
+ *   Evaluator      the values of expressions for a row, with Functions (the scalar functions) and Aggregates
+ *   PlanAnalysis   what a plan reads: the properties of each alias, the aggregates
+ *
+ * What it does itself: rows, joins, grouping, sorting, LIMIT and the columns of the result.
  *
  * @internal Not part of the public API; may change in any release.
  */
 final class Executor
 {
     /** the most referenced objects kept while a query runs, for paths into them */
-    public const int MAX_REFERENCED = 10000;
+    public const int MAX_REFERENCED = ObjectSource::MAX_REFERENCED;
 
-    /** the units of DATE_ADD and DATE_SUB, as names of PHP's relative formats */
-    private const array DATE_UNITS = ['SECOND' => 'second', 'MINUTE' => 'minute', 'HOUR' => 'hour', 'DAY' => 'day', 'WEEK' => 'week', 'MONTH' => 'month', 'YEAR' => 'year'];
+    private readonly ObjectSource $source;
+    private readonly Evaluator $evaluator;
 
-    /** the comparison operators */
-    private const array COMPARISONS = ['=', '!=', '<', '<=', '>', '>='];
+    /** @var Closure(string): ?array{0: array, 1: string} */
+    private readonly Closure $follow;
 
-    /** @var array<string, ?array{uuid: string, data: array, reserved: string}> referenced objects read, by UUID */
-    private array $referenced = [];
-
-    /** @var list<string>|null */
-    private ?array $classNames = null;
-
-    /** NOW(): the same for the whole statement */
-    private ?DateValue $now = null;
-
-    private \Closure $follow;
-
-    private Access $access;
-
-    /** the objects read from the storage (Statistics::$objectsRead) */
-    private int $objectsRead = 0;
-
-    /** @var list<array{source: string, class: string, access: string}> how the objects of each source were found */
-    private array $accessed = [];
-
+    /**
+     * @param \Closure(): void|null $interrupt Throws a QueryInterruptedException to stop the statement.
+     */
     public function __construct(
-        private readonly ObjectStorage $storage,
-        ?ManagerInterface              $search = null,
-        ?UniqueManager                 $unique = null,
-        bool                           $useIndexes = true,
-        private readonly ?\Closure     $interrupt = null,
+        ObjectStorage     $storage,
+        ?ManagerInterface $search = null,
+        ?UniqueManager    $unique = null,
+        bool              $useIndexes = true,
+        ?Closure          $interrupt = null,
     )
     {
-        $this->access =new Access($storage, $useIndexes ? $search : null, $useIndexes ? $unique : null, $useIndexes);
-        $this->follow = function (string $uuid): ?array {
-            if (!array_key_exists($uuid, $this->referenced)) {
-                if (count($this->referenced) >= self::MAX_REFERENCED) {
-                    // the older half goes
-                    $this->referenced = array_slice($this->referenced, intdiv(self::MAX_REFERENCED, 2), null, true);
-                }
-                $this->referenced[$uuid] = $this->read($uuid, strict: true);
-            }
-            $object = $this->referenced[$uuid];
-            return null === $object ? null : [$object['data'], $object['reserved']];
-        };
+        $this->source = new ObjectSource($storage, $search, $unique, $useIndexes, $interrupt);
+        $this->follow = $this->source->follow();
+        $this->evaluator = new Evaluator($this->follow, new Functions());
     }
 
     /**
-     * Stops the statement if its $interrupt says so (throws a QueryInterruptedException); called for every object
+     * Stops the statement if its interrupt says so (throws a QueryInterruptedException); called for every object
      * read, joined pair and object written.
      */
     public function checkpoint(): void
     {
-        $this->interrupt?->__invoke();
+        $this->source->checkpoint();
     }
 
     /**
@@ -113,7 +75,7 @@ final class Executor
      */
     public function objectsRead(): int
     {
-        return $this->objectsRead;
+        return $this->source->objectsRead();
     }
 
     /**
@@ -123,7 +85,23 @@ final class Executor
      */
     public function accessed(): array
     {
-        return $this->accessed;
+        return $this->source->accessed();
+    }
+
+    /**
+     * The class of a source: its full name, or its short name if one stored class has it.
+     */
+    public function classOf(Source $source): string
+    {
+        return $this->source->classOf($source);
+    }
+
+    /**
+     * The value of an expression for a row, see Evaluator::evaluate().
+     */
+    public function evaluate(Expr $expression, array $row, ?array $group = null): mixed
+    {
+        return $this->evaluator->evaluate($expression, $row, $group);
     }
 
     /**
@@ -132,8 +110,8 @@ final class Executor
      */
     public function run(Plan $plan, ?int $maxRows = null): Result
     {
-        $this->referenced = [];
-        $keep = self::keysUsed($plan);
+        $this->source->forgetReferenced();
+        $keep = PlanAnalysis::keysUsed($plan);
         $rows = $this->rows($plan, $keep);
 
         // at most offset + limit rows are needed, one more to tell whether the result has more than $maxRows
@@ -148,7 +126,7 @@ final class Executor
             : $this->ungrouped($plan, $rows, $needed);
 
         if ([] !== $plan->orderBy) {
-            usort($results, fn(array $a, array $b): int => $this->compareResults($plan, $a, $b));
+            usort($results, static fn(array $a, array $b): int => self::compareResults($plan, $a, $b));
         }
         $results = array_slice($results, $plan->offset, $limit);
         $truncated = null !== $maxRows && count($results) > $maxRows;
@@ -167,7 +145,7 @@ final class Executor
     public function explain(Plan $plan): Result
     {
         $rows = [];
-        $access = $this->access->choose($plan->from, $this->classOf($plan->from), $plan->where, true);
+        $access = $this->source->choose($plan->from, $plan->where);
         $rows[] = [$plan->from->alias, $this->classOf($plan->from), $access->kind, $access->details];
         foreach ($plan->joins as $join) {
             $rows[] = [$join['source']->alias, $this->classOf($join['source']), 'all objects (joined)', null === $join['hash']
@@ -175,6 +153,22 @@ final class Executor
                 : 'by hashing: ' . Printer::print($join['hash'][1]) . ' = ' . Printer::print($join['hash'][0])];
         }
         return new Result(['source', 'class', 'access', 'details'], $rows);
+    }
+
+    /**
+     * The rows of the objects of a source a condition is true for, one after another (for UPDATE and DELETE).
+     *
+     * @return Generator<array<string, array>>
+     */
+    public function matching(Source $source, ?Expr $where): Generator
+    {
+        $this->source->forgetReferenced();
+        foreach ($this->source->objectsOf($source, $where) as $object) {
+            $row = [$source->alias => $object];
+            if ($this->evaluator->holds($where, $row)) {
+                yield $row;
+            }
+        }
     }
 
     // ---- rows ----
@@ -187,224 +181,20 @@ final class Executor
      */
     private function rows(Plan $plan, array $keep): Generator
     {
-        $rows = $this->objectsOf($plan->from, $plan->where);
+        $rows = $this->source->objectsOf($plan->from, $plan->where);
         $rows = (static function () use ($rows, $plan): Generator {
             foreach ($rows as $object) {
                 yield [$plan->from->alias => $object];
             }
         })();
         foreach ($plan->joins as $join) {
-            $rows = $this->join($rows, $join, self::keepOf($keep, $join['source']->alias));
+            $rows = $this->join($rows, $join, PlanAnalysis::keepOf($keep, $join['source']->alias));
         }
         foreach ($rows as $row) {
-            if ($this->holds($plan->where, $row)) {
+            if ($this->evaluator->holds($plan->where, $row)) {
                 yield $row;
             }
         }
-    }
-
-    /** whether a condition is true for a row; no condition always is */
-    private function holds(?Expr $condition, array $row, ?array $group = null): bool
-    {
-        return null === $condition || true === Values::truth($this->evaluate($condition, $row, $group));
-    }
-
-    /**
-     * The objects of a source, one after another: those an index finds for the condition (checked by the caller
-     * anyway), or all of the class.
-     *
-     * @return Generator<array{uuid: string, data: array, reserved: string}>
-     */
-    private function objectsOf(Source $source, ?Expr $where): Generator
-    {
-        $class = $this->classOf($source);
-        $access = $this->access->choose($source, $class, $where);
-        $this->accessed[] = ['source' => $source->alias, 'class' => $class, 'access' => $access->kind];
-        $uuids = $access->uuids ?? $this->storage->list($class);
-        foreach ($uuids as $uuid) {
-            $this->checkpoint();
-            $object = $this->read((string)$uuid);
-            // an index may name an object of another class (a unique index of a parent class, a UUID), and so may a
-            // stale stub (e.g. left by an interrupted change of the class): a DELETE must not reach other classes
-            if (null !== $object && $object['class'] === $class) {
-                yield $object;
-            }
-        }
-    }
-
-    /**
-     * The rows of the objects of a source a condition is true for, one after another (for UPDATE and DELETE).
-     *
-     * @return Generator<array<string, array>>
-     */
-    public function matching(Source $source, ?Expr $where): Generator
-    {
-        $this->referenced = [];
-        foreach ($this->objectsOf($source, $where) as $object) {
-            $row = [$source->alias => $object];
-            if ($this->holds($where, $row)) {
-                yield $row;
-            }
-        }
-    }
-
-    /**
-     * An object as stored; null if it doesn't exist or has expired. Not kept: reading many objects leaves nothing
-     * behind (the caches of the storage are bounded too).
-     *
-     * An object that exists but can't be read (locked by another process beyond the timeout, damaged):
-     * - as a row of a source (not strict) it is left out, like an object that doesn't exist: a statement isn't
-     *   stopped by an object it doesn't concern, e.g. one locked by a transaction of another process;
-     * - as a referenced object (strict) it fails the statement: taken as NULL, a condition like
-     *   `ref.name IS NULL` would hold, and a DELETE or UPDATE would change objects whose referenced object is fine.
-     *
-     * @throws QueryException If strict and the object exists but can't be read.
-     */
-    private function read(string $uuid, bool $strict = false): ?array
-    {
-        $this->objectsRead++;
-        try {
-            $raw = $this->storage->findRaw($uuid);
-        } catch (Throwable $e) {
-            if (!$strict) {
-                return null;
-            }
-            throw new QueryException(sprintf('The referenced object %s can\'t be read: %s', $uuid, $e->getMessage()), null, $e);
-        }
-        return null === $raw ? null : self::objectOf($raw);
-    }
-
-    /**
-     * An object of a row: its UUID, data, reserved reference name and reserved key of dates; null if expired or not
-     * readable.
-     *
-     * Also when it was created and modified (seconds since 1970, for CREATED() and MODIFIED()).
-     *
-     * @return array{uuid: string, class: string, data: array, reserved: string, dateTime: string, created: ?float, modified: ?float}|null
-     */
-    public static function objectOf(RawObject $raw): ?array
-    {
-        $data = $raw->isExpired() ? null : $raw->decodedData();
-        return null !== $data
-            ? [
-                'uuid' => $raw->uuid, 'class' => (string)$raw->metadata->getClassName(), 'data' => $data, 'reserved' => $raw->metadata->getReservedReferenceName(), 'dateTime' => $raw->metadata->getReservedDateTimeName(),
-                'created' => $raw->metadata->getTimestampCreation(), 'modified' => $raw->metadata->getTimestampModification(),
-            ]
-            : null;
-    }
-
-    /**
-     * The class of a source: its full name, or its short name if one stored class has it.
-     */
-    public function classOf(Source $source): string
-    {
-        $this->classNames ??= $this->storage->getClassNames();
-        $name = $source->class;
-        if (in_array($name, $this->classNames, true)) {
-            return $name;
-        }
-        $matches = array_values(array_filter($this->classNames, static fn(string $class): bool => 0 === strcasecmp($class, $name)
-            || 0 === strcasecmp(Reflection::shortName($class), $name)));
-        if (1 === count($matches)) {
-            return $matches[0];
-        }
-        if (count($matches) > 1) {
-            throw new QueryException(sprintf('"%s" is ambiguous: %s; write the full name in backticks, e.g. `%s`', $name, implode(', ', $matches), $matches[0]), $source->position);
-        }
-        if (class_exists($name)) {
-            return $name; // no objects of it are stored
-        }
-        throw new QueryException(sprintf('Unknown class "%s": no objects of it are stored', $name), $source->position);
-    }
-
-    // ---- what is kept ----
-
-    /**
-     * The properties a plan reads of each alias: the first names of its paths; null for all (alias.*, *).
-     *
-     * @return array<string, ?array<string, true>>
-     */
-    private static function keysUsed(Plan $plan): array
-    {
-        $keys = array_fill_keys($plan->aliases(), []);
-        $collect = static function (Expr $expression) use (&$keys): void {
-            if (!$expression instanceof BoundColumn || [] === $expression->path || !is_array($keys[$expression->alias] ?? null)) {
-                return;
-            }
-            $first = $expression->path[0];
-            if (is_string($first)) {
-                $keys[$expression->alias][$first] = true;
-            } elseif (PathSegment::KEY === $first->kind) {
-                $keys[$expression->alias][(string)$first->value] = true;
-            } else {
-                $keys[$expression->alias] = null; // p[0], p.*: any property
-            }
-        };
-        foreach ($plan->items as $item) {
-            if (null === $item['expression']) {
-                foreach (self::starAliases($plan, $item) as $alias) {
-                    $keys[$alias] = null;
-                }
-            }
-        }
-        $expressions = [
-            ...array_column($plan->items, 'expression'), ...array_column($plan->joins, 'on'),
-            $plan->where, $plan->having, ...$plan->groupBy, ...array_column($plan->orderBy, 0),
-        ];
-        foreach ($expressions as $expression) {
-            self::walk($expression, $collect);
-        }
-        return $keys;
-    }
-
-    /**
-     * Calls $visit for an expression and, unless it returns false, for its children, and so on.
-     *
-     * @param \Closure(Expr): (bool|void) $visit
-     */
-    private static function walk(?Expr $expression, \Closure $visit): void
-    {
-        if (null === $expression || false === $visit($expression)) {
-            return;
-        }
-        foreach ($expression->children() as $child) {
-            self::walk($child, $visit);
-        }
-    }
-
-    /**
-     * The aliases an item * or alias.* stands for.
-     *
-     * @return list<string>
-     */
-    private static function starAliases(Plan $plan, array $item): array
-    {
-        return '*' === $item['starOf'] ? $plan->aliases() : [$item['starOf']];
-    }
-
-    /**
-     * The properties to keep of the objects of an alias (null: all, none if the query reads none).
-     *
-     * @param array<string, ?array<string, true>> $keep
-     * @return ?array<string, true>
-     */
-    private static function keepOf(array $keep, string $alias): ?array
-    {
-        return array_key_exists($alias, $keep) ? $keep[$alias] : [];
-    }
-
-    /**
-     * An object with only the properties a query reads (references among them still lead to their objects).
-     *
-     * @param ?array<string, true> $keys null: all
-     */
-    private static function stripped(?array $object, ?array $keys): ?array
-    {
-        if (null === $object || null === $keys) {
-            return $object;
-        }
-        $object['data'] = array_intersect_key($object['data'], $keys);
-        return $object;
     }
 
     // ---- joining ----
@@ -423,15 +213,15 @@ final class Executor
         $alias = $join['source']->alias;
         $objects = [];
         $buckets = null === $join['hash'] ? null : [];
-        foreach ($this->objectsOf($join['source'], null) as $object) {
-            $object = self::stripped($object, $keep);
+        foreach ($this->source->objectsOf($join['source'], null) as $object) {
+            $object = PlanAnalysis::stripped($object, $keep);
             if (null === $buckets) {
                 $objects[] = $object;
                 continue;
             }
             // the joined objects by the value they are compared with; NULL never equals anything, a list (of a path
             // with *) is compared element by element
-            foreach (self::hashKeys($this->evaluate($join['hash'][1], [$alias => $object])) as $key) {
+            foreach (self::hashKeys($this->evaluator->evaluate($join['hash'][1], [$alias => $object])) as $key) {
                 $buckets[$key][$object['uuid']] = $object;
             }
         }
@@ -441,7 +231,7 @@ final class Executor
                 $candidates = $objects;
             } else {
                 $candidates = [];
-                foreach (self::hashKeys($this->evaluate($join['hash'][0], $row)) as $key) {
+                foreach (self::hashKeys($this->evaluator->evaluate($join['hash'][0], $row)) as $key) {
                     $candidates += $buckets[$key] ?? [];
                 }
             }
@@ -449,7 +239,7 @@ final class Executor
             foreach ($candidates as $object) {
                 $this->checkpoint();
                 $candidate = $row + [$alias => $object];
-                if (true === Values::truth($this->evaluate($join['on'], $candidate))) {
+                if (true === Values::truth($this->evaluator->evaluate($join['on'], $candidate))) {
                     $matched = true;
                     yield $candidate;
                 }
@@ -490,7 +280,7 @@ final class Executor
         }
         $sorted = [] !== $plan->orderBy;
         // with ORDER BY and LIMIT, the needed rows that sort first: the greatest is dropped when there are more
-        $heap = null !== $needed && $sorted ? $this->resultHeap($plan) : null;
+        $heap = null !== $needed && $sorted ? self::resultHeap($plan) : null;
 
         $results = [];
         $seen = [];
@@ -520,11 +310,11 @@ final class Executor
     }
 
     /** a heap of results with the one that sorts last on top */
-    private function resultHeap(Plan $plan): SplHeap
+    private static function resultHeap(Plan $plan): SplHeap
     {
-        $compare = fn(array $a, array $b): int => $this->compareResults($plan, $a, $b);
+        $compare = static fn(array $a, array $b): int => self::compareResults($plan, $a, $b);
         return new class($compare) extends SplHeap {
-            public function __construct(private readonly \Closure $compare)
+            public function __construct(private readonly Closure $compare)
             {
             }
 
@@ -541,21 +331,23 @@ final class Executor
      */
     private function grouped(Plan $plan, iterable $rows, array $keep): array
     {
-        $aggregates = self::aggregatesOf($plan);
-        $newStates = static fn(): array => array_map(static fn(): array => self::newState(), $aggregates);
+        $aggregates = PlanAnalysis::aggregatesOf($plan);
+        $newStates = static fn(): array => array_map(static fn(): array => Aggregates::newState(), $aggregates);
 
         $groups = [];
         foreach ($rows as $row) {
-            $key = implode("\0", array_map(fn(Expr $expression): string => Values::key($this->evaluate($expression, $row)), $plan->groupBy));
+            $key = implode("\0", array_map(fn(Expr $expression): string => Values::key($this->evaluator->evaluate($expression, $row)), $plan->groupBy));
             if (!isset($groups[$key])) {
                 $first = [];
                 foreach ($row as $alias => $object) {
-                    $first[$alias] = self::stripped($object, self::keepOf($keep, $alias));
+                    $first[$alias] = PlanAnalysis::stripped($object, PlanAnalysis::keepOf($keep, $alias));
                 }
                 $groups[$key] = ['row' => $first, 'states' => $newStates()];
             }
             foreach ($aggregates as $id => $aggregate) {
-                $this->accumulate($aggregate, $groups[$key]['states'][$id], $row);
+                // COUNT(*) counts rows, its argument isn't evaluated
+                $value = $aggregate->star ? null : $this->evaluator->evaluate($aggregate->arguments[0], $row);
+                Aggregates::accumulate($aggregate, $groups[$key]['states'][$id], $value);
             }
         }
         if ([] === $plan->groupBy && [] === $groups) {
@@ -565,32 +357,11 @@ final class Executor
         $results = [];
         $position = 0;
         foreach ($groups as $group) {
-            if ($this->holds($plan->having, $group['row'], $group['states'])) {
+            if ($this->evaluator->holds($plan->having, $group['row'], $group['states'])) {
                 $results[] = $this->result($plan, $group['row'], $group['states'], $position++);
             }
         }
         return $results;
-    }
-
-    /**
-     * The aggregates of the selection, HAVING and ORDER BY, by their id (not those inside aggregates).
-     *
-     * @return array<int, FunctionCall>
-     */
-    private static function aggregatesOf(Plan $plan): array
-    {
-        $aggregates = [];
-        $collect = static function (Expr $expression) use (&$aggregates): bool {
-            if ($expression instanceof FunctionCall && $expression->isAggregate()) {
-                $aggregates[spl_object_id($expression)] = $expression;
-                return false;
-            }
-            return true;
-        };
-        foreach ([...array_column($plan->items, 'expression'), $plan->having, ...array_column($plan->orderBy, 0)] as $expression) {
-            self::walk($expression, $collect);
-        }
-        return $aggregates;
     }
 
     /**
@@ -603,11 +374,11 @@ final class Executor
         $stars = [];
         foreach ($plan->items as $i => $item) {
             if (null !== $item['expression']) {
-                $values[$i] = $this->evaluate($item['expression'], $row, $states);
+                $values[$i] = $this->evaluator->evaluate($item['expression'], $row, $states);
                 continue;
             }
             // the references of * are read with the row
-            foreach (self::starAliases($plan, $item) as $alias) {
+            foreach (PlanAnalysis::starAliases($plan, $item) as $alias) {
                 $object = $row[$alias] ?? null;
                 $stars[$alias] = null === ($object['data'] ?? null)
                     ? null
@@ -616,11 +387,11 @@ final class Executor
         }
         $keys = array_map(fn(array $order): mixed => $order[0] instanceof OutputColumn
             ? $values[$order[0]->index] ?? null
-            : $this->evaluate($order[0], $row, $states), $plan->orderBy);
+            : $this->evaluator->evaluate($order[0], $row, $states), $plan->orderBy);
         return [$values, $keys, $stars, $position];
     }
 
-    private function compareResults(Plan $plan, array $a, array $b): int
+    private static function compareResults(Plan $plan, array $a, array $b): int
     {
         foreach ($plan->orderBy as $i => [, $descending]) {
             $order = Values::sortOrder($a[1][$i], $b[1][$i]);
@@ -646,7 +417,7 @@ final class Executor
                 $columns[] = [$item['name'], $i, null, null];
                 continue;
             }
-            foreach (self::starAliases($plan, $item) as $alias) {
+            foreach (PlanAnalysis::starAliases($plan, $item) as $alias) {
                 $properties = [];
                 foreach ($results as $result) {
                     foreach (array_keys($result[2][$alias]['data'] ?? []) as $property) {
@@ -670,198 +441,11 @@ final class Executor
                 $object = $result[2][$alias] ?? null;
                 $row[] = null === $object || !array_key_exists($property, $object['data'])
                     ? null
-                    : self::output(self::valueOf(DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow), $object), $object['dateTime'] ?? null);
+                    : self::output(Evaluator::valueOf(DocumentBuilder::extract($object['data'], [$property], $object['reserved'], $this->follow), $object), $object['dateTime'] ?? null);
             }
             $rows[] = $row;
         }
         return [array_column($columns, 0), $rows];
-    }
-
-    // ---- expressions ----
-
-    /**
-     * The value of an expression for a row; for a group (grouped queries), $group holds the running values of its
-     * aggregates (by the id of the aggregate) and the row is its first.
-     */
-    public function evaluate(Expr $expression, array $row, ?array $group = null): mixed
-    {
-        $value = fn(Expr $child): mixed => $this->evaluate($child, $row, $group);
-
-        if ($expression instanceof Binary || $expression instanceof InList || $expression instanceof Between || $expression instanceof Like) {
-            $wildcard = self::wildcardOperand($expression);
-            if (null !== $wildcard) {
-                return $this->anyElement($expression, $wildcard, $row, $group);
-            }
-        }
-
-        return match (true) {
-            $expression instanceof Literal => $expression->value,
-            $expression instanceof BoundColumn => $this->column($expression, $row),
-            $expression instanceof FunctionCall => $this->call($expression, $row, $group, $value),
-            $expression instanceof Unary => self::unary($expression, $value),
-            $expression instanceof Binary => $this->binary($expression, $value),
-            $expression instanceof IsNull => (null === $value($expression->operand)) !== $expression->negated,
-            $expression instanceof InList => self::inList($expression, $value),
-            $expression instanceof Between => self::between($expression, $value),
-            $expression instanceof Like => self::like($expression, $value),
-            default => throw new QueryException('Unknown expression ' . $expression::class),
-        };
-    }
-
-    /**
-     * The value of a column: the UUID of the object of its alias, or the value at its path; with .UUID, the UUID of
-     * a reference there (UUIDs of references for a path with *).
-     */
-    private function column(BoundColumn $column, array $row): mixed
-    {
-        $object = $row[$column->alias] ?? null;
-        if (null === $object) {
-            return null;
-        }
-        if ([] === $column->path) {
-            return $object['uuid'];
-        }
-        $found = DocumentBuilder::extract($object['data'], $column->path, $object['reserved'], $this->follow);
-        if (!$column->uuid) {
-            return self::valueOf($found, $object);
-        }
-        // p.category.UUID: a reference there is its UUID; anything else isn't one
-        $isUuid = static fn(mixed $v): bool => is_string($v) && UuidValidator::validate($v);
-        if (is_array($found) && Path::hasWildcard($column->path)) {
-            $uuids = array_values(array_filter($found, $isUuid));
-            return [] === $uuids ? null : $uuids;
-        }
-        return $isUuid($found) ? $found : null;
-    }
-
-    /**
-     * The value of a call: REF(), CREATED() and MODIFIED() (of the metadata of the object of the alias), an
-     * aggregate of the group or a function of the values of its arguments.
-     */
-    private function call(FunctionCall $call, array $row, ?array $group, \Closure $value): mixed
-    {
-        switch ($call->name) {
-            case 'REF':
-                $uuid = Values::text($value($call->arguments[0]));
-                return null === $uuid ? null : new Reference($uuid);
-            case 'CREATED':
-            case 'MODIFIED':
-                $column = $call->arguments[0];
-                $timestamp = $column instanceof BoundColumn ? ($row[$column->alias][strtolower($call->name)] ?? null) : null;
-                return null === $timestamp ? null : DateValue::ofTimestamp((float)$timestamp);
-        }
-        return $call->isAggregate()
-            ? $this->aggregate($call, $group ?? throw new QueryException(sprintf('%s needs a group', $call->name)))
-            : $this->function($call->name, array_map($value, $call->arguments));
-    }
-
-    private static function unary(Unary $expression, \Closure $value): mixed
-    {
-        $operand = $value($expression->operand);
-        if ('NOT' === $expression->operator) {
-            return Values::not(Values::truth($operand));
-        }
-        $number = Values::number($operand);
-        return null === $number ? null : -$number;
-    }
-
-    private static function inList(InList $expression, \Closure $value): ?bool
-    {
-        $operand = $value($expression->operand);
-        $result = false;
-        foreach ($expression->values as $candidate) {
-            $result = Values::or($result, self::equals($operand, $value($candidate)));
-            if (true === $result) {
-                break;
-            }
-        }
-        return $expression->negated ? Values::not($result) : $result;
-    }
-
-    private static function between(Between $expression, \Closure $value): ?bool
-    {
-        $operand = $value($expression->operand);
-        $low = Values::compare($operand, $value($expression->low));
-        $high = Values::compare($operand, $value($expression->high));
-        $result = Values::and(null === $low ? null : $low >= 0, null === $high ? null : $high <= 0);
-        return $expression->negated ? Values::not($result) : $result;
-    }
-
-    private static function like(Like $expression, \Closure $value): ?bool
-    {
-        $operand = Values::text($value($expression->operand));
-        $pattern = Values::text($value($expression->pattern));
-        if (null === $operand || null === $pattern) {
-            return null;
-        }
-        $matches = Values::like($operand, $pattern);
-        return null === $matches ? null : $matches !== $expression->negated;
-    }
-
-    // ---- paths with * ----
-
-    /**
-     * The column with * a condition compares directly (=, <, IN, BETWEEN, LIKE …), if any: such a condition is
-     * checked for each element of the list.
-     */
-    private static function wildcardOperand(Binary|InList|Between|Like $expression): ?BoundColumn
-    {
-        $operands = match (true) {
-            $expression instanceof Binary => in_array($expression->operator, [...self::COMPARISONS, 'REGEXP'], true) ? [$expression->left, $expression->right] : [],
-            default => [$expression->operand],
-        };
-        foreach ($operands as $operand) {
-            if ($operand instanceof BoundColumn && Path::hasWildcard($operand->path)) {
-                return $operand;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * A condition on a path with *: true if it is true for any element (friends.*.name = 'Alex'); negated (!=,
-     * NOT IN, NOT BETWEEN, NOT LIKE) true if it is true for none, also for no elements. As in SQL, NULL if it is
-     * true for none but unknown for one.
-     */
-    private function anyElement(Binary|InList|Between|Like $condition, BoundColumn $column, array $row, ?array $group): ?bool
-    {
-        $negated = $condition instanceof Binary ? '!=' === $condition->operator : $condition->negated;
-        $object = $row[$column->alias] ?? null;
-        $found = $this->evaluate($column, $row, $group);
-        $elements = null === $found ? [] : (is_array($found) && array_is_list($found) ? $found : [$found]);
-
-        $result = false;
-        foreach ($elements as $element) {
-            $literal = new Literal(null === $object ? $element : self::valueOf($element, $object));
-            $positive = match (true) {
-                $condition instanceof Binary => new Binary(
-                    '!=' === $condition->operator ? '=' : $condition->operator,
-                    $condition->left === $column ? $literal : $condition->left,
-                    $condition->left === $column ? $condition->right : $literal,
-                ),
-                $condition instanceof InList => new InList($literal, $condition->values, false),
-                $condition instanceof Between => new Between($literal, $condition->low, $condition->high, false),
-                $condition instanceof Like => new Like($literal, $condition->pattern, false),
-            };
-            $result = Values::or($result, Values::truth($this->evaluate($positive, $row, $group)));
-            if (true === $result) {
-                break;
-            }
-        }
-        return $negated ? Values::not($result) : $result;
-    }
-
-    /**
-     * A value read from an object: a date as stored becomes a DateValue. Values read through references are
-     * marked with the reserved key of the object they were read from: dates there use the default key, unless
-     * their object has another one (rare: a property with the name of the key).
-     */
-    private static function valueOf(mixed $found, array $object): mixed
-    {
-        if (!is_array($found)) {
-            return $found;
-        }
-        return DateValue::fromStored($found, $object['dateTime'] ?? null) ?? $found;
     }
 
     /**
@@ -888,323 +472,5 @@ final class Executor
             }
         }
         return $value;
-    }
-
-    private static function equals(mixed $a, mixed $b): ?bool
-    {
-        $order = Values::compare($a, $b);
-        return null === $order ? null : 0 === $order;
-    }
-
-    private function binary(Binary $expression, \Closure $value): mixed
-    {
-        $operator = $expression->operator;
-        if ('AND' === $operator) {
-            $left = Values::truth($value($expression->left));
-            return false === $left ? false : Values::and($left, Values::truth($value($expression->right)));
-        }
-        if ('OR' === $operator) {
-            $left = Values::truth($value($expression->left));
-            return true === $left ? true : Values::or($left, Values::truth($value($expression->right)));
-        }
-
-        $left = $value($expression->left);
-        $right = $value($expression->right);
-        if (in_array($operator, self::COMPARISONS, true)) {
-            $order = Values::compare($left, $right);
-            return null === $order ? null : match ($operator) {
-                '=' => 0 === $order,
-                '!=' => 0 !== $order,
-                '<' => $order < 0,
-                '<=' => $order <= 0,
-                '>' => $order > 0,
-                '>=' => $order >= 0,
-            };
-        }
-        if ('REGEXP' === $operator || '||' === $operator) {
-            $left = Values::text($left);
-            $right = Values::text($right);
-            if (null === $left || null === $right) {
-                return null;
-            }
-            return 'REGEXP' === $operator ? Values::matches($left, $right) : $left . $right;
-        }
-
-        $left = Values::number($left);
-        $right = Values::number($right);
-        if (null === $left || null === $right) {
-            return null;
-        }
-        $result = match ($operator) {
-            '+' => $left + $right,
-            '-' => $left - $right,
-            '*' => $left * $right,
-            // as in MySQL: 7 / 2 is 3.5; NULL for a division by 0
-            '/' => 0 == $right ? null : $left / $right,
-            // the remainder with the sign of the dividend, the integer quotient
-            '%' => Math::mod($left, $right),
-            'DIV' => Math::div($left, $right),
-            default => throw new QueryException('Unknown operator ' . $operator),
-        };
-
-        // NULL for a result that isn't a finite number (as the functions of Math): NAN compares as greater than
-        // and unequal to everything, so "x > 1e999 - 1e999" held for every object
-        return is_float($result) && !is_finite($result) ? null : $result;
-    }
-
-    private function function(string $name, array $arguments): mixed
-    {
-        [$first] = $arguments + [null];
-        switch ($name) {
-            case 'CONCAT':
-                return self::concat('', $arguments);
-            case 'CONCAT_WS':
-                $separator = Values::text($first);
-                return null === $separator ? null : self::concat($separator, array_slice($arguments, 1));
-            case 'COALESCE':
-                foreach ($arguments as $argument) {
-                    if (null !== $argument) {
-                        return $argument;
-                    }
-                }
-                return null;
-            case 'IFNULL':
-                return $arguments[0] ?? $arguments[1];
-            case 'PI':
-            case 'RAND':
-                return Math::call($name, []);
-            case 'NOW':
-                // the same for the whole statement
-                return $this->now ??= new DateValue(new DateTimeImmutable('now', new DateTimeZone('UTC')));
-        }
-        if (null === $first) {
-            return null;
-        }
-        switch ($name) {
-            case 'LOWER':
-                return mb_strtolower(Values::text($first), 'UTF-8');
-            case 'UPPER':
-                return mb_strtoupper(Values::text($first), 'UTF-8');
-            case 'LENGTH':
-                return mb_strlen(Values::text($first), 'UTF-8');
-            case 'CARDINALITY':
-                // as in SQL for arrays (and Countable values); objects have no schema, so not a list (a text, a number) is NULL, not an error
-                return is_countable($first) ? count($first) : null;
-            case 'TRIM':
-                return trim(Values::text($first), ' ');
-            case 'ABS':
-                $number = Values::number($first);
-                return null === $number ? null : abs($number);
-            case 'ROUND':
-                $number = Values::number($first);
-                $digits = isset($arguments[1]) ? (int)Values::number($arguments[1]) : 0;
-                return null === $number ? null : round($number, $digits);
-            case 'REGEXP_SUBSTR':
-                $pattern = Values::text($arguments[1]);
-                if (null === $pattern) {
-                    return null;
-                }
-                $found = @preg_match(Values::regexp($pattern), Values::text($first), $match);
-                return 1 === $found ? $match[0] : null;
-            case 'REGEXP_REPLACE':
-                $pattern = Values::text($arguments[1]);
-                $replacement = Values::text($arguments[2]);
-                if (null === $pattern || null === $replacement) {
-                    return null;
-                }
-                // $1 or \1 for the groups
-                return @preg_replace(Values::regexp($pattern), $replacement, Values::text($first));
-            case 'SUBSTR':
-                return self::substr(Values::text($first), $arguments[1], $arguments[2] ?? null);
-            case 'DATETIME':
-                return $this->date($first, $arguments[1] ?? null);
-            case 'DATE':
-            case 'YEAR':
-            case 'MONTH':
-            case 'DAY':
-            case 'HOUR':
-            case 'MINUTE':
-            case 'SECOND':
-                return $this->datePart($name, $first, $arguments[1] ?? null);
-            case 'DATE_ADD':
-                return $this->dateAdd($first, $arguments[1], $arguments[2]);
-            case 'DATE_SUB':
-                return $this->dateAdd($first, $arguments[1], $arguments[2], true);
-        }
-        if (isset(Math::FUNCTIONS[$name])) {
-            return Math::call($name, $arguments);
-        }
-        throw new QueryException('Unknown function ' . $name);
-    }
-
-    /**
-     * The values as texts, joined by a separator; as in PostgreSQL and SQLite, NULL is left out (|| gives NULL).
-     */
-    private static function concat(string $separator, array $values): string
-    {
-        return implode($separator, array_map([Values::class, 'text'], array_filter($values, static fn(mixed $v): bool => null !== $v)));
-    }
-
-    /**
-     * SUBSTR(text, start, length): from 1; a negative start counts from the end.
-     */
-    private static function substr(?string $text, mixed $start, mixed $length): ?string
-    {
-        $start = (int)Values::number($start);
-        $length = null === $length ? null : (int)Values::number($length);
-        if (null !== $length && $length < 0) {
-            return '';
-        }
-        return match (true) {
-            $start > 0 => mb_substr($text, $start - 1, $length, 'UTF-8'),
-            $start < 0 => mb_substr($text, $start, $length, 'UTF-8'),
-            null === $length => $text,
-            default => mb_substr($text, 0, max(0, $length - 1), 'UTF-8'),
-        };
-    }
-
-    /**
-     * DATE(), YEAR(), MONTH(), DAY(), HOUR(), MINUTE(), SECOND() of a date, in a time zone (UTC by default).
-     */
-    private function datePart(string $name, mixed $value, mixed $timezone): string|int|null
-    {
-        $timezone = self::timezone($timezone);
-        $date = $this->date($value, $timezone)?->in($timezone);
-        return null === $date ? null : match ($name) {
-            'DATE' => $date->format('x-m-d'),
-            'YEAR' => (int)$date->format('Y'),
-            'MONTH' => (int)$date->format('n'),
-            'DAY' => (int)$date->format('j'),
-            'HOUR' => (int)$date->format('G'),
-            'MINUTE' => (int)$date->format('i'),
-            'SECOND' => (int)$date->format('s'),
-            default => throw new QueryException('Unknown function ' . $name),
-        };
-    }
-
-    /**
-     * A value as a date: a date; a text that is one (in the time zone if it has no Z or offset); a number as seconds
-     * since 1970-01-01 UTC. Null for anything else.
-     */
-    private function date(mixed $value, mixed $timezone = null): ?DateValue
-    {
-        $value = Values::normalize($value);
-        if ($value instanceof DateValue) {
-            return $value;
-        }
-        if (is_string($value)) {
-            return DateValue::fromText($value, self::timezone($timezone));
-        }
-        if ((is_int($value) || is_float($value)) && is_finite($value) && abs($value) < 1e12) {
-            $date = DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $value), new DateTimeZone('UTC'));
-            return false === $date ? null : new DateValue($date);
-        }
-        return null;
-    }
-
-    /** the name of a time zone given to a date function, UTC if none */
-    private static function timezone(mixed $timezone): string
-    {
-        if (null === $timezone) {
-            return 'UTC';
-        }
-        $name = (string)Values::text($timezone);
-        try {
-            return (new DateTimeZone($name))->getName();
-        } catch (Throwable) {
-            throw new QueryException(sprintf("Unknown time zone '%s'", $name));
-        }
-    }
-
-    /**
-     * DATE_ADD(date, amount, unit): the date plus a whole number of seconds, minutes, hours, days, weeks, months or
-     * years (negative to subtract), in the time zone of the date (a day is a day of the calendar, also across daylight
-     * saving time). As in PHP and SQLite, a month that doesn't have the day goes on into the next (January 31 plus a
-     * month is March 3, or 2 in a leap year). DATE_SUB(date, amount, unit) subtracts ($subtract).
-     */
-    private function dateAdd(mixed $value, mixed $amount, mixed $unit, bool $subtract = false): ?DateValue
-    {
-        $function = $subtract ? 'DATE_SUB' : 'DATE_ADD';
-        $date = $this->date($value);
-        $number = Values::number($amount);
-        $unitName = Values::text($unit);
-        if (null === $date || null === $number || null === $unitName) {
-            return null;
-        }
-        $key = rtrim(strtoupper(trim($unitName)), 'S');
-        if (!isset(self::DATE_UNITS[$key])) {
-            throw new QueryException(sprintf("Unknown unit '%s' for %s: SECOND, MINUTE, HOUR, DAY, WEEK, MONTH or YEAR", $unitName, $function));
-        }
-        if (floor($number) != $number || abs($number) > 1e9) {
-            throw new QueryException(sprintf('%s %s whole %ss, not %s', $function, $subtract ? 'subtracts' : 'adds', strtolower($key), $number));
-        }
-        if ($subtract) {
-            $number = -$number;
-        }
-        $changed = $date->date->modify(sprintf('%+d %s', (int)$number, self::DATE_UNITS[$key]));
-        return new DateValue($changed, $date->class);
-    }
-
-    /** the running values of an aggregate of a group */
-    private static function newState(): array
-    {
-        return ['count' => 0, 'sum' => 0, 'value' => null, 'seen' => []];
-    }
-
-    /**
-     * Adds a row of a group to the running values of an aggregate: NULLs aren't counted; with DISTINCT, a value
-     * only once.
-     */
-    private function accumulate(FunctionCall $call, array &$state, array $row): void
-    {
-        if ($call->star) {
-            $state['count']++;
-            return;
-        }
-        $value = $this->evaluate($call->arguments[0], $row);
-        if (null === $value) {
-            return;
-        }
-        if ($call->distinct) {
-            $key = Values::key($value);
-            if (isset($state['seen'][$key])) {
-                return;
-            }
-            $state['seen'][$key] = true;
-        }
-        $state['count']++;
-        switch ($call->name) {
-            case 'SUM':
-            case 'AVG':
-                $state['sum'] += Values::number($value) ?? 0;
-                break;
-            case 'MIN':
-            case 'MAX':
-                if (null === $state['value']) {
-                    $state['value'] = $value;
-                    break;
-                }
-                $order = Values::sortOrder($value, $state['value']);
-                if (('MIN' === $call->name && $order < 0) || ('MAX' === $call->name && $order > 0)) {
-                    $state['value'] = $value;
-                }
-                break;
-        }
-    }
-
-    /**
-     * COUNT, SUM, AVG, MIN, MAX of a group, from their running values: SUM of integers is an integer, AVG a float;
-     * SUM, AVG, MIN and MAX of no values are NULL.
-     */
-    private function aggregate(FunctionCall $call, array $states): mixed
-    {
-        $state = $states[spl_object_id($call)] ?? self::newState();
-        return match ($call->name) {
-            'COUNT' => $state['count'],
-            'SUM' => 0 === $state['count'] ? null : $state['sum'],
-            'AVG' => 0 === $state['count'] ? null : (float)$state['sum'] / $state['count'],
-            'MIN', 'MAX' => $state['value'],
-            default => throw new QueryException('Unknown aggregate ' . $call->name),
-        };
     }
 }
