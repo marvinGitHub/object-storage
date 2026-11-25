@@ -17,6 +17,8 @@ use melia\ObjectStorage\Logger\LoggerInterface;
 use melia\ObjectStorage\Metadata\Metadata;
 use melia\ObjectStorage\State\StateHandler;
 use melia\ObjectStorage\Strategy\StrategyInterface;
+use melia\ObjectStorage\UUID\Exception\GenerationFailureException;
+use melia\ObjectStorage\UUID\Generator\Generator;
 use Throwable;
 
 /**
@@ -50,6 +52,21 @@ final readonly class ObjectFiles
         } catch (Throwable $e) {
             throw new ObjectExistenceEvaluationFailureException(message: sprintf('Unable to check if object with uuid: %s exists', $uuid), previous: $e);
         }
+    }
+
+    /**
+     * A new UUID, by the generator of the strategy: one no object is stored under.
+     *
+     * @throws GenerationFailureException
+     * @throws ObjectExistenceEvaluationFailureException
+     */
+    public function newUuid(): string
+    {
+        do {
+            $uuid = ($this->strategy?->getGenerator() ?? new Generator())->generate();
+        } while ($this->exists($uuid));
+
+        return $uuid;
     }
 
     /**

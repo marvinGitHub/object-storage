@@ -66,6 +66,29 @@ class Dispatcher implements DispatcherInterface
     }
 
     /**
+     * Whether a listener might be registered for one of the given events: dispatchers that don't expose their
+     * listeners are assumed to have listeners, none has none.
+     */
+    public static function mayHaveListeners(?DispatcherInterface $dispatcher, string ...$events): bool
+    {
+        if (null === $dispatcher) {
+            return false;
+        }
+
+        if (false === $dispatcher instanceof self) {
+            return true;
+        }
+
+        foreach ($events as $event) {
+            if ($dispatcher->hasListeners($event)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Dispatches an event by invoking all registered listeners for that event.
      * If a listener throws an exception, it is logged without interrupting the dispatch process.
      *

@@ -9,7 +9,7 @@ Up to 1.0.0-rc.12, `ObjectStorage` was one class assembled from traits by concer
 kept the code readable, but they shared every property and method through `$this`: no part had dependencies of its
 own, none could be tested or replaced alone.
 
-The storage is being split into components, one concern each, step by step and with the same behavior:
+The storage was split into components, one concern each, step by step and with the same behavior:
 
 | Component | Concern | Replaces | State |
 |---|---|---|---|
@@ -24,10 +24,17 @@ The storage is being split into components, one concern each, step by step and w
 | `Storage\ObjectSession` | what the storage instance knows of the objects it loaded and stored: their UUIDs, the revisions read, the objects being stored | `identityMap`, `revisions`, `processingStack` of `ObjectStorage` | done |
 | `Storage\ObjectDeleter` | deleting objects, with the objects they reference by the child deletion policy (`Storage\References`) | `DeletingTrait` | done |
 | `Storage\ObjectReader` | reading objects: built from their files, properties hydrated, references lazy (or loaded for `__unserialize()`), dates restored; `load()` with cache, locks and events stays the facade's | `LoadingTrait` | done |
-| `Storage\ObjectWriter` | store | `StoringTrait` | planned |
+| `Storage\ObjectWriter` | writing objects: serialized into their graph (referenced objects first, by the child persistence policy), written under their lock if changed, with optimistic locking, constraints, stub and cache; `store()` with UUID, lock and events stays the facade's | `StoringTrait` | done |
+| `Constraint\ConstraintChecker` | checking an object about to be written against the registered constraints (`Constraint\ConstraintRegistry`) | `ConstraintsTrait` | done |
 
 `ObjectStorage` stays the facade: its public methods and their behavior don't change, they delegate to the
-components. Code using the storage doesn't notice the split.
+components. Code using the storage doesn't notice the split. The traits remain as the place of the public methods
+by concern, and of the methods creating the components (`objectFiles()`, `objectWriter()`, …); what is left in
+them is orchestration: `load()`, `store()`, `delete()` with their events, and the like.
+
+State of a storage instance is kept by the facade in objects of its own, created once: `Storage\ObjectSession`
+(the objects loaded and stored), `Locking\RetainedLocks` (the locks retained by transactions),
+`Constraint\ConstraintRegistry` (the registered constraints). Components get them like any other dependency.
 
 ## Rules
 

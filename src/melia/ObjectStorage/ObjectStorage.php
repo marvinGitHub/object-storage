@@ -55,30 +55,27 @@ use WeakReference;
  * Stores, loads and deletes objects as files: one data file (the serialized object graph) and one metadata file
  * (class, checksum, revision, expiration) per object, sharded by UUID, with locks, caches and events.
  *
- * The class holds the construction, the configuration and the caches; the rest is grouped by concern in traits of
- * the namespace Storage (each kept apart for readability, together one class):
+ * The class is the facade of the storage: it holds the construction, the configuration and the state of the
+ * instance (the session of loaded and stored objects, the retained locks, the constraints), and delegates to
+ * components with dependencies of their own (docs/architecture.md):
  *
- * - PathsTrait: the paths of the files, sharded by UUID, delegated to the component ObjectPaths
+ * - load() → ObjectReader → ObjectFiles; store() → ObjectWriter (per object of the graph) → ObjectFiles;
+ *   delete() → ObjectDeleter (per object, following the child deletion policy)
+ * - ObjectFiles: data and metadata as a group, checksums, interrupted writes; MetadataStore: metadata through its
+ *   cache; JsonStore: the JSON files; ObjectPaths: the paths, sharded by UUID
+ * - StubIndex and ClassNameRegistry: the objects by class; ObjectCache: the loaded objects; ObjectLocks: the locks
+ *   of objects; ConstraintChecker: the constraints; ObjectSession: what this instance knows of its objects
  *
- * The traits are being replaced by components with dependencies of their own, see docs/architecture.md.
- * - StoringTrait, LoadingTrait, DeletingTrait: objects, with caches, locks and events
- * - DurabilityTrait: the files of objects as stored (both files as a group, checksums, interrupted writes)
- * - JsonTrait: readJson() and writeJson(), the JSON files of the storage
- * - MetadataTrait, LifetimeTrait: metadata, expiration and touching
- * - ListingTrait, StubsTrait: existence, listing, the index of objects by class and the registry of class names
- * - IdentityTrait (UUID), RawAccessTrait (Transfer), RetainedLocksTrait (Locking), ConstraintsTrait (Constraint)
+ * The traits of the namespace Storage (and IdentityTrait, RawAccessTrait, RetainedLocksTrait, ConstraintsTrait)
+ * hold the public methods by concern and create the components; they are kept apart for readability.
  *
  * The verbs have one meaning each:
  *
  * - load / store / delete: objects, with caches, locks and events — the public API
- *     load()   → loadFromFiles() → readObjectFiles() → hydrateObject() → hydrateProperties() / hydrateArray()
- *     store()  → storeObject() (per object of the graph) → serializeGraph() → writeObjectFiles() / writeMetadata()
- *     delete() → deleteObject() (per object, following the child deletion policy)
  * - readRaw / writeRaw: objects as stored, unchanged, e.g. to copy them (Transfer\RawAccessTrait)
- * - read… / write…: files, without caches: readObjectFiles() and writeObjectFiles() are shared by load() and
- *   readRaw(), store() and writeRaw(); they verify checksums and complete interrupted writes. Files are read and
- *   written in layers: getFiles() (bytes, atomic, fsync) → readJson()/writeJson() (JSON) → the object files
- * - hydrate… / serialize…: converting between stored data and objects
+ * - read… / write…: files, without caches: ObjectFiles is shared by load() and readRaw(), store() and writeRaw();
+ *   it verifies checksums and completes interrupted writes. Files are read and written in layers: getFiles()
+ *   (bytes, atomic, fsync) → JsonStore (JSON) → ObjectFiles
  * - loadMetadata() reads metadata through its cache, reloadMetadata() from the file
  *
  * See docs/internals.md for the details.
@@ -101,7 +98,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
     use PathsTrait; // getFilePathData(), getFilePathMetadata(), getFilePathStub(): the files, sharded by UUID
     use StoringTrait; // store(): objects and the objects they reference
     use LoadingTrait; // load(): objects, references loaded lazily
-    use DurabilityTrait; // readObjectFiles(), writeObjectFiles(): data and metadata as a group, checksums, recovery
+    use DurabilityTrait; // objectFiles(): data and metadata as a group, checksums, recovery
     use JsonTrait; // readJson(), writeJson(): the JSON files of the storage (metadata, registry of class names)
     use MetadataTrait; // loadMetadata(), writeMetadata(), getRevision(), getClassName()
     use LifetimeTrait; // setLifetime(), setExpiration(), expired(), touch()
@@ -160,7 +157,7 @@ class ObjectStorage extends StorageAbstract implements StorageMemoryConsumptionI
 
     /**
      * The transaction running on this storage instance: every change of object files through this instance is
-     * recorded in it before it is made (writeObjectFiles(), writeMetadata(), deleteObject()), see
+     * recorded in it before it is made (ObjectWriter, ObjectDeleter, writeObjectFiles(), writeMetadata()), see
      * docs/transactions.md. One at a time; another instance can run another transaction. Held weakly, so a
      * transaction that is dropped is destructed (and rolled back) as before.
      *

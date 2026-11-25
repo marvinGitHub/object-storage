@@ -3,36 +3,54 @@
 namespace melia\ObjectStorage\Constraint;
 
 use Closure;
-use melia\ObjectStorage\Event\Context\Context;
-use melia\ObjectStorage\Event\Events;
 use melia\ObjectStorage\Exception\ConstraintViolationException;
 use melia\ObjectStorage\Exception\ObjectSavingFailureException;
-use Throwable;
 
 /**
  * The constraints of a storage: registered rules every written object has to satisfy, checked by store() and
- * writeRaw() before the data of an object is written. Part of ObjectStorage.
+ * writeRaw() before the data of an object is written (see ConstraintChecker). Part of ObjectStorage.
  *
  * @mixin \melia\ObjectStorage\ObjectStorage
  */
 trait ConstraintsTrait
 {
-    /** @var ConstraintInterface[] */
-    private array $constraints = [];
+    /** the registered constraints; kept by the storage, so they survive a new strategy, logger or dispatcher */
+    private ?ConstraintRegistry $constraintRegistry = null;
+
+    private function constraintRegistry(): ConstraintRegistry
+    {
+        return $this->constraintRegistry ??= new ConstraintRegistry();
+    }
+
+    /**
+     * The checking of constraints, with the registered constraints and the strategy, event dispatcher and logger of
+     * the storage as they are now.
+     */
+    protected function constraintChecker(): ConstraintChecker
+    {
+        $constraints = $this->constraintRegistry();
+        $strategy = $this->getStrategy();
+        $dispatcher = $this->getEventDispatcher();
+        $logger = $this->getLogger();
+
+        return $this->component(
+            ConstraintChecker::class,
+            [$constraints, $strategy, $dispatcher, $logger],
+            static fn(): ConstraintChecker => new ConstraintChecker($constraints, $strategy, $dispatcher, $logger),
+        );
+    }
 
     /**
      * Registers a constraint, checked from now on for every object written.
      */
     public function addConstraint(ConstraintInterface $constraint): void
     {
-        if (!in_array($constraint, $this->constraints, true)) {
-            $this->constraints[] = $constraint;
-        }
+        $this->constraintRegistry()->add($constraint);
     }
 
     public function removeConstraint(ConstraintInterface $constraint): void
     {
-        $this->constraints = array_values(array_filter($this->constraints, static fn(ConstraintInterface $c): bool => $c !== $constraint));
+        $this->constraintRegistry()->remove($constraint);
     }
 
     /**
@@ -40,13 +58,13 @@ trait ConstraintsTrait
      */
     public function getConstraints(): array
     {
-        return $this->constraints;
+        return $this->constraintRegistry()->all();
     }
 
     /**
-     * Checks an object about to be written against all constraints, under its exclusive lock. store() and
-     * writeRaw() call it; code writing the files of objects itself (e.g. a tool editing stored data) has to call it
-     * as well, and the returned callback after writing.
+     * Checks an object about to be written against all constraints, under its exclusive lock, see
+     * ConstraintChecker::check(). store() and writeRaw() call it; code writing the files of objects itself (e.g. a
+     * tool editing stored data) has to call it as well, and the returned callback after writing.
      *
      * @param string $uuid The UUID of the object.
      * @param string $className Its class.
@@ -58,53 +76,6 @@ trait ConstraintsTrait
      */
     public function checkConstraints(string $uuid, string $className, string $data, string $reservedReferenceName): Closure
     {
-        if ([] === $this->constraints) {
-            return static function (bool $written): void {
-            };
-        }
-
-        // the data is the one about to be written: invalid JSON there is a bug, not a damaged file
-        try {
-            $decoded = $this->getStrategy()?->unserialize($data) ?? [];
-        } catch (Throwable $e) {
-            $this->getLogger()?->log($e);
-            $decoded = [];
-        }
-
-        $finalizers = [];
-        try {
-            foreach ($this->constraints as $constraint) {
-                $finalize = $constraint->check($uuid, $className, $decoded, $reservedReferenceName);
-                if (null !== $finalize) {
-                    $finalizers[] = $finalize;
-                }
-            }
-        } catch (Throwable $e) {
-            // nothing is written: what the constraints checked before reserved is released
-            foreach ($finalizers as $finalize) {
-                try {
-                    $finalize(false);
-                } catch (Throwable $release) {
-                    $this->getLogger()?->log($release);
-                }
-            }
-            if ($e instanceof ConstraintViolationException) {
-                $this->getEventDispatcher()?->dispatch(Events::CONSTRAINT_VIOLATION, static fn() => new Context($uuid));
-                throw $e;
-            }
-            // e.g. a lock timeout: not a violation, but the object can't be written either
-            throw new ObjectSavingFailureException(message: sprintf('Unable to check the constraints of %s: %s', $uuid, $e->getMessage()), previous: $e);
-        }
-
-        return function (bool $written) use ($finalizers): void {
-            foreach ($finalizers as $finalize) {
-                try {
-                    $finalize($written);
-                } catch (Throwable $e) {
-                    // the object is written (or not) anyway; a constraint that couldn't keep up repairs itself
-                    $this->getLogger()?->log($e);
-                }
-            }
-        };
+        return $this->constraintChecker()->check($uuid, $className, $data, $reservedReferenceName);
     }
 }

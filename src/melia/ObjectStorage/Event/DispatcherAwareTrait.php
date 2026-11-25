@@ -25,22 +25,6 @@ trait DispatcherAwareTrait
 	 */
 	protected function hasListeners(string ...$events): bool
 	{
-		$eventDispatcher = $this->getEventDispatcher();
-
-		if (null === $eventDispatcher) {
-			return false;
-		}
-
-		if (false === $eventDispatcher instanceof Dispatcher) {
-			return true;
-		}
-
-		foreach ($events as $event) {
-			if ($eventDispatcher->hasListeners($event)) {
-				return true;
-			}
-		}
-
-		return false;
+		return Dispatcher::mayHaveListeners($this->getEventDispatcher(), ...$events);
 	}
 }

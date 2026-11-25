@@ -13,10 +13,11 @@ use melia\ObjectStorage\Exception\LockException;
  *
  * - The lock adapter (acquireExclusiveLock(), acquireSharedLock(), releaseLock(), releaseLockIfHeld()) stays the
  *   only way to lock; it gets no reentrant or counting locks: code locking objects follows "lock only if not held,
- *   release only what was locked here" (storeObject(), touch(), readRaw(), writeRaw(), OQL writes, moving objects).
+ *   release only what was locked here" (ObjectLocks: ObjectWriter, touch(), readRaw(), writeRaw(), OQL writes,
+ *   moving objects).
  * - A transaction records an object while it is written (Transaction::track(), called under the lock the writing
  *   code took), so a lock taken "here" can become retained meanwhile: the releases of that code also ask
- *   isLockRetained(). store(), deleteObject() and setLifetime() release a lock they didn't take (for store()
+ *   isLockRetained(). store(), deleting and setLifetime() release a lock they didn't take (for store()
  *   intended: an exclusive load holds the lock until the object is stored, docs/concurrency.md) and ask it as well.
  * - Reentrant (counting) locks in the adapter would make retaining unnecessary, but they change the behavior of the
  *   public LockAdapterInterface and need a special rule for exclusive loads, which hand their lock over to store().
