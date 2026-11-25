@@ -1,0 +1,9 @@
+# The viewer (view.php, viewer/src): not part of the library, analysed on its own at a lower level, as its pages
+# work with the arrays of requests and templates. Run: vendor/bin/phpstan analyse -c phpstan-viewer.neon
+parameters:
+    level: 1
+    paths:
+        - view.php
+        - viewer/src
+    bootstrapFiles:
+        - viewer/bootstrap.php

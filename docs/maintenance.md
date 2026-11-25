@@ -98,7 +98,9 @@ Some releases change the storage format and ship a migration script in `migratio
 
 ## The web viewer
 
-`view.php` is a small web interface to browse, view, edit, duplicate and delete stored objects during development. It also creates, builds and drops [search indexes](search.md#the-viewer) and searches them.
+`view.php` is a small web interface to browse, view, edit, duplicate and delete stored objects during development. It also creates, builds and drops [search indexes](search.md#the-viewer) and searches them. Run it with PHP's built-in server: `php -S localhost:8080 view.php`.
+
+It needs the development dependencies (Twig, Monolog; Loupe for search indexes) and isn't part of the library: its classes are in `viewer/src` (namespace `melia\ObjectStorage\Viewer`, loaded by `viewer/bootstrap.php`), its pages in `views/`, see [Architecture](architecture.md#the-viewer). It writes to `appData/` next to `view.php`: its log, its cache and the named configurations of storages.
 
 **Saving a record** writes it as storing does (`writeRaw()`): data and metadata as a group, so a crash leaves no half-written record; the unique indexes checked; a new revision, modified now, the checksum algorithm of the object kept. If the object was changed since the page was loaded (another revision), it isn't saved: reload it and apply the changes again. Metadata the object can't be read with (e.g. without a checksum) is repaired by saving (`tests/e2e/record-save.spec.js`).
 

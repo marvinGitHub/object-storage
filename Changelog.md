@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+### Changed
+- Viewer: `view.php` only routes; its 50 actions are handled by controllers in `viewer/src` (namespace `melia\ObjectStorage\Viewer`, not part of the library), what the pages share is `App` (see [Architecture](docs/architecture.md#the-viewer)). The pages, their URLs and what they do are unchanged. The viewer is analysed by PHPStan at level 1 (`phpstan-viewer.neon`).
+
 ## [1.0.0-rc.16] - 2026-11-25
 
 The sixteenth release candidate of 1.0: search indexes and the OQL executor are split into components, each tested alone (see [Architecture](docs/architecture.md)); their API, files and results are unchanged. Nothing has to be migrated, see [UPGRADE.md](UPGRADE.md#from-100-rc15-to-100-rc16).

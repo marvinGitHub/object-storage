@@ -102,6 +102,25 @@ rows itself (joins, grouping, sorting, `LIMIT`, the columns of the result) and h
 The `Writer` (`INSERT`, `UPDATE`, `DELETE`) uses the executor for the objects a condition is true for and for the
 values of expressions. Each component has a unit test of its own (`tests/melia/ObjectStorage/Query/`).
 
+## The viewer
+
+The viewer isn't part of the library (it needs the development dependencies): `view.php` only routes, its classes
+are in `viewer/src` (namespace `melia\ObjectStorage\Viewer`, loaded by `viewer/bootstrap.php`), its templates in
+`views/`.
+
+- `Routes`: the actions of the viewer (the parameter `action` of a request) and the controller method handling each.
+- `Controller\*`: the actions of one area each, a method per action (or per group of actions with one form, e.g.
+  `index-build-start`, `-step`, `-cancel`): `RecordController` (classes and objects), `QueryController` (the OQL
+  console), `SearchIndexController`, `UniqueIndexController`, `ConfigurationController`, `TransferController`,
+  `LinkController` (attributes to references), `MaintenanceController` (stubs, shards), `HomeController` (start
+  page, log).
+- `App`: what the pages share: the directories in `appData/`, the log, Twig, the configurations of storages, and the
+  storages themselves, opened with their configuration and their search and unique indexes attached.
+- `Forms` (what forms offer and post), `Summaries` (indexes and configurations as the lists show them), `LogFile`.
+
+It is analysed by PHPStan on its own, at level 1 (`phpstan-viewer.neon`), and tested end to end with Playwright
+(`tests/e2e`, `sh tests/e2e/run.sh`).
+
 ## Rules
 
 - **One concern per component**, named after it. A component knows only the components below it, never the facade
