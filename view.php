@@ -31,6 +31,8 @@ use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\Cache\Psr16Cache;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
+use melia\ObjectStorage\Logger\LoggerInterface as StorageLoggerInterface;
+use Monolog\Formatter\JsonFormatter;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use melia\ObjectStorage\File\Directory;
@@ -73,8 +75,69 @@ if (!is_file($logfile = $logDir . DIRECTORY_SEPARATOR . 'error.log')) {
     touch($logfile);
 }
 
+// one JSON object per line (an error with its stack trace too), read by the log page (action "log")
 $logger = new Logger('ObjectStorageViewer');
-$logger->pushHandler(new StreamHandler($logfile));
+$logger->pushHandler((new StreamHandler($logfile))->setFormatter(new JsonFormatter()));
+
+// errors a storage reports without stopping (e.g. an index failing while a query chooses one) go to the same log,
+// with the directory of the storage
+$storageLoggerFor = static fn(string $storageDir): StorageLoggerInterface => new class ($logger, $storageDir) implements StorageLoggerInterface {
+    public function __construct(private readonly Logger $logger, private readonly string $storageDir)
+    {
+    }
+
+    public function log(Throwable $error): void
+    {
+        $this->logger->error($error, ['storage' => $this->storageDir]);
+    }
+};
+
+/**
+ * The entries of the log, the newest first: of its last $maxBytes (a line cut there is skipped). Lines that aren't
+ * JSON (written before it was) are entries of their own, lines following them without a date belong to them.
+ *
+ * @return list<array{datetime: string, level: string, message: string, storage: ?string}>
+ */
+$readLog = static function (string $file, int $maxBytes = 2 * 1024 * 1024): array {
+    if (!is_file($file) || false === ($handle = fopen($file, 'rb'))) {
+        return [];
+    }
+    try {
+        $size = (int)fstat($handle)['size'];
+        $offset = max(0, $size - $maxBytes);
+        fseek($handle, $offset);
+        $text = (string)stream_get_contents($handle);
+    } finally {
+        fclose($handle);
+    }
+    $lines = preg_split('/\r\n|\n|\r/', $text) ?: [];
+    if ($offset > 0) {
+        array_shift($lines);
+    }
+
+    $entries = [];
+    foreach ($lines as $line) {
+        if ('' === trim($line)) {
+            continue;
+        }
+        $data = json_decode($line, true);
+        if (is_array($data) && isset($data['message'])) {
+            $entries[] = [
+                'datetime' => (string)($data['datetime'] ?? ''),
+                'level' => (string)($data['level_name'] ?? 'ERROR'),
+                'message' => (string)$data['message'],
+                'storage' => isset($data['context']['storage']) ? (string)$data['context']['storage'] : null,
+            ];
+        } elseif (1 === preg_match('/^\[([^]]+)] [\w.-]+\.(\w+): (.*)$/s', $line, $match)) {
+            $entries[] = ['datetime' => $match[1], 'level' => $match[2], 'message' => $match[3], 'storage' => null];
+        } elseif ([] !== $entries) {
+            $entries[count($entries) - 1]['message'] .= "\n" . $line;
+        } else {
+            $entries[] = ['datetime' => '', 'level' => 'ERROR', 'message' => $line, 'storage' => null];
+        }
+    }
+    return array_reverse($entries);
+};
 
 // the slow statements of the query console (docs/query.md, "Slow query log"): those running at least this long, or
 // reading at least this many objects; set with the environment variables of the server
@@ -117,9 +180,10 @@ $createCacheKeyShardDepth = static function (string $storageDir): string {
 // named configurations of storages (lock backend, caches, strategy), assigned to storages in the viewer
 $configurations = new ConfigurationRegistry($appDataDir . DIRECTORY_SEPARATOR . 'configurations');
 
-$buildStorage = static function (string $storageDir) use ($psr16, $createCacheKeyShardDepth, $configurations): ObjectStorage {
+$buildStorage = static function (string $storageDir) use ($psr16, $createCacheKeyShardDepth, $configurations, $storageLoggerFor): ObjectStorage {
     // with the configuration assigned to the storage, the defaults without one
     $storage = $configurations->open($storageDir);
+    $storage->setLogger($storageLoggerFor($storageDir));
 
     $depth = $psr16->get($key = $createCacheKeyShardDepth($storageDir));
 
@@ -1574,6 +1638,30 @@ try {
                 'objectsRead' => $slowQueryObjectsRead,
                 'cleared' => isset($_GET['cleared']),
             ]);
+            break;
+        case 'log':
+            // the error log of the viewer and of the storages it opened; of one storage, or of all (storage empty)
+            $storageDir = (string)($_GET['storage'] ?? '');
+            $entries = $readLog($logfile);
+            $count = count($entries);
+            if ('' !== $storageDir) {
+                $entries = array_values(array_filter($entries, static fn(array $entry): bool => $entry['storage'] === $storageDir));
+            }
+            echo $twig->render('log.html', [
+                'storage' => '' === $storageDir ? null : $storageDir,
+                'entries' => array_slice($entries, 0, 500),
+                'shown' => count($entries),
+                'count' => $count,
+                'file' => $logfile,
+                'size' => is_file($logfile) ? filesize($logfile) : 0,
+                'cleared' => isset($_GET['cleared']),
+            ]);
+            break;
+        case 'log-clear':
+            // the whole log, of all storages
+            $requirePost();
+            file_put_contents($logfile, '');
+            header('Location: ?' . http_build_query(array_filter(['action' => 'log', 'storage' => (string)($_POST['storage'] ?? ''), 'cleared' => '1'])));
             break;
         case 'slow-queries-clear':
             // the whole log, of all storages

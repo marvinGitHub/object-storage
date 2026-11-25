@@ -1,0 +1,71 @@
+{% extends 'index.html' %}
+
+{% block body %}
+<style>
+    .log-summary { word-break: break-word; }
+    .log-detail { max-height: 24rem; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: .8rem; }
+</style>
+{% embed 'page-header.html' with {crumbs: storage ? [
+    {label: storage, href: '?action=list-classnames&storage=' ~ storage|url_encode, code: true},
+    {label: 'Log'},
+] : [{label: 'Log'}]} %}
+    {% block title %}Log{% endblock %}
+    {% block badges %}<span class="badge text-bg-secondary" id="log-count">{{ shown }}</span>{% endblock %}
+    {% block actions %}
+    {% if count > 0 %}
+    <form method="post" action="?action=log-clear" class="d-inline" id="log-clear"
+          onsubmit="return confirm('Clear the log of the viewer and all storages?')">
+        <input type="hidden" name="storage" value="{{ storage }}">
+        <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Clear log</button>
+    </form>
+    {% endif %}
+    {% endblock %}
+    {% block intro %}
+    <p class="page-intro">
+        Errors of the viewer and those a storage reports without stopping, e.g. a search index that failed while a
+        query chose how to find its objects (EXPLAIN then says no index fits). The newest first{% if storage %}, of
+        this storage — <a href="?action=log">all storages</a>{% endif %}.
+        <span class="text-muted small d-block">{{ file }} ({{ size|bytes }}) — the last 2 MB are read, at most 500 entries shown.</span>
+    </p>
+    {% endblock %}
+{% endembed %}
+
+{% if cleared %}<div class="alert alert-info py-2" id="log-cleared"><i class="bi bi-trash"></i> The log was cleared.</div>{% endif %}
+
+{% if entries is empty %}
+<div class="alert alert-success" id="log-none"><i class="bi bi-check-circle"></i> No entries{% if storage %} of this storage{% endif %}.</div>
+{% else %}
+<table class="table table-sm align-middle small" id="log-entries">
+    <thead>
+    <tr>
+        <th class="text-nowrap">Time</th>
+        <th>Level</th>
+        {% if not storage %}<th>Storage</th>{% endif %}
+        <th>Message</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for entry in entries %}
+    {% set lines = entry.message|split("\n", 2) %}
+    <tr class="log-entry">
+        <td class="text-nowrap text-muted">{{ entry.datetime|slice(0, 19)|replace({'T': ' '}) }}</td>
+        <td><span class="badge {{ entry.level in ['ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'] ? 'text-bg-danger' : (entry.level == 'WARNING' ? 'text-bg-warning' : 'text-bg-secondary') }}">{{ entry.level }}</span></td>
+        {% if not storage %}
+        <td>{% if entry.storage %}<a class="font-monospace" href="?action=log&storage={{ entry.storage|url_encode }}" title="Only the entries of this storage">{{ entry.storage }}</a>{% else %}<span class="text-muted">viewer</span>{% endif %}</td>
+        {% endif %}
+        <td>
+            {% if lines|length > 1 %}
+            <details>
+                <summary class="log-summary">{{ lines[0] }}</summary>
+                <pre class="log-detail mb-0 mt-1">{{ lines[1] }}</pre>
+            </details>
+            {% else %}
+            <span class="log-summary">{{ entry.message }}</span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}
