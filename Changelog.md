@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file. From 1.0 on
 
 ## [Unreleased]
 
+## [1.0.0-rc.15] - 2026-11-25
+
+The fifteenth release candidate of 1.0: referenced objects keep their UUID instead of being stored again as a copy, deletes are flushed to disk, and the facade of `ObjectStorage` keeps what users of the storage need. **Read [UPGRADE.md](UPGRADE.md#from-100-rc14-to-100-rc15) before upgrading:** the child persistence policy `IF_NOT_EXIST` now writes loaded references along if they changed, and methods of `ObjectStorage` that only passed a call on to a component are removed.
+
 ### Added
 - `profiling/benchmark.php`: the time of the main operations (store, load, OQL, delete) without services, with and without flushing to disk, on a directory of choice.
 - `ObjectFiles::delete()` *(internal)*: removes the data and metadata of an object, flushed to disk.
@@ -12,12 +16,12 @@ All notable changes to this project will be documented in this file. From 1.0 on
 - The content of written files is flushed with `fdatasync` instead of `fsync`: the content and size, not the times of the file, which reading it doesn't need. Directories are still flushed with `fsync`.
 - `delete()` is flushed to disk like a write (unless sync is disabled): a deleted object no longer comes back after a power loss. It takes one more flush per deleted object.
 - `ObjectDeleter` *(internal)* no longer takes the IO adapter: removing the files is `ObjectFiles::delete()`.
-- **Behavior:** objects loaded as references of another one (a `LazyLoadReference` that was accessed, references passed to `__unserialize()`) are known by their UUID, also without `AwareInterface`, like objects loaded with `load()`. The child persistence policy `IF_NOT_EXIST` (the default) writes referenced objects the storage instance loaded along if they changed, with or without `AwareInterface`; objects created and stored by the caller are still updated on their own, see [UPGRADE.md](UPGRADE.md#unreleased).
+- **Behavior:** objects loaded as references of another one (a `LazyLoadReference` that was accessed, references passed to `__unserialize()`) are known by their UUID, also without `AwareInterface`, like objects loaded with `load()`. The child persistence policy `IF_NOT_EXIST` (the default) writes referenced objects the storage instance loaded along if they changed, with or without `AwareInterface`; objects created and stored by the caller are still updated on their own, see [UPGRADE.md](UPGRADE.md#from-100-rc14-to-100-rc15).
 - `ObjectSession` *(internal)*: `recordLoaded()`, `wasLoaded()`; `rememberLoaded()` and `loadingReferences()` removed.
 
 ### Removed
 - `ObjectStorage::loadReferenced()` *(internal)*: references are loaded with `load()`.
-- **Breaking:** methods of `ObjectStorage` that only passed a call on to a component (with `loadReferenced()`: 82 → 71 public methods, counting the accessors `objectPaths()` and `stubIndex()`, now public; 32 → 23 protected): `retainLock()`, `releaseRetainedLock()`, `releaseLockUnlessRetained()`, `isLockRetained()`, `getLockDir()`, `buildShardedDirectory()`, `getStubDirectory()`, `getClassStubDirectory()`, `getFilePathStub()`, `createStub()`, `getRegisteredClassnames()`, `markAsCorrupted()`; protected `addToCache()`, `writeJson()`, `createStubIterator()`, `getObjectFiles()`, `getFilePathClassnames()`, `deleteStub()`, `registerClassname()`. The components are reached through `objectLocks()`, `objectPaths()` and `stubIndex()` *(internal)*, see [UPGRADE.md](UPGRADE.md#unreleased).
+- **Breaking:** methods of `ObjectStorage` that only passed a call on to a component (with `loadReferenced()`: 82 → 71 public methods, counting the accessors `objectPaths()` and `stubIndex()`, now public; 32 → 23 protected): `retainLock()`, `releaseRetainedLock()`, `releaseLockUnlessRetained()`, `isLockRetained()`, `getLockDir()`, `buildShardedDirectory()`, `getStubDirectory()`, `getClassStubDirectory()`, `getFilePathStub()`, `createStub()`, `getRegisteredClassnames()`, `markAsCorrupted()`; protected `addToCache()`, `writeJson()`, `createStubIterator()`, `getObjectFiles()`, `getFilePathClassnames()`, `deleteStub()`, `registerClassname()`. The components are reached through `objectLocks()`, `objectPaths()` and `stubIndex()` *(internal)*, see [UPGRADE.md](UPGRADE.md#from-100-rc14-to-100-rc15).
 
 ### Changed (facade)
 - [Architecture](docs/architecture.md#the-facade): the public methods of `ObjectStorage` by role, and which are internal.

@@ -1,6 +1,6 @@
 # Upgrading
 
-## Unreleased
+## From 1.0.0-rc.14 to 1.0.0-rc.15
 
 Nothing has to be migrated: files are unchanged.
 
